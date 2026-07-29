@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
 
+import { isGraphwarBackendControlMessage, type GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryCalculationOutcome,
@@ -452,6 +453,7 @@ describe("main trajectory result lifecycle", () => {
 class FakeWorker {
   static readonly instances: FakeWorker[] = [];
 
+  readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarTrajectoryCalculationWorkerRequest[] = [];
   terminated = false;
   private readonly messageListeners: ((event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>) => void)[] =
@@ -469,8 +471,12 @@ class FakeWorker {
     }
   }
 
-  postMessage(request: GraphwarTrajectoryCalculationWorkerRequest) {
-    this.requests.push(request);
+  postMessage(message: GraphwarBackendControlMessage | GraphwarTrajectoryCalculationWorkerRequest) {
+    if (isGraphwarBackendControlMessage(message)) {
+      this.controlMessages.push(message);
+      return;
+    }
+    this.requests.push(message);
   }
 
   terminate() {

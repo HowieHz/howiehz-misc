@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
 
-import type { GraphwarBackendAttemptIdentity } from "../../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarBackendControlMessage } from "../../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../../core/game/constants";
 import {
   createGraphwarStepRouteModel,
@@ -22,7 +22,8 @@ const attempt = {
   backendGeneration: 0,
   outerTaskId: 1,
 } satisfies GraphwarBackendAttemptIdentity;
-const postMessage = vi.fn<(message: GraphwarOneClickClearEdgeWorkerResponse) => void>();
+const session = { backendGeneration: 0, nonce: 1, requestId: 0, taskType: "one-click-clear" as const };
+const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarOneClickClearEdgeWorkerResponse) => void>();
 let handleMessage: ((event: MessageEvent<unknown>) => void) | undefined;
 
 beforeAll(async () => {
@@ -38,6 +39,16 @@ beforeAll(async () => {
     },
   });
   await import("./edge.worker");
+  handleMessage?.({
+    data: {
+      backend: { type: "typescript" },
+      generation: 0,
+      role: "one-click-clear-edge",
+      type: "backend-init",
+    },
+  } as MessageEvent<GraphwarBackendControlMessage>);
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledOnce());
+  postMessage.mockClear();
 });
 
 afterAll(() => {
@@ -72,6 +83,7 @@ describe("One-Click Clear edge Worker initialization", () => {
         ...context,
         stepRouteRuntime: { ...context.stepRouteRuntime, routeMask: context.routeMask.slice() },
       },
+      session,
       type: "init",
     });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
@@ -82,11 +94,11 @@ describe("One-Click Clear edge Worker initialization", () => {
       workerIndex: 1,
     });
 
-    dispatch({ attempt, context, type: "init" });
+    dispatch({ attempt, context, session, type: "init" });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
     expect(postMessage.mock.calls[1]?.[0]).toEqual({ attempt, type: "ready", workerIndex: 1 });
 
-    dispatch({ attempt, context: { ...context, boundaryExpansion: 1 }, type: "init" });
+    dispatch({ attempt, context: { ...context, boundaryExpansion: 1 }, session, type: "init" });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(3));
     expect(postMessage.mock.calls[2]?.[0]).toEqual({
       attempt,

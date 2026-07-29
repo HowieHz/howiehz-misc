@@ -1,8 +1,15 @@
-import { graphwarBackendAttemptIdentitiesAreEqual } from "../../core/algorithm-backend";
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import {
+  createGraphwarTypescriptWorkerBackendConfiguration,
+  graphwarBackendAttemptIdentitiesAreEqual,
+  type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarWorkerBackendConfiguration,
+  GraphwarWasmFault,
+} from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { nowMs } from "../../core/time";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
+import { createGraphwarWorkerBackendSlot } from "../../core/worker-backend";
 import type {
   GraphwarTrajectoryCalculationInput,
   GraphwarTrajectoryCalculationOutcome,
@@ -34,12 +41,16 @@ export interface GraphwarTrajectoryRunResult {
 
 /** 轨迹 runner 的 Worker、计时与降级注入点。 */
 export interface GraphwarTrajectoryRunnerOptions {
+  /** 当前 runner 生命周期内每个新槽共用的 backend generation 与 module。 */
+  backendConfiguration?: GraphwarWorkerBackendConfiguration;
   /** 测试注入点；页面默认创建专用 module Worker。 */
   createWorker?: () => Worker;
   /** 端到端计时入口。 */
   now?: () => number;
   /** Worker 永久不可用时通知页面显示持续降级警告。 */
   onFallback?: (reason: string) => void;
+  /** 任一 active/standby Worker 的明确 WASM fault，包含空闲初始化故障。 */
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
   /** 每次主线程降级任务前先让浏览器绘制状态，再执行可能很慢的同步计算。 */
   waitForFallbackPaint?: () => Promise<void>;
 }
@@ -59,6 +70,7 @@ interface PendingTrajectoryTask {
 /** 一个可复用 Worker 及其当前绑定任务。 */
 interface TrajectoryWorkerSlot {
   activeTask?: PendingTrajectoryTask;
+  backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   worker: Worker;
 }
 
@@ -72,6 +84,7 @@ const WORKER_SLOT_TARGET = 2;
  */
 export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunnerOptions = {}) {
   const attemptGate = createGraphwarBackendAttemptGate();
+  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
   const createWorker = options.createWorker ?? createDefaultTrajectoryWorker;
   const now = options.now ?? nowMs;
   const workerSlots: TrajectoryWorkerSlot[] = [];
@@ -99,7 +112,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
     const requestId = nextRequestId;
     nextRequestId += 1;
-    const attempt = attemptGate.beginOuterTask(0);
+    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
 
     return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
       const task: PendingTrajectoryTask = {
@@ -203,9 +216,43 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     let worker: Worker | undefined;
     try {
       worker = createWorker();
-      const slot: TrajectoryWorkerSlot = { worker };
-      worker.addEventListener("message", (event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>) =>
-        handleWorkerMessage(slot, event),
+      let initializationFailure: Error | undefined;
+      let isInitializing = true;
+      const backendSlot = createGraphwarWorkerBackendSlot({
+        configuration: backendConfiguration,
+        onInfrastructureFailure: (error) => {
+          if (isInitializing) {
+            initializationFailure = error;
+          } else {
+            handleWorkerFailure(slot, error);
+          }
+        },
+        onWasmFault: (message) => {
+          options.onWasmFault?.(message);
+          if (!isInitializing) {
+            handleWorkerWasmFault(slot, message);
+          }
+        },
+        role: "trajectory",
+        worker,
+      });
+      const slot: TrajectoryWorkerSlot = { backendSlot, worker };
+      isInitializing = false;
+      if (initializationFailure || backendSlot.getState().type === "failed") {
+        worker.terminate();
+        const failedState = backendSlot.getState();
+        return {
+          error:
+            initializationFailure ??
+            (failedState.type === "failed"
+              ? failedState.error
+              : new Error("Graphwar trajectory worker backend initialization failed")),
+        };
+      }
+      worker.addEventListener(
+        "message",
+        (event: MessageEvent<GraphwarBackendControlMessage | GraphwarTrajectoryCalculationWorkerResponse>) =>
+          handleWorkerMessage(slot, event),
       );
       worker.addEventListener("messageerror", () =>
         handleWorkerFailure(slot, new Error("Graphwar trajectory worker response could not be deserialized")),
@@ -227,13 +274,19 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
   /** 校验当前槽位的响应，并只提交权威任务的完整结果。 */
   function handleWorkerMessage(
     slot: TrajectoryWorkerSlot,
-    event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>,
+    event: MessageEvent<GraphwarBackendControlMessage | GraphwarTrajectoryCalculationWorkerResponse>,
   ) {
-    const task = slot.activeTask;
-    if (workerSlots.indexOf(slot) < 0 || !task || !isCurrentTask(task)) {
+    if (workerSlots.indexOf(slot) < 0) {
       return;
     }
     const response = event.data;
+    if (slot.backendSlot.handleMessage(response)) {
+      return;
+    }
+    const task = slot.activeTask;
+    if (!task || !isCurrentTask(task)) {
+      return;
+    }
     if (response.id !== task.id) {
       handleWorkerFailure(slot, new Error("Graphwar trajectory worker returned an unexpected request id"));
       return;
@@ -249,6 +302,21 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
         outcome: response.outcome,
       }),
     );
+  }
+
+  /** Typed WASM fault 不进入换槽/主线程基础设施 fallback；页面 fuse callback 决定 cold replay。 */
+  function handleWorkerWasmFault(
+    slot: TrajectoryWorkerSlot,
+    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+  ) {
+    if (workerSlots.indexOf(slot) < 0) {
+      return;
+    }
+    const task = slot.activeTask;
+    terminateWorkerSlot(slot);
+    if (task && isCurrentTask(task)) {
+      completeTask(task, () => task.reject(new GraphwarWasmFault(message.fault.code, message.fault.message)));
+    }
   }
 
   /** 移除故障槽，并决定当前任务是否需要换槽重试。 */

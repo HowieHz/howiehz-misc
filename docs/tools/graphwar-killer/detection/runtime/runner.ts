@@ -1,7 +1,15 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
-import { graphwarBackendAttemptIdentitiesAreEqual } from "../../core/algorithm-backend";
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import {
+  createGraphwarTypescriptWorkerBackendConfiguration,
+  graphwarBackendAttemptIdentitiesAreEqual,
+  isGraphwarBackendControlMessage,
+  type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarWorkerBackendConfiguration,
+  GraphwarWasmFault,
+} from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
+import { createGraphwarWorkerBackendSlot } from "../../core/worker-backend";
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "../objects";
 import type {
   GraphwarObjectDetectionInstrumentation,
@@ -66,10 +74,18 @@ interface PendingDetectionTask {
   taskType: GraphwarDetectionWorkerRequest["task"]["type"];
 }
 
+/** Detection main Worker 与 nested template Worker 共用的 backend 生命周期注入点。 */
+export interface GraphwarDetectionRunnerOptions {
+  backendConfiguration?: GraphwarWorkerBackendConfiguration;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
+}
+
 /** 创建页面可复用的检测 runner。 */
-export function createGraphwarDetectionRunner() {
+export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOptions = {}) {
   const attemptGate = createGraphwarBackendAttemptGate();
+  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
   let worker: Worker | undefined;
+  let workerBackendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot> | undefined;
   let nextRequestId = 1;
   let pendingTask: PendingDetectionTask | undefined;
 
@@ -87,9 +103,12 @@ export function createGraphwarDetectionRunner() {
       type: "module",
     });
     worker = createdWorker;
-    createdWorker.addEventListener("message", (event: MessageEvent<GraphwarDetectionWorkerResponse>) => {
-      handleWorkerMessage(createdWorker, event);
-    });
+    createdWorker.addEventListener(
+      "message",
+      (event: MessageEvent<GraphwarBackendControlMessage | GraphwarDetectionWorkerResponse>) => {
+        handleWorkerMessage(createdWorker, event);
+      },
+    );
     createdWorker.addEventListener("messageerror", () => {
       rejectPendingTaskFromWorker(
         createdWorker,
@@ -99,6 +118,37 @@ export function createGraphwarDetectionRunner() {
     createdWorker.addEventListener("error", (event: ErrorEvent) => {
       rejectPendingTaskFromWorker(createdWorker, event.error instanceof Error ? event.error : new Error(event.message));
     });
+    let initializationError: Error | undefined;
+    const createdBackendSlot = createGraphwarWorkerBackendSlot({
+      configuration: backendConfiguration,
+      onInfrastructureFailure: (error) => {
+        if (workerBackendSlot) {
+          rejectPendingTaskFromWorker(createdWorker, error);
+        } else {
+          initializationError = error;
+        }
+      },
+      onWasmFault: (message) => {
+        if (workerBackendSlot) {
+          handleWasmFaultFromWorker(createdWorker, message);
+        } else {
+          options.onWasmFault?.(message);
+          initializationError = new GraphwarWasmFault(message.fault.code, message.fault.message);
+        }
+      },
+      role: "detection-main",
+      worker: createdWorker,
+    });
+    workerBackendSlot = createdBackendSlot;
+    const backendState = createdBackendSlot.getState();
+    if (initializationError) {
+      resetWorker();
+      throw initializationError;
+    }
+    if (backendState.type === "failed") {
+      resetWorker();
+      throw backendState.error;
+    }
     return createdWorker;
   }
 
@@ -163,7 +213,7 @@ export function createGraphwarDetectionRunner() {
     },
   ) {
     const request: GraphwarDetectionWorkerRequest = {
-      attempt: attemptGate.beginOuterTask(0),
+      attempt: attemptGate.beginOuterTask(backendConfiguration.generation),
       id: nextRequestId,
       task: taskInput,
     };
@@ -224,8 +274,21 @@ export function createGraphwarDetectionRunner() {
   }
 
   /** 只接收当前 request id、attempt 和 commit gate 都仍权威的 Worker 消息。 */
-  function handleWorkerMessage(sourceWorker: Worker, event: MessageEvent<GraphwarDetectionWorkerResponse>) {
+  function handleWorkerMessage(
+    sourceWorker: Worker,
+    event: MessageEvent<GraphwarBackendControlMessage | GraphwarDetectionWorkerResponse>,
+  ) {
     if (worker !== sourceWorker) {
+      return;
+    }
+    if (isGraphwarBackendControlMessage(event.data)) {
+      if (event.data.role === "detection-main") {
+        workerBackendSlot?.handleMessage(event.data);
+      } else if (event.data.role === "detection-template" && event.data.type === "wasm-fault") {
+        handleWasmFaultFromWorker(sourceWorker, event.data);
+      } else {
+        rejectPendingTaskFromWorker(sourceWorker, new Error("Detection Worker returned invalid backend control"));
+      }
       return;
     }
     const task = pendingTask;
@@ -259,6 +322,22 @@ export function createGraphwarDetectionRunner() {
       }
       task.resolve(response.result);
     });
+  }
+
+  /** Root 或 nested Worker 的 typed fault 直接通知页面 fuse，不进入 detection infrastructure fallback。 */
+  function handleWasmFaultFromWorker(
+    sourceWorker: Worker,
+    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+  ) {
+    if (worker !== sourceWorker) {
+      return;
+    }
+    options.onWasmFault?.(message);
+    const task = pendingTask;
+    if (task) {
+      completeTask(task, () => task.reject(new GraphwarWasmFault(message.fault.code, message.fault.message)));
+    }
+    resetWorker();
   }
 
   /** 统一拒绝挂起任务并丢弃当前 Worker。 */
@@ -317,6 +396,7 @@ export function createGraphwarDetectionRunner() {
     }
     worker.terminate();
     worker = undefined;
+    workerBackendSlot = undefined;
   }
 
   return {

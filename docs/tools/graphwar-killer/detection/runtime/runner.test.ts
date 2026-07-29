@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { isGraphwarBackendControlMessage, type GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import type {
   GraphwarDetectionWorkerRequest,
   GraphwarDetectionWorkerResponse,
@@ -28,6 +29,9 @@ describe("Graphwar detection runner backend attempts", () => {
     const worker = FakeWorker.instances[0];
     const request = worker.requests[0];
 
+    expect(worker.controlMessages).toEqual([
+      { backend: { type: "typescript" }, generation: 0, role: "detection-main", type: "backend-init" },
+    ]);
     expect(request.attempt).toEqual({ attemptId: 1, backendGeneration: 0, outerTaskId: 1 });
     worker.emit({ ...request, stage: "detecting-bounds", type: "stage" });
     worker.emit(createSuccessResponse(request));
@@ -196,6 +200,7 @@ describe("Graphwar detection runner backend attempts", () => {
 class FakeWorker {
   static readonly instances: FakeWorker[] = [];
 
+  readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarDetectionWorkerRequest[] = [];
   isTerminated = false;
   private readonly listeners = {
@@ -212,8 +217,12 @@ class FakeWorker {
     this.listeners[type].push(listener as never);
   }
 
-  postMessage(request: GraphwarDetectionWorkerRequest) {
-    this.requests.push(request);
+  postMessage(message: GraphwarBackendControlMessage | GraphwarDetectionWorkerRequest) {
+    if (isGraphwarBackendControlMessage(message)) {
+      this.controlMessages.push(message);
+      return;
+    }
+    this.requests.push(message);
   }
 
   terminate() {

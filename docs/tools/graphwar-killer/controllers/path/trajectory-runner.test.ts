@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  createGraphwarWasmWorkerBackendConfiguration,
+  isGraphwarBackendControlMessage,
+  type GraphwarBackendControlMessage,
+} from "../../core/algorithm-backend";
 import { createGraphPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryCalculationInput,
@@ -24,11 +29,42 @@ describe("Graphwar main trajectory runner", () => {
     const resultPromise = runner.run(createSimulatorInput());
 
     expect(workers).toHaveLength(2);
+    expect(workers.map((worker) => worker.controlMessages)).toEqual([
+      [{ backend: { type: "typescript" }, generation: 0, role: "trajectory", type: "backend-init" }],
+      [{ backend: { type: "typescript" }, generation: 0, role: "trajectory", type: "backend-init" }],
+    ]);
     expect(workers[0].requests).toHaveLength(1);
     expect(workers[1].requests).toHaveLength(0);
     expect(workers[0].requests[0].attempt).toEqual({ attemptId: 1, backendGeneration: 0, outerTaskId: 1 });
     workers[0].respond(workerOutcome);
     await expect(resultPromise).resolves.toMatchObject({ outcome: workerOutcome });
+    runner.close();
+  });
+
+  it("reports an idle standby WASM fault without routing it through task retry", async () => {
+    const workers: FakeWorker[] = [];
+    const onWasmFault = vi.fn();
+    const module = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    const runner = createGraphwarTrajectoryRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, module),
+      createWorker: createFakeWorkerFactory(workers),
+      onWasmFault,
+    });
+    const result = runner.run(createSimulatorInput());
+
+    workers[1].emitRawResponse({
+      context: { type: "initialization" },
+      fault: { code: "instantiate", message: "standby instantiate failed" },
+      generation: 4,
+      role: "trajectory",
+      type: "wasm-fault",
+    });
+
+    expect(onWasmFault).toHaveBeenCalledOnce();
+    expect(workers[1].terminated).toBe(true);
+    expect(workers[0].requests).toHaveLength(1);
+    workers[0].respond(workerOutcome);
+    await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
     runner.close();
   });
 
@@ -233,6 +269,7 @@ describe("Graphwar main trajectory runner", () => {
 });
 
 class FakeWorker {
+  readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarTrajectoryCalculationWorkerRequest[] = [];
   terminated = false;
   private readonly listeners = {
@@ -245,8 +282,12 @@ class FakeWorker {
     this.listeners[type].push(listener as never);
   }
 
-  postMessage(request: GraphwarTrajectoryCalculationWorkerRequest) {
-    this.requests.push(request);
+  postMessage(message: GraphwarBackendControlMessage | GraphwarTrajectoryCalculationWorkerRequest) {
+    if (isGraphwarBackendControlMessage(message)) {
+      this.controlMessages.push(message);
+      return;
+    }
+    this.requests.push(message);
   }
 
   terminate() {

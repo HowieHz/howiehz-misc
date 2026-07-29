@@ -1,4 +1,4 @@
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarWasmSessionIdentity } from "../../core/algorithm-backend";
 import type { BoundsRect } from "../../core/types";
 import type { SoldierMatchCandidate, SoldierTemplateCenterCandidate } from "../objects";
 
@@ -8,6 +8,8 @@ export interface GraphwarSoldierTemplateWorkerRequest {
   attempt: GraphwarBackendAttemptIdentity;
   /** 子 Worker 请求 id，通常等于 workerIndex。 */
   id: number;
+  /** Parent detection core session；typed fault 必须带回同一份来源身份。 */
+  session: GraphwarWasmSessionIdentity;
   /** 子 Worker 独占的截图像素；buffer 会被转移。 */
   imageData: ImageData;
   /** 已识别的 Graphwar 平面边界。 */

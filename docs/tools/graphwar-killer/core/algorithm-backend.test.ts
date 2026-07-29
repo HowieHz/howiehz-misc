@@ -154,7 +154,7 @@ describe("Graphwar algorithm backend contracts", () => {
     expect(() => new GraphwarWasmFault("trap", " ")).toThrow(TypeError);
   });
 
-  it("validates initialization, task, template shard, and edge job fault contexts", () => {
+  it("validates initialization, task, template shard, edge session, and edge job fault contexts", () => {
     const attempt = { attemptId: 2, backendGeneration: 3, outerTaskId: 1 };
     const contexts = [
       { type: "initialization" },
@@ -164,6 +164,11 @@ describe("Graphwar algorithm backend contracts", () => {
         session: { backendGeneration: 3, nonce: 1, requestId: 7, taskType: "detection" },
         shardId: 4,
         type: "template-shard",
+      },
+      {
+        attempt,
+        session: { backendGeneration: 3, nonce: 2, requestId: 8, taskType: "one-click-clear" },
+        type: "edge-session",
       },
       {
         attempt,
@@ -298,6 +303,28 @@ describe("Graphwar algorithm backend contracts", () => {
       fault: { code: "trap", message: "unexpected" },
       generation: 1,
       role: "detection-main",
+      type: "wasm-fault",
+    },
+    {
+      context: {
+        attempt: { attemptId: 2, backendGeneration: 1, outerTaskId: 1 },
+        type: "task",
+      },
+      fault: { code: "trap", message: "missing child provenance" },
+      generation: 1,
+      role: "detection-template",
+      type: "wasm-fault",
+    },
+    {
+      context: {
+        attempt: { attemptId: 2, backendGeneration: 1, outerTaskId: 1 },
+        jobId: 4,
+        session: { backendGeneration: 1, nonce: 1, requestId: 7, taskType: "one-click-clear" },
+        type: "edge-job",
+      },
+      fault: { code: "trap", message: "child context on root role" },
+      generation: 1,
+      role: "pathfinding-master",
       type: "wasm-fault",
     },
   ])("rejects backend control half-state %#", (value) => {

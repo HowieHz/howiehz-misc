@@ -1,7 +1,13 @@
-import { graphwarBackendAttemptIdentitiesAreEqual } from "../../core/algorithm-backend";
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import {
+  createGraphwarTypescriptWorkerBackendConfiguration,
+  graphwarBackendAttemptIdentitiesAreEqual,
+  type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarWorkerBackendConfiguration,
+} from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { createGraphPoint, type ReadonlyValue as ReadonlyRef } from "../../core/types";
+import { createGraphwarWorkerBackendSlot } from "../../core/worker-backend";
 import type {
   GraphwarLiveClickPreviewRenderInput,
   GraphwarLiveClickPreviewRenderResult,
@@ -33,6 +39,10 @@ interface PendingLiveClickPreviewTask {
 
 /** 实时预览 runner 的并行 Worker 数配置。 */
 interface GraphwarLiveClickPreviewRunnerOptions {
+  /** 当前 preview pool 生命周期内所有懒创建槽共用的 backend 配置。 */
+  backendConfiguration?: GraphwarWorkerBackendConfiguration;
+  /** 任一 preview slot 的明确 WASM fault，包含没有 active task 的初始化故障。 */
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
   /** 已由页面校验/归一化的并行 Worker 数；runner 仍会二次 clamp 作为安全边界。 */
   workerCount: ReadonlyRef<number>;
 }
@@ -40,6 +50,7 @@ interface GraphwarLiveClickPreviewRunnerOptions {
 /** 一个实时预览 Worker 及其当前任务。 */
 interface LiveClickPreviewWorkerSlot {
   activeTask?: PendingLiveClickPreviewTask;
+  backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   worker: Worker;
 }
 
@@ -48,6 +59,7 @@ export const GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM = 16;
 /** 创建实时预览 runner；常驻 Worker 并行处理已开始任务，等待槽只保留最新落点。 */
 export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickPreviewRunnerOptions) {
   const attemptGate = createGraphwarBackendAttemptGate();
+  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
   const workerSlots: LiveClickPreviewWorkerSlot[] = [];
   let latestSettledRequestId = 0;
   // 单个 runner 内的请求全序号；JS 安全整数空间足够一个浏览器会话使用，不做回绕分支。
@@ -60,7 +72,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   function render(input: GraphwarLiveClickPreviewRenderInput) {
     const requestId = nextRequestId;
     nextRequestId += 1;
-    const attempt = attemptGate.beginOuterTask(0);
+    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
     return new Promise<GraphwarLiveClickPreviewRenderResult>((resolve, reject) => {
       const task: PendingLiveClickPreviewTask = {
         attempt,
@@ -174,9 +186,39 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
       return undefined;
     }
 
-    const slot: LiveClickPreviewWorkerSlot = { worker };
-    slot.worker.addEventListener("message", (event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>) =>
-      handleWorkerMessage(slot, event),
+    let hasInitializationFailure = false;
+    let isInitializing = true;
+    const backendSlot = createGraphwarWorkerBackendSlot({
+      configuration: backendConfiguration,
+      onInfrastructureFailure: () => {
+        hasInitializationFailure = true;
+        if (!isInitializing) {
+          handleWorkerFailure(slot);
+        }
+      },
+      onWasmFault: (message) => {
+        options.onWasmFault?.(message);
+        hasInitializationFailure = true;
+        if (!isInitializing) {
+          handleWorkerFailure(slot);
+        }
+      },
+      role: "live-click-preview",
+      worker,
+    });
+    const slot: LiveClickPreviewWorkerSlot = { backendSlot, worker };
+    isInitializing = false;
+    if (hasInitializationFailure || backendSlot.getState().type === "failed") {
+      worker.terminate();
+      if (workerSlots.length === 0) {
+        canUseWorkers = false;
+      }
+      return undefined;
+    }
+    slot.worker.addEventListener(
+      "message",
+      (event: MessageEvent<GraphwarBackendControlMessage | GraphwarLiveClickPreviewWorkerResponse>) =>
+        handleWorkerMessage(slot, event),
     );
     slot.worker.addEventListener("messageerror", () => handleWorkerFailure(slot));
     slot.worker.addEventListener("error", () => handleWorkerFailure(slot));
@@ -187,13 +229,16 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   /** 校验槽位响应，并继续调度最新等待任务。 */
   function handleWorkerMessage(
     slot: LiveClickPreviewWorkerSlot,
-    event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>,
+    event: MessageEvent<GraphwarBackendControlMessage | GraphwarLiveClickPreviewWorkerResponse>,
   ) {
+    const response = event.data;
+    if (slot.backendSlot.handleMessage(response)) {
+      return;
+    }
     const task = slot.activeTask;
     if (!task) {
       return;
     }
-    const response = event.data;
     if (response.id !== task.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt)) {
       // 当前 slot 同时只处理一个请求；身份不匹配说明响应已过期，沿用现有降级路径。
       handleWorkerFailure(slot);

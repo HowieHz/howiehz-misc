@@ -1,10 +1,21 @@
 /** 在 Web Worker 中执行耗时的 Graphwar 截图识别，避免阻塞页面主线程。 */
 import {
+  createGraphwarWasmSessionIdentity,
   graphwarBackendAttemptIdentitiesAreEqual,
+  graphwarWasmSessionIdentitiesAreEqual,
+  isGraphwarWasmFault,
   type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarBackendInitializationMessage,
+  GraphwarWasmFault,
 } from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
+import {
+  createGraphwarWorkerBackendRuntime,
+  createGraphwarWorkerBackendSlot,
+  executeGraphwarWorkerTask,
+} from "../../core/worker-backend";
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
   createSoldierDetectionBoxes,
@@ -44,9 +55,15 @@ import type {
 /** 当前 Worker 暴露给 TypeScript 的最小消息接口。 */
 interface GraphwarDetectionWorkerScope {
   /** 接收主线程检测请求。 */
-  addEventListener: (type: "message", listener: (event: MessageEvent<GraphwarDetectionWorkerRequest>) => void) => void;
+  addEventListener: (
+    type: "message",
+    listener: (event: MessageEvent<GraphwarBackendInitializationMessage | GraphwarDetectionWorkerRequest>) => void,
+  ) => void;
   /** 向主线程发送阶段、成功或错误响应。 */
-  postMessage: (message: GraphwarDetectionWorkerResponse, transfer?: Transferable[]) => void;
+  postMessage: (
+    message: GraphwarBackendControlMessage | GraphwarDetectionWorkerResponse,
+    transfer?: Transferable[],
+  ) => void;
 }
 
 /** 分配给单个士兵模板匹配子 Worker 的候选切片。 */
@@ -82,10 +99,16 @@ interface SoldierTemplateWorkerHandle {
 
 /** 已触发 module 加载、尚未收到候选任务的模板 Worker。 */
 interface StartedSoldierTemplateWorker {
+  /** 当前 lane 正在执行的请求；用于拒绝旧 session typed fault。 */
+  activeRequest?: Pick<GraphwarSoldierTemplateWorkerRequest, "attempt" | "id" | "session">;
+  /** Nested Worker 的 backend control slot。 */
+  backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   /** 移除启动期错误监听；派发后由请求监听接管。 */
   cleanupStartupListener: () => void;
   /** Module 加载期间发生的首个错误。 */
   startupError?: Error;
+  /** 明确 instantiate/ABI fault；不能进入普通 template fallback。 */
+  startupWasmFault?: Error;
   worker: Worker;
   workerIndex: number;
 }
@@ -96,9 +119,16 @@ type SoldierTemplateWorkerStartup =
   | { error: Error; requestedWorkerCount: number; type: "failed" };
 
 const workerScope = self as unknown as GraphwarDetectionWorkerScope;
+const backendRuntime = createGraphwarWorkerBackendRuntime({
+  postControlMessage: (message) => workerScope.postMessage(message),
+  role: "detection-main",
+});
 
 /** 接收主线程请求，并将异步检测交给统一的协议分派入口。 */
 workerScope.addEventListener("message", (event) => {
+  if (backendRuntime.handleMessage(event.data)) {
+    return;
+  }
   void runDetectionRequest(event.data);
 });
 
@@ -107,43 +137,50 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
   const requestContext: GraphwarDetectionRequestContext = { attempt: request.attempt, id: request.id };
   const timings: GraphwarDetectionWorkerTimingEntry[] = [];
   try {
-    if (request.task.type === "detect-auto") {
-      await runAutoDetectionTask(requestContext, request.task, timings);
-      return;
-    }
-    if (request.task.type === "detect-bounds-only") {
-      postStage(requestContext, "detecting-bounds");
-      postSuccess(
-        requestContext,
-        {
-          result: {
-            edgeRect: measureDetectionStage(timings, "detecting-bounds", () =>
-              detectGraphwarPlayArea(request.task.imageData),
-            ),
-          },
-          taskType: "detect-bounds-only",
-        },
-        timings,
-      );
-      return;
-    }
+    await executeGraphwarWorkerTask(
+      backendRuntime,
+      request.attempt,
+      { attempt: request.attempt, type: "task" },
+      async () => {
+        if (request.task.type === "detect-auto") {
+          await runAutoDetectionTask(requestContext, request.task, timings);
+          return;
+        }
+        if (request.task.type === "detect-bounds-only") {
+          postStage(requestContext, "detecting-bounds");
+          postSuccess(
+            requestContext,
+            {
+              result: {
+                edgeRect: measureDetectionStage(timings, "detecting-bounds", () =>
+                  detectGraphwarPlayArea(request.task.imageData),
+                ),
+              },
+              taskType: "detect-bounds-only",
+            },
+            timings,
+          );
+          return;
+        }
 
-    const task = request.task;
-    postStage(requestContext, "detecting-objects");
-    postSuccess(
-      requestContext,
-      {
-        result: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
+        const task = request.task;
+        postStage(requestContext, "detecting-objects");
+        postSuccess(
           requestContext,
-          task.imageData,
-          task.edgeRect,
-          task.thresholds,
-          task.soldierSettings,
+          {
+            result: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
+              requestContext,
+              task.imageData,
+              task.edgeRect,
+              task.thresholds,
+              task.soldierSettings,
+              timings,
+            ),
+            taskType: "detect-bounds",
+          },
           timings,
-        ),
-        taskType: "detect-bounds",
+        );
       },
-      timings,
     );
   } catch (error) {
     workerScope.postMessage({
@@ -206,7 +243,7 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
    * 2026-07-28 用 16 张真实截图、4 Workers 交错测试各 384 次：中位数约从 135.5ms 降到
    * 134.8ms（-0.5%），均值约改善 0.8%。收益很小，后续调整必须继续覆盖低/高候选截图。
    */
-  const startup = startSoldierTemplateWorkers(settings.templateMatchingWorkerCount);
+  const startup = startSoldierTemplateWorkers(settings.templateMatchingWorkerCount, requestContext.attempt);
   const warnings: GraphwarDetectionWarning[] = [];
   let matches: SoldierMatchCandidate[];
   try {
@@ -291,6 +328,9 @@ async function matchSoldierTemplatesWithOptionalWorkers(
     });
     return matches;
   } catch (error) {
+    if (isGraphwarWasmFault(error)) {
+      throw error;
+    }
     warnings.push({
       code: "template-matching-worker-fallback",
       message: error instanceof Error ? error.message : String(error),
@@ -340,6 +380,7 @@ async function runSoldierTemplateWorkerTasks(
   startedWorkers: readonly StartedSoldierTemplateWorker[],
   timings: GraphwarDetectionWorkerTimingEntry[],
 ) {
+  const session = createGraphwarWasmSessionIdentity(requestContext.attempt, requestContext.id, "detection");
   const handles: SoldierTemplateWorkerHandle[] = [];
   try {
     measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-dispatch" }, () => {
@@ -362,39 +403,37 @@ async function runSoldierTemplateWorkerTasks(
         if (!started) {
           throw new Error(`Template worker ${task.workerIndex} was not started`);
         }
-        handles.push(createSoldierTemplateWorkerHandle(started, requestContext.attempt, task, edgeRect, scale));
+        handles.push(
+          createSoldierTemplateWorkerHandle(started, requestContext.attempt, session, task, edgeRect, scale),
+        );
       }
     });
 
-    const failures: string[] = [];
     const matches: SoldierMatchCandidate[] = [];
-    for (const settled of await Promise.allSettled(
+    for (const settled of await Promise.all(
       handles.map(async (handle) => ({ handle, result: await handle.promise })),
     )) {
-      if (settled.status === "rejected") {
-        failures.push(settled.reason instanceof Error ? settled.reason.message : String(settled.reason));
-        continue;
-      }
-
-      recordDetectionTimingDetail(timings, "matching-soldier-templates", settled.value.result.elapsedMs, {
+      recordDetectionTimingDetail(timings, "matching-soldier-templates", settled.result.elapsedMs, {
         type: "template-matching-worker",
-        workerIndex: settled.value.handle.workerIndex,
+        workerIndex: settled.handle.workerIndex,
       });
-      matches.push(...settled.value.result.matches);
-    }
-    if (failures.length) {
-      throw new Error(failures.join("\n"));
+      matches.push(...settled.result.matches);
     }
     return matches;
   } finally {
     for (const handle of handles) {
       handle.cleanup();
     }
+    // 失败时也必须先终止未分配候选的已启动 siblings，再进入 main 串行 fallback。
+    for (const started of startedWorkers) {
+      started.cleanupStartupListener();
+      started.worker.terminate();
+    }
   }
 }
 
 /** 提前启动配置数量的 Worker；候选数稍后确定，多余实例由调用方统一终止。 */
-function startSoldierTemplateWorkers(workerCount: number) {
+function startSoldierTemplateWorkers(workerCount: number, attempt: GraphwarBackendAttemptIdentity) {
   const startedWorkers: StartedSoldierTemplateWorker[] = [];
   if (workerCount <= 1 || typeof Worker === "undefined") {
     return { type: "available", workers: startedWorkers } satisfies SoldierTemplateWorkerStartup;
@@ -405,17 +444,74 @@ function startSoldierTemplateWorkers(workerCount: number) {
         name: `graphwar-soldier-template-${workerIndex}`,
         type: "module",
       });
-      const started: StartedSoldierTemplateWorker = {
-        cleanupStartupListener: () => worker.removeEventListener("error", handleStartupError),
-        worker,
-        workerIndex,
+      let isInitializing = true;
+      let activeRequest: StartedSoldierTemplateWorker["activeRequest"];
+      let startupError: Error | undefined;
+      let startupWasmFault: Error | undefined;
+      /** 候选扫描期间先消费 backend control；业务响应只可能在派发候选后出现。 */
+      const handleStartupMessage = (event: MessageEvent<unknown>) => {
+        if (isInitializing || !backendSlot.handleMessage(event.data)) {
+          startupError ??= new Error(`Worker ${workerIndex}: returned a task message before template dispatch`);
+        }
       };
       /** 候选扫描期间先保存 module 加载错误，派发时再进入原有 fallback。 */
       const handleStartupError = (event: ErrorEvent) => {
-        started.startupError ??=
+        startupError ??=
           event.error instanceof Error ? event.error : new Error(`Worker ${workerIndex}: ${event.message}`);
       };
+      worker.addEventListener("message", handleStartupMessage);
       worker.addEventListener("error", handleStartupError);
+      const backendSlot = createGraphwarWorkerBackendSlot({
+        configuration: backendRuntime.getNestedConfiguration(attempt),
+        onInfrastructureFailure: (error) => {
+          startupError ??= error;
+        },
+        onWasmFault: (message) => {
+          const fault = new GraphwarWasmFault(message.fault.code, message.fault.message);
+          if (message.fault.code === "module-clone") {
+            startupError ??= fault;
+            return;
+          }
+          workerScope.postMessage(message);
+          startupWasmFault ??= fault.markReported();
+        },
+        role: "detection-template",
+        shouldAcceptWasmFault: (message) => {
+          if (message.context.type === "initialization") {
+            return true;
+          }
+          return (
+            message.context.type === "template-shard" &&
+            activeRequest !== undefined &&
+            message.context.shardId === activeRequest.id &&
+            graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, activeRequest.attempt) &&
+            graphwarWasmSessionIdentitiesAreEqual(message.context.session, activeRequest.session)
+          );
+        },
+        worker,
+      });
+      isInitializing = false;
+      const started: StartedSoldierTemplateWorker = {
+        backendSlot,
+        cleanupStartupListener: () => {
+          worker.removeEventListener("message", handleStartupMessage);
+          worker.removeEventListener("error", handleStartupError);
+        },
+        get startupError() {
+          return startupError;
+        },
+        get startupWasmFault() {
+          return startupWasmFault;
+        },
+        get activeRequest() {
+          return activeRequest;
+        },
+        set activeRequest(request) {
+          activeRequest = request;
+        },
+        worker,
+        workerIndex,
+      };
       startedWorkers.push(started);
     }
     return { type: "available", workers: startedWorkers } satisfies SoldierTemplateWorkerStartup;
@@ -436,6 +532,7 @@ function startSoldierTemplateWorkers(workerCount: number) {
 function createSoldierTemplateWorkerHandle(
   started: StartedSoldierTemplateWorker,
   attempt: GraphwarBackendAttemptIdentity,
+  session: ReturnType<typeof createGraphwarWasmSessionIdentity>,
   task: SoldierTemplateWorkerTask,
   edgeRect: BoundsRect,
   scale: number,
@@ -448,6 +545,10 @@ function createSoldierTemplateWorkerHandle(
       reject(started.startupError);
       return;
     }
+    if (started.startupWasmFault) {
+      reject(started.startupWasmFault);
+      return;
+    }
     const request: GraphwarSoldierTemplateWorkerRequest = {
       attempt,
       candidates: task.candidates,
@@ -455,9 +556,19 @@ function createSoldierTemplateWorkerHandle(
       id: task.workerIndex,
       imageData: task.imageData,
       scale,
+      session,
     };
+    started.activeRequest = request;
     /** 只结算当前请求的首个有效响应，避免迟到消息污染结果。 */
     const handleMessage = (event: MessageEvent<GraphwarSoldierTemplateWorkerResponse>) => {
+      if (started.backendSlot.handleMessage(event.data)) {
+        const backendState = started.backendSlot.getState();
+        if (backendState.type === "failed") {
+          cleanup?.();
+          reject(started.startupWasmFault ?? backendState.error);
+        }
+        return;
+      }
       const response = event.data;
       if (response.id !== request.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, request.attempt)) {
         cleanup?.();
@@ -483,6 +594,7 @@ function createSoldierTemplateWorkerHandle(
     };
     /** 统一解绑 lane 监听器，确保成功、失败和最终回收共用清理路径。 */
     cleanup = () => {
+      started.activeRequest = undefined;
       worker.removeEventListener("message", handleMessage);
       worker.removeEventListener("messageerror", handleMessageError);
       worker.removeEventListener("error", handleError);

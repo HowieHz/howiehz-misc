@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
@@ -63,8 +63,10 @@ const attempt = {
   backendGeneration: 0,
   outerTaskId: 1,
 } satisfies GraphwarBackendAttemptIdentity;
-const postMessage = vi.fn<(message: GraphwarPathfindingWorkerResponse) => void>();
-let handleMessage: ((event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void) | undefined;
+const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse) => void>();
+let handleMessage:
+  | ((event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest>) => void)
+  | undefined;
 
 beforeAll(async () => {
   Object.defineProperty(globalThis, "self", {
@@ -72,7 +74,7 @@ beforeAll(async () => {
     value: {
       addEventListener: (
         type: "message",
-        listener: (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void,
+        listener: (event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest>) => void,
       ) => {
         if (type === "message") {
           handleMessage = listener;
@@ -82,6 +84,16 @@ beforeAll(async () => {
     },
   });
   await import("./main.worker");
+  handleMessage?.({
+    data: {
+      backend: { type: "typescript" },
+      generation: 0,
+      role: "pathfinding-master",
+      type: "backend-init",
+    },
+  } as MessageEvent<GraphwarBackendControlMessage>);
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledOnce());
+  postMessage.mockClear();
 });
 
 afterAll(() => {

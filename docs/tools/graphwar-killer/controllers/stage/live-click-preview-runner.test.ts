@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
+import { isGraphwarBackendControlMessage, type GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import { createGraphPoint } from "../../core/types";
 import type {
   GraphwarLiveClickPreviewRenderInput,
@@ -25,6 +26,7 @@ describe("live click preview runner", () => {
     const firstCancelled = expect(first).rejects.toThrow("cancelled");
     const secondCancelled = expect(second).rejects.toThrow("cancelled");
     expect(FakeWorker.instances).toHaveLength(2);
+    expect(FakeWorker.instances.every((worker) => worker.controlMessages.length === 1)).toBe(true);
     expect(FakeWorker.instances[0].requests[0].attempt).toEqual({
       attemptId: 1,
       backendGeneration: 0,
@@ -151,6 +153,7 @@ class FakeWorker {
   static readonly instances: FakeWorker[] = [];
   static failPostMessage = false;
 
+  readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarLiveClickPreviewWorkerRequest[] = [];
   terminated = false;
   private readonly messageListeners: ((event: MessageEvent<GraphwarLiveClickPreviewWorkerResponse>) => void)[] = [];
@@ -165,11 +168,15 @@ class FakeWorker {
     }
   }
 
-  postMessage(request: GraphwarLiveClickPreviewWorkerRequest) {
+  postMessage(message: GraphwarBackendControlMessage | GraphwarLiveClickPreviewWorkerRequest) {
     if (FakeWorker.failPostMessage) {
       throw new Error("postMessage failed");
     }
-    this.requests.push(request);
+    if (isGraphwarBackendControlMessage(message)) {
+      this.controlMessages.push(message);
+      return;
+    }
+    this.requests.push(message);
   }
 
   terminate() {

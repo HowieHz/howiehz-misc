@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { isGraphwarBackendControlMessage, type GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import { createPixelPoint } from "../../core/types";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
@@ -40,6 +41,9 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const worker = getWorker(0);
     const request = getOneClickClearRequest(worker, 0);
 
+    expect(worker.controlMessages).toEqual([
+      { backend: { type: "typescript" }, generation: 0, role: "pathfinding-master", type: "backend-init" },
+    ]);
     expect(request.task.input.isDeleteOptimizationEnabled).toBe(true);
     expect(request.attempt.backendGeneration).toBe(0);
     worker.emit({
@@ -231,6 +235,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
 
 class FakeWorker {
   static readonly instances: FakeWorker[] = [];
+  readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarPathfindingWorkerRequest[] = [];
   terminated = false;
   private readonly listeners = {
@@ -255,8 +260,12 @@ class FakeWorker {
     }
   }
 
-  postMessage(request: GraphwarPathfindingWorkerRequest) {
-    this.requests.push(request);
+  postMessage(message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest) {
+    if (isGraphwarBackendControlMessage(message)) {
+      this.controlMessages.push(message);
+      return;
+    }
+    this.requests.push(message);
   }
 
   terminate() {

@@ -1,10 +1,16 @@
 /** 主线程侧 Graphwar 几何寻路 runner，集中管理 Worker 生命周期和取消。 */
 import {
+  createGraphwarTypescriptWorkerBackendConfiguration,
   graphwarBackendAttemptIdentitiesAreEqual,
+  isGraphwarBackendControlMessage,
   type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarWorkerBackendConfiguration,
+  GraphwarWasmFault,
 } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { clonePixelPoint } from "../../core/types";
+import { createGraphwarWorkerBackendSlot } from "../../core/worker-backend";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildResult,
@@ -76,6 +82,12 @@ type PendingPathfindingWorkerTask = PendingPathfindingWorkerTaskBase &
       }
   );
 
+/** Pathfinding master 与 nested edge Worker 共用的 backend 生命周期注入点。 */
+export interface GraphwarPathfindingRunnerOptions {
+  backendConfiguration?: GraphwarWorkerBackendConfiguration;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
+}
+
 /**
  * 创建页面可复用的几何寻路 runner。
  *
@@ -83,9 +95,11 @@ type PendingPathfindingWorkerTask = PendingPathfindingWorkerTaskBase &
  *
  * 取消直接终止并丢弃 Worker，既能立即停止同步搜索，也避免所有正常搜索为低频取消持续承担分片调度开销；后续请求再按需创建。
  */
-export function createGraphwarPathfindingRunner() {
+export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunnerOptions = {}) {
   const attemptGate = createGraphwarBackendAttemptGate();
+  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
   let worker: Worker | undefined;
+  let workerBackendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot> | undefined;
   let cleanupWorkerListeners: (() => void) | undefined;
   let nextRequestId = 1;
   let pendingTask: PendingPathfindingWorkerTask | undefined;
@@ -105,9 +119,9 @@ export function createGraphwarPathfindingRunner() {
       type: "module",
     });
     worker = createdWorker;
-    const handleMessage = (event: MessageEvent<GraphwarPathfindingWorkerResponse>) => {
+    const handleMessage = (event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse>) => {
       if (worker === createdWorker) {
-        handleWorkerMessage(event);
+        handleWorkerMessage(createdWorker, event);
       }
     };
     const handleMessageError = () => {
@@ -130,6 +144,37 @@ export function createGraphwarPathfindingRunner() {
       createdWorker.removeEventListener("messageerror", handleMessageError);
       createdWorker.removeEventListener("error", handleError);
     };
+    let initializationError: Error | undefined;
+    const createdBackendSlot = createGraphwarWorkerBackendSlot({
+      configuration: backendConfiguration,
+      onInfrastructureFailure: (error) => {
+        if (workerBackendSlot) {
+          rejectPendingTask(error);
+        } else {
+          initializationError = error;
+        }
+      },
+      onWasmFault: (message) => {
+        if (workerBackendSlot) {
+          handleWasmFaultFromWorker(createdWorker, message);
+        } else {
+          options.onWasmFault?.(message);
+          initializationError = new GraphwarWasmFault(message.fault.code, message.fault.message);
+        }
+      },
+      role: "pathfinding-master",
+      worker: createdWorker,
+    });
+    workerBackendSlot = createdBackendSlot;
+    const backendState = createdBackendSlot.getState();
+    if (initializationError) {
+      resetWorker();
+      throw initializationError;
+    }
+    if (backendState.type === "failed") {
+      resetWorker();
+      throw backendState.error;
+    }
     return createdWorker;
   }
 
@@ -222,7 +267,7 @@ export function createGraphwarPathfindingRunner() {
     options?: GraphwarPathfindingRunOptions,
   ) {
     nextRequestId += 1;
-    const attempt = attemptGate.beginOuterTask(0);
+    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
     const authoritativeRequest = { ...request, attempt } satisfies GraphwarPathfindingWorkerRequest;
     return new Promise<TResult>((resolve, reject) => {
       const taskIdentity =
@@ -284,8 +329,21 @@ export function createGraphwarPathfindingRunner() {
   }
 
   /** 只接收当前请求 id 对应的 Worker 消息，丢弃过期响应。 */
-  function handleWorkerMessage(event: MessageEvent<GraphwarPathfindingWorkerResponse>) {
+  function handleWorkerMessage(
+    sourceWorker: Worker,
+    event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse>,
+  ) {
     const response = event.data;
+    if (isGraphwarBackendControlMessage(response)) {
+      if (response.role === "pathfinding-master") {
+        workerBackendSlot?.handleMessage(response);
+      } else if (response.role === "one-click-clear-edge" && response.type === "wasm-fault") {
+        handleWasmFaultFromWorker(sourceWorker, response);
+      } else {
+        rejectPendingTask(new Error("Pathfinding Worker returned invalid backend control"));
+      }
+      return;
+    }
     if (!pendingTask) {
       return;
     }
@@ -350,6 +408,26 @@ export function createGraphwarPathfindingRunner() {
     resetWorkerIfCacheInvalidated();
   }
 
+  /** Root 或 nested Worker typed fault 直接进入页面 fuse callback，不能伪装成普通 search error。 */
+  function handleWasmFaultFromWorker(
+    sourceWorker: Worker,
+    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+  ) {
+    if (worker !== sourceWorker) {
+      return;
+    }
+    options.onWasmFault?.(message);
+    if (pendingTask) {
+      const task = pendingTask;
+      pendingTask = undefined;
+      if (attemptGate.canCommit(task.attempt)) {
+        attemptGate.completeOuterTask(task.attempt);
+      }
+      task.reject(new GraphwarWasmFault(message.fault.code, message.fault.message));
+    }
+    resetWorker();
+  }
+
   /** 将当前请求的畸形消息作为协议错误拒绝，并丢弃不可信 Worker。 */
   function rejectPendingProtocolResponse() {
     rejectPendingTask(new Error("Graphwar pathfinding worker returned an invalid response"));
@@ -384,6 +462,7 @@ export function createGraphwarPathfindingRunner() {
     worker = undefined;
     cleanupWorkerListeners?.();
     cleanupWorkerListeners = undefined;
+    workerBackendSlot = undefined;
     activeWorker.terminate();
   }
 

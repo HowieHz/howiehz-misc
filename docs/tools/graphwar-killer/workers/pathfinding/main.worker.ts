@@ -1,6 +1,11 @@
 import {
+  createGraphwarWasmSessionIdentity,
   graphwarBackendAttemptIdentitiesAreEqual,
+  graphwarWasmSessionIdentitiesAreEqual,
   type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarBackendInitializationMessage,
+  GraphwarWasmFault,
 } from "../../core/algorithm-backend";
 import {
   normalizeAutomaticPathPointForMinimumForwardStep,
@@ -11,6 +16,11 @@ import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
 import { createGraphPoint, type GraphBounds, type PixelPoint } from "../../core/types";
+import {
+  createGraphwarWorkerBackendRuntime,
+  createGraphwarWorkerBackendSlot,
+  executeGraphwarWorkerTask,
+} from "../../core/worker-backend";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
 import { resolveFormulaModeContract } from "../../formula/mode-contract";
@@ -91,13 +101,17 @@ interface GraphwarPathfindingWorkerScope {
   /** 接收主线程几何寻路请求。 */
   addEventListener: (
     type: "message",
-    listener: (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void,
+    listener: (event: MessageEvent<GraphwarBackendInitializationMessage | GraphwarPathfindingWorkerRequest>) => void,
   ) => void;
   /** 返回预览、成功或错误响应。 */
-  postMessage: (message: GraphwarPathfindingWorkerResponse) => void;
+  postMessage: (message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse) => void;
 }
 
 const workerScope = self as unknown as GraphwarPathfindingWorkerScope;
+const backendRuntime = createGraphwarWorkerBackendRuntime({
+  postControlMessage: (message) => workerScope.postMessage(message),
+  role: "pathfinding-master",
+});
 
 /** Master Worker 缓存的一份可视图障碍数据。 */
 interface MasterVisibilityGraphCacheEntry {
@@ -173,6 +187,8 @@ interface EdgeWorkerHandle {
   activeJob?: GraphwarOneClickClearDagEdgeBuildJob;
   /** 当前 job 的 session 内请求号；复用 worker 后用于拒绝迟到结果。 */
   activeRequestId?: number;
+  /** Nested edge Worker 的 backend control slot。 */
+  backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   /** 清理事件监听器。 */
   cleanup: () => void;
   /** 是否已结束并记录耗时。 */
@@ -197,7 +213,7 @@ interface EdgeRouteTimingTotals {
   routeMapPixelsElapsedMs: number;
 }
 
-type OneClickClearDagEdgeSessionState = "disposed" | "fallback" | "idle" | "running";
+type OneClickClearDagEdgeSessionState = "disposed" | "failed" | "fallback" | "idle" | "running";
 
 /** 普通 DAG 建边只支持几何路线；Step-glitch 由独立的 x+ scanner 处理。 */
 type OneClickClearDagEdgePolicy = Exclude<GraphwarPathSearchPolicy, { type: "step-glitch" }>;
@@ -246,6 +262,9 @@ interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
 
 /** 接收页面请求，并将异步搜索交给统一的 master 分派入口。 */
 workerScope.addEventListener("message", (event) => {
+  if (backendRuntime.handleMessage(event.data)) {
+    return;
+  }
   const request = event.data;
   void handleRequest(request);
 });
@@ -253,63 +272,70 @@ workerScope.addEventListener("message", (event) => {
 /** 将单个 master 请求分派到对应搜索流程，并统一序列化异常。 */
 async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
   try {
-    if (request.task.type === "find-route") {
-      const input = request.task.input;
-      postResponse({
-        attempt: request.attempt,
-        id: request.id,
-        result: await findRouteForMask(
-          request.id,
-          request.attempt,
-          input,
-          masterVisibilityGraphCache.get(createMasterVisibilityGraphCacheKey(input))?.routeMask ?? input.routeMask,
-        ),
-        taskType: "find-route",
-        type: "success",
-      });
-      return;
-    }
+    await executeGraphwarWorkerTask(
+      backendRuntime,
+      request.attempt,
+      { attempt: request.attempt, type: "task" },
+      async () => {
+        if (request.task.type === "find-route") {
+          const input = request.task.input;
+          postResponse({
+            attempt: request.attempt,
+            id: request.id,
+            result: await findRouteForMask(
+              request.id,
+              request.attempt,
+              input,
+              masterVisibilityGraphCache.get(createMasterVisibilityGraphCacheKey(input))?.routeMask ?? input.routeMask,
+            ),
+            taskType: "find-route",
+            type: "success",
+          });
+          return;
+        }
 
-    if (request.task.type === "find-smart-path") {
-      postResponse({
-        attempt: request.attempt,
-        id: request.id,
-        result: await findSmartPath(
-          request.id,
-          request.attempt,
-          request.task.input,
-          request.task.shouldCollectDiagnostics === true,
-        ),
-        taskType: "find-smart-path",
-        type: "success",
-      });
-      return;
-    }
+        if (request.task.type === "find-smart-path") {
+          postResponse({
+            attempt: request.attempt,
+            id: request.id,
+            result: await findSmartPath(
+              request.id,
+              request.attempt,
+              request.task.input,
+              request.task.shouldCollectDiagnostics === true,
+            ),
+            taskType: "find-smart-path",
+            type: "success",
+          });
+          return;
+        }
 
-    if (request.task.type === "build-one-click-clear-dag-edges") {
-      postResponse({
-        attempt: request.attempt,
-        id: request.id,
-        result: await buildOneClickClearDagEdges(request.attempt, request.task.input),
-        taskType: "build-one-click-clear-dag-edges",
-        type: "success",
-      });
-      return;
-    }
+        if (request.task.type === "build-one-click-clear-dag-edges") {
+          postResponse({
+            attempt: request.attempt,
+            id: request.id,
+            result: await buildOneClickClearDagEdges(request.id, request.attempt, request.task.input),
+            taskType: "build-one-click-clear-dag-edges",
+            type: "success",
+          });
+          return;
+        }
 
-    postResponse({
-      attempt: request.attempt,
-      id: request.id,
-      result: await buildOneClickClearPath(
-        request.id,
-        request.attempt,
-        request.task.input,
-        request.task.shouldReportIncumbents,
-        request.task.shouldCollectDiagnostics === true,
-      ),
-      taskType: "build-one-click-clear-path",
-      type: "success",
-    });
+        postResponse({
+          attempt: request.attempt,
+          id: request.id,
+          result: await buildOneClickClearPath(
+            request.id,
+            request.attempt,
+            request.task.input,
+            request.task.shouldReportIncumbents,
+            request.task.shouldCollectDiagnostics === true,
+          ),
+          taskType: "build-one-click-clear-path",
+          type: "success",
+        });
+      },
+    );
   } catch (error) {
     postResponse({
       attempt: request.attempt,
@@ -717,7 +743,7 @@ function getMasterStepGlitchEvidence(
   path: readonly PixelPoint[],
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
 ): GraphwarStepGlitchPrefixEvidence | undefined {
-  if (!masterStepGlitchEvidence || !masterStepGlitchEvidenceIsEnabled(input)) {
+  if (!masterStepGlitchEvidence || !isMasterStepGlitchEvidenceEnabled(input)) {
     return undefined;
   }
   const key = createMasterStepGlitchEvidenceKey(input, path, prefixTarget);
@@ -744,7 +770,7 @@ function setMasterStepGlitchEvidence(
   path: readonly PixelPoint[],
   prefixEvidence: GraphwarStepGlitchPrefixEvidence,
 ) {
-  if (!masterStepGlitchEvidenceIsEnabled(input)) {
+  if (!isMasterStepGlitchEvidenceEnabled(input)) {
     return;
   }
   masterStepGlitchEvidence = {
@@ -757,7 +783,7 @@ function setMasterStepGlitchEvidence(
 }
 
 /** 判断 master Worker 是否应保存 Step 邪道前缀证据。 */
-function masterStepGlitchEvidenceIsEnabled(input: MasterStepGlitchEvidenceContext) {
+function isMasterStepGlitchEvidenceEnabled(input: MasterStepGlitchEvidenceContext) {
   return Boolean(input.simulationMask && input.settings.stepGlitchObstacleMask === input.simulationMask);
 }
 
@@ -1086,7 +1112,7 @@ async function buildOneClickClearPath(
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
-        dagEdgeSession ??= createOneClickClearDagEdgeSession(attempt, request);
+        dagEdgeSession ??= createOneClickClearDagEdgeSession(requestId, attempt, request);
         return dagEdgeSession.runBatch(request.jobs);
       },
       bounds: input.bounds,
@@ -1191,10 +1217,11 @@ function createOneClickClearPreflightBlockedResult(
 
 /** 复用请求级 edge session 构建一批 DAG 边并收集子 Worker 耗时。 */
 async function buildOneClickClearDagEdges(
+  requestId: number,
   attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  const session = createOneClickClearDagEdgeSession(attempt, input);
+  const session = createOneClickClearDagEdgeSession(requestId, attempt, input);
   try {
     const result = await session.runBatch(input.jobs);
     return {
@@ -1213,6 +1240,7 @@ async function buildOneClickClearDagEdges(
  * Step 动态 DAG 会按 x 层多次提交批次；session 让 child worker、可视图预处理和 Theta* scratch 跨批次复用。
  */
 function createOneClickClearDagEdgeSession(
+  requestId: number,
   attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearDagEdgesWorkerInput,
 ): OneClickClearDagEdgeSession {
@@ -1235,6 +1263,8 @@ function createOneClickClearDagEdgeSession(
   let serialRouteContext: GraphwarOneClickClearDagEdgeRouteBuildContext | undefined;
   let sharedInit: GraphwarOneClickClearEdgeWorkerSharedInit | undefined;
   let state: OneClickClearDagEdgeSessionState = "idle";
+  let wasmFault: GraphwarWasmFault | undefined;
+  const sessionIdentity = createGraphwarWasmSessionIdentity(attempt, requestId, "one-click-clear");
 
   /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
   const finishWorker = (handle: EdgeWorkerHandle) => {
@@ -1319,7 +1349,7 @@ function createOneClickClearDagEdgeSession(
 
   /** 子 Worker 不可用时终止池，并只补跑尚未完成的 jobs。 */
   const switchToSerialFallback = () => {
-    if (state === "disposed" || state === "fallback") {
+    if (state === "disposed" || state === "failed" || state === "fallback") {
       return;
     }
     const batch = activeBatch;
@@ -1358,6 +1388,27 @@ function createOneClickClearDagEdgeSession(
       });
   };
 
+  /** Child typed fault 先终止全部 siblings/session 并拒绝批次，再原样通知页面 fuse。 */
+  const failWithWasmFault = (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => {
+    if (state === "disposed" || state === "failed") {
+      return;
+    }
+    const fault = new GraphwarWasmFault(message.fault.code, message.fault.message);
+    wasmFault = fault;
+    state = "failed";
+    const batch = activeBatch;
+    activeBatch = undefined;
+    for (const handle of handles) {
+      finishWorker(handle);
+    }
+    if (batch && !batch.isSettled) {
+      batch.isSettled = true;
+      batch.reject(wasmFault);
+    }
+    workerScope.postMessage(message);
+    fault.markReported();
+  };
+
   /** 向空闲且就绪的 edge Worker 分配当前批次的下一个 job。 */
   const assignNextJob = (handle: EdgeWorkerHandle) => {
     const batch = activeBatch;
@@ -1380,6 +1431,7 @@ function createOneClickClearDagEdgeSession(
         attempt,
         job,
         requestId,
+        session: sessionIdentity,
         type: "job",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
@@ -1427,7 +1479,39 @@ function createOneClickClearDagEdgeSession(
       name: `graphwar-one-click-clear-edge-${workerIndex}`,
       type: "module",
     });
+    const backendSlot = createGraphwarWorkerBackendSlot({
+      configuration: backendRuntime.getNestedConfiguration(attempt),
+      onInfrastructureFailure: () => switchToSerialFallback(),
+      onWasmFault: (message) => {
+        if (message.fault.code === "module-clone") {
+          switchToSerialFallback();
+          return;
+        }
+        failWithWasmFault(message);
+      },
+      role: "one-click-clear-edge",
+      shouldAcceptWasmFault: (message) => {
+        if (message.context.type === "initialization") {
+          return true;
+        }
+        if (
+          (message.context.type !== "edge-session" && message.context.type !== "edge-job") ||
+          !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, attempt) ||
+          !graphwarWasmSessionIdentitiesAreEqual(message.context.session, sessionIdentity)
+        ) {
+          return false;
+        }
+        const activeHandle = handles.find((candidate) => candidate.worker === worker);
+        return message.context.type === "edge-session" || message.context.jobId === activeHandle?.activeJob?.id;
+      },
+      worker,
+    });
+    if (backendSlot.getState().type === "failed") {
+      worker.terminate();
+      return undefined;
+    }
     const handle: EdgeWorkerHandle = {
+      backendSlot,
       cleanup: () => cleanup(),
       isFinished: false,
       isInitialized: false,
@@ -1440,6 +1524,9 @@ function createOneClickClearDagEdgeSession(
     const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
       const response = event.data;
       if (handle.isFinished) {
+        return;
+      }
+      if (handle.backendSlot.handleMessage(response)) {
         return;
       }
       if (response.workerIndex !== handle.workerIndex) {
@@ -1488,6 +1575,7 @@ function createOneClickClearDagEdgeSession(
       handle.worker.postMessage({
         attempt,
         context: { ...init, workerIndex: handle.workerIndex },
+        session: sessionIdentity,
         type: "init",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
@@ -1551,6 +1639,9 @@ function createOneClickClearDagEdgeSession(
   const runBatch = async (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => {
     if (state === "disposed") {
       throw new Error("One-Click Clear DAG edge session is disposed");
+    }
+    if (state === "failed") {
+      throw wasmFault ?? new GraphwarWasmFault("trap", "One-Click Clear edge Worker backend failed");
     }
     if (state === "running" || serialBatchRunning) {
       throw new Error("One-Click Clear DAG edge batches must run sequentially");

@@ -1,4 +1,4 @@
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarWasmSessionIdentity } from "../../core/algorithm-backend";
 import type { PlaneGridPoint } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type {
@@ -241,12 +241,16 @@ export type GraphwarOneClickClearEdgeWorkerRequest =
   | {
       attempt: GraphwarBackendAttemptIdentity;
       context: GraphwarOneClickClearEdgeWorkerInit;
+      /** Master one-click session；typed init fault 必须带回同一份来源身份。 */
+      session: GraphwarWasmSessionIdentity;
       type: "init";
     }
   | {
       attempt: GraphwarBackendAttemptIdentity;
       job: GraphwarOneClickClearDagEdgeBuildJob;
       requestId: number;
+      /** 与 init 相同的请求级 session 身份。 */
+      session: GraphwarWasmSessionIdentity;
       type: "job";
     };
 

@@ -1,4 +1,4 @@
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import { isGraphwarWasmFault, type GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
@@ -273,6 +273,9 @@ function createFailureOutcome(
   stage: GraphwarTrajectoryCalculationFailureStage,
   error: unknown,
 ): GraphwarTrajectoryCalculationOutcome {
+  if (isGraphwarWasmFault(error)) {
+    throw error;
+  }
   return {
     message: error instanceof Error ? error.message : String(error),
     ok: false,

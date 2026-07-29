@@ -7,6 +7,7 @@ const UINT32_ADDRESS_SPACE_SIZE = UINT32_MAX + 1;
 export type GraphwarWasmAdapterErrorCode =
   | "duplicate-work-id"
   | "invalid-alignment"
+  | "invalid-detection-result"
   | "invalid-enum"
   | "invalid-finite-number"
   | "invalid-expression-program"

@@ -43,6 +43,8 @@ interface GraphwarWasmArenaExports {
 }
 
 interface GraphwarWasmFormulaExports {
+  beginDetectionTask: (inputPointer: number, inputByteLength: number) => number;
+  resumeDetectionTask: (sessionPointer: number) => number;
   runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
   runTrajectory: (inputPointer: number, inputByteLength: number) => number;
 }
@@ -199,6 +201,52 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
     } catch (error) {
       throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM arena reset failed", "allocation");
     }
+  }
+
+  /** Executes the synchronous detection core until it completes or reaches an external-work boundary. */
+  beginDetectionTask(inputPointer: number, inputByteLength: number) {
+    if (!isU32(inputPointer) || !isU32(inputByteLength)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM detection fields must be uint32 values");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.beginDetectionTask(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM detection command failed", "trap");
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 8 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM detection returned an invalid result pointer");
+    }
+    return resultPointer;
+  }
+
+  /** Continues an exact retained detection session pointer after a stage or external-work boundary. */
+  resumeDetectionTask(sessionPointer: number) {
+    if (!isU32(sessionPointer)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM detection session pointer must be a uint32 value");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.resumeDetectionTask(sessionPointer);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM detection resume failed", "trap");
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 8 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM detection resume returned an invalid result pointer");
+    }
+    return resultPointer;
   }
 
   /** 执行一个 typed formula-domain command；具体 result layout 仍由命令 Adapter 完整验证。 */

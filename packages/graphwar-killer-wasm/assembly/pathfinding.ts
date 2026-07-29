@@ -48,6 +48,13 @@ function loadPositivePolicyInteger(pointer: u32, index: u32, maximum: u32): u32 
 }
 
 @inline
+function loadNonNegativePolicyValue(pointer: u32, index: u32): f64 {
+  const value = loadContextValue(pointer, index);
+  if (!isFiniteValue(value) || value < 0) trap();
+  return value;
+}
+
+@inline
 function clampValue(value: f64, minimum: f64, maximum: f64): f64 {
   return NativeMath.max(minimum, NativeMath.min(maximum, value));
 }
@@ -474,6 +481,568 @@ function createBoundaryEdges(maskPointer: u32, componentIdsPointer: u32, edgeCou
   return pointer;
 }
 
+const VISIBILITY_COMPONENT_RECORD_LENGTH: u32 = 7;
+const VISIBILITY_COMPONENT_MIN_X_INDEX: u32 = 0;
+const VISIBILITY_COMPONENT_MAX_X_INDEX: u32 = 1;
+const VISIBILITY_COMPONENT_MIN_Y_INDEX: u32 = 2;
+const VISIBILITY_COMPONENT_MAX_Y_INDEX: u32 = 3;
+const VISIBILITY_COMPONENT_SUM_X_INDEX: u32 = 4;
+const VISIBILITY_COMPONENT_SUM_Y_INDEX: u32 = 5;
+const VISIBILITY_COMPONENT_CELL_COUNT_INDEX: u32 = 6;
+
+const VISIBILITY_EDGE_COMPONENT_OFFSET: u32 = 0;
+const VISIBILITY_EDGE_START_X_OFFSET: u32 = 4;
+const VISIBILITY_EDGE_START_Y_OFFSET: u32 = 8;
+const VISIBILITY_EDGE_END_X_OFFSET: u32 = 12;
+const VISIBILITY_EDGE_END_Y_OFFSET: u32 = 16;
+const VISIBILITY_EDGE_BYTE_LENGTH: u32 = 20;
+
+function createVisibilityComponentStats(componentIdsPointer: u32, componentCount: u32): u32 {
+  if (componentCount == 0) return 0;
+  const pointer = reserveArena(
+    componentCount * VISIBILITY_COMPONENT_RECORD_LENGTH * sizeof<u32>(),
+    sizeof<u32>(),
+  );
+  let componentIndex: u32 = 0;
+  while (componentIndex < componentCount) {
+    const recordPointer = pointer + componentIndex * VISIBILITY_COMPONENT_RECORD_LENGTH * sizeof<u32>();
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_MIN_X_INDEX * sizeof<u32>(), getPlaneWidth());
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_MIN_Y_INDEX * sizeof<u32>(), getPlaneHeight());
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_MAX_X_INDEX * sizeof<u32>(), 0);
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_MAX_Y_INDEX * sizeof<u32>(), 0);
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_SUM_X_INDEX * sizeof<u32>(), 0);
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_SUM_Y_INDEX * sizeof<u32>(), 0);
+    store<u32>(recordPointer + VISIBILITY_COMPONENT_CELL_COUNT_INDEX * sizeof<u32>(), 0);
+    componentIndex += 1;
+  }
+  const width = getPlaneWidth();
+  const height = getPlaneHeight();
+  let y: u32 = 0;
+  while (y < height) {
+    let x: u32 = 0;
+    while (x < width) {
+      const componentId = load<u32>(componentIdsPointer + (y * width + x) * sizeof<u32>());
+      if (componentId != 0) {
+        const recordPointer = pointer + (componentId - 1) * VISIBILITY_COMPONENT_RECORD_LENGTH * sizeof<u32>();
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_MIN_X_INDEX * sizeof<u32>(),
+          min<u32>(load<u32>(recordPointer + VISIBILITY_COMPONENT_MIN_X_INDEX * sizeof<u32>()), x),
+        );
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_MAX_X_INDEX * sizeof<u32>(),
+          max<u32>(load<u32>(recordPointer + VISIBILITY_COMPONENT_MAX_X_INDEX * sizeof<u32>()), x),
+        );
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_MIN_Y_INDEX * sizeof<u32>(),
+          min<u32>(load<u32>(recordPointer + VISIBILITY_COMPONENT_MIN_Y_INDEX * sizeof<u32>()), y),
+        );
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_MAX_Y_INDEX * sizeof<u32>(),
+          max<u32>(load<u32>(recordPointer + VISIBILITY_COMPONENT_MAX_Y_INDEX * sizeof<u32>()), y),
+        );
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_SUM_X_INDEX * sizeof<u32>(),
+          load<u32>(recordPointer + VISIBILITY_COMPONENT_SUM_X_INDEX * sizeof<u32>()) + x,
+        );
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_SUM_Y_INDEX * sizeof<u32>(),
+          load<u32>(recordPointer + VISIBILITY_COMPONENT_SUM_Y_INDEX * sizeof<u32>()) + y,
+        );
+        store<u32>(
+          recordPointer + VISIBILITY_COMPONENT_CELL_COUNT_INDEX * sizeof<u32>(),
+          load<u32>(recordPointer + VISIBILITY_COMPONENT_CELL_COUNT_INDEX * sizeof<u32>()) + 1,
+        );
+      }
+      x += 1;
+    }
+    y += 1;
+  }
+  return pointer;
+}
+
+@inline
+function visibilityEdgePointer(pointer: u32, index: u32): u32 {
+  return pointer + index * VISIBILITY_EDGE_BYTE_LENGTH;
+}
+
+function storeVisibilityEdge(
+  pointer: u32,
+  index: u32,
+  componentId: u32,
+  startX: i32,
+  startY: i32,
+  endX: i32,
+  endY: i32,
+): void {
+  const recordPointer = visibilityEdgePointer(pointer, index);
+  store<u32>(recordPointer + VISIBILITY_EDGE_COMPONENT_OFFSET, componentId);
+  store<i32>(recordPointer + VISIBILITY_EDGE_START_X_OFFSET, startX);
+  store<i32>(recordPointer + VISIBILITY_EDGE_START_Y_OFFSET, startY);
+  store<i32>(recordPointer + VISIBILITY_EDGE_END_X_OFFSET, endX);
+  store<i32>(recordPointer + VISIBILITY_EDGE_END_Y_OFFSET, endY);
+}
+
+/** Rebuilds the TS component BFS edge order from retained x+ labels before contour tracing. */
+function fillVisibilityEdges(
+  maskPointer: u32,
+  componentIdsPointer: u32,
+  edgeCount: u32,
+  isMirrored: bool,
+  outputPointer: u32,
+): void {
+  const width = getPlaneWidth();
+  const height = getPlaneHeight();
+  const cellCount = width * height;
+  const visitedPointer = reserveArena(cellCount, 1);
+  memory.fill(visitedPointer, 0, cellCount);
+  const queuePointer = reserveArena(cellCount * sizeof<u32>(), sizeof<u32>());
+  let edgeIndex: u32 = 0;
+  let y: u32 = 0;
+  while (y < height) {
+    let x: u32 = 0;
+    while (x < width) {
+      const startIndex = y * width + x;
+      const componentId = load<u32>(componentIdsPointer + startIndex * sizeof<u32>());
+      if (componentId == 0 || load<u8>(visitedPointer + startIndex) != 0) {
+        x += 1;
+        continue;
+      }
+      let queueStart: u32 = 0;
+      let queueEnd: u32 = 1;
+      store<u32>(queuePointer, startIndex);
+      store<u8>(visitedPointer + startIndex, 1);
+      while (queueStart < queueEnd) {
+        const cellIndex = load<u32>(queuePointer + queueStart * sizeof<u32>());
+        queueStart += 1;
+        const cellX = <i32>(cellIndex % width);
+        const cellY = <i32>(cellIndex / width);
+        if (!routeCellIsBlocked(maskPointer, cellX, cellY - 1, isMirrored)) {
+          storeVisibilityEdge(outputPointer, edgeIndex, componentId, cellX, cellY, cellX + 1, cellY);
+          edgeIndex += 1;
+        }
+        if (!routeCellIsBlocked(maskPointer, cellX + 1, cellY, isMirrored)) {
+          storeVisibilityEdge(outputPointer, edgeIndex, componentId, cellX + 1, cellY, cellX + 1, cellY + 1);
+          edgeIndex += 1;
+        }
+        if (!routeCellIsBlocked(maskPointer, cellX, cellY + 1, isMirrored)) {
+          storeVisibilityEdge(outputPointer, edgeIndex, componentId, cellX + 1, cellY + 1, cellX, cellY + 1);
+          edgeIndex += 1;
+        }
+        if (!routeCellIsBlocked(maskPointer, cellX - 1, cellY, isMirrored)) {
+          storeVisibilityEdge(outputPointer, edgeIndex, componentId, cellX, cellY + 1, cellX, cellY);
+          edgeIndex += 1;
+        }
+        let offsetY: i32 = -1;
+        while (offsetY <= 1) {
+          let offsetX: i32 = -1;
+          while (offsetX <= 1) {
+            if (offsetX != 0 || offsetY != 0) {
+              const nextX = cellX + offsetX;
+              const nextY = cellY + offsetY;
+              if (planePointIsInsideBounds(nextX, nextY)) {
+                const nextIndex = <u32>nextY * width + <u32>nextX;
+                if (
+                  load<u8>(visitedPointer + nextIndex) == 0 &&
+                  load<u32>(componentIdsPointer + nextIndex * sizeof<u32>()) == componentId
+                ) {
+                  store<u8>(visitedPointer + nextIndex, 1);
+                  store<u32>(queuePointer + queueEnd * sizeof<u32>(), nextIndex);
+                  queueEnd += 1;
+                }
+              }
+            }
+            offsetX += 1;
+          }
+          offsetY += 1;
+        }
+      }
+      x += 1;
+    }
+    y += 1;
+  }
+  if (edgeIndex != edgeCount) trap();
+}
+
+@inline
+function visibilityEdgeDirection(pointer: u32): i32 {
+  const deltaX = load<i32>(pointer + VISIBILITY_EDGE_END_X_OFFSET) - load<i32>(pointer + VISIBILITY_EDGE_START_X_OFFSET);
+  const deltaY = load<i32>(pointer + VISIBILITY_EDGE_END_Y_OFFSET) - load<i32>(pointer + VISIBILITY_EDGE_START_Y_OFFSET);
+  return deltaX > 0 ? 0 : deltaY > 0 ? 1 : deltaX < 0 ? 2 : 3;
+}
+
+function selectNextVisibilityEdge(
+  edgesPointer: u32,
+  unusedPointer: u32,
+  adjacencyHeadsPointer: u32,
+  adjacencyNextPointer: u32,
+  previousEdgePointer: u32,
+): i32 {
+  const endX = load<i32>(previousEdgePointer + VISIBILITY_EDGE_END_X_OFFSET);
+  const endY = load<i32>(previousEdgePointer + VISIBILITY_EDGE_END_Y_OFFSET);
+  const previousDirection = visibilityEdgeDirection(previousEdgePointer);
+  let bestIndex: i32 = -1;
+  let bestTurn: i32 = 5;
+  const vertexIndex = <u32>endY * (getPlaneWidth() + 1) + <u32>endX;
+  let edgeIndex = load<i32>(adjacencyHeadsPointer + vertexIndex * sizeof<i32>());
+  while (edgeIndex >= 0) {
+    if (load<u8>(unusedPointer + <u32>edgeIndex) != 0) {
+      const edgePointer = visibilityEdgePointer(edgesPointer, <u32>edgeIndex);
+        const turn = (visibilityEdgeDirection(edgePointer) - previousDirection + 4) % 4;
+        if (bestIndex < 0 || turn < bestTurn) {
+          bestIndex = edgeIndex;
+          bestTurn = turn;
+        } else if (turn == bestTurn) {
+          const bestPointer = visibilityEdgePointer(edgesPointer, <u32>bestIndex);
+          const candidateEndX = load<i32>(edgePointer + VISIBILITY_EDGE_END_X_OFFSET);
+          const bestEndX = load<i32>(bestPointer + VISIBILITY_EDGE_END_X_OFFSET);
+          const candidateEndY = load<i32>(edgePointer + VISIBILITY_EDGE_END_Y_OFFSET);
+          const bestEndY = load<i32>(bestPointer + VISIBILITY_EDGE_END_Y_OFFSET);
+          if (candidateEndX < bestEndX || (candidateEndX == bestEndX && candidateEndY < bestEndY)) {
+            bestIndex = edgeIndex;
+          }
+        }
+    }
+    edgeIndex = load<i32>(adjacencyNextPointer + <u32>edgeIndex * sizeof<i32>());
+  }
+  return bestIndex;
+}
+
+@inline
+function contourPointX(pointer: u32, index: u32): i32 {
+  return load<i32>(pointer + index * 2 * sizeof<u32>());
+}
+
+@inline
+function contourPointY(pointer: u32, index: u32): i32 {
+  return load<i32>(pointer + (index * 2 + 1) * sizeof<u32>());
+}
+
+@inline
+function distanceBetweenValues(deltaX: f64, deltaY: f64): f64 {
+  const absoluteX = NativeMath.abs(deltaX);
+  const absoluteY = NativeMath.abs(deltaY);
+  const maximum = NativeMath.max(absoluteX, absoluteY);
+  if (maximum == 0) return 0;
+  const ratio = NativeMath.min(absoluteX, absoluteY) / maximum;
+  return NativeMath.sqrt(1 + ratio * ratio) * maximum;
+}
+
+function contourDistanceToLineSegment(
+  contourPointer: u32,
+  pointIndex: u32,
+  startIndex: u32,
+  endIndex: u32,
+): f64 {
+  const pointX = <f64>contourPointX(contourPointer, pointIndex);
+  const pointY = <f64>contourPointY(contourPointer, pointIndex);
+  const startX = <f64>contourPointX(contourPointer, startIndex);
+  const startY = <f64>contourPointY(contourPointer, startIndex);
+  const endX = <f64>contourPointX(contourPointer, endIndex);
+  const endY = <f64>contourPointY(contourPointer, endIndex);
+  const deltaX = endX - startX;
+  const deltaY = endY - startY;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared == 0) return distanceBetweenValues(pointX - startX, pointY - startY);
+  const ratio = clampValue(((pointX - startX) * deltaX + (pointY - startY) * deltaY) / lengthSquared, 0, 1);
+  return distanceBetweenValues(pointX - (startX + deltaX * ratio), pointY - (startY + deltaY * ratio));
+}
+
+@inline
+function circularContourIndex(startIndex: u32, localIndex: u32, contourLength: u32): u32 {
+  return (startIndex + localIndex) % contourLength;
+}
+
+function simplifyVisibilityContourChain(
+  contourPointer: u32,
+  contourLength: u32,
+  startIndex: u32,
+  endIndex: u32,
+  epsilon: f64,
+  pendingStartsPointer: u32,
+  pendingEndsPointer: u32,
+  outputIndexesPointer: u32,
+): u32 {
+  const chainLength = endIndex >= startIndex ? endIndex - startIndex + 1 : contourLength - startIndex + endIndex + 1;
+  if (chainLength <= 2) {
+    store<u32>(outputIndexesPointer, startIndex);
+    if (chainLength == 2) store<u32>(outputIndexesPointer + sizeof<u32>(), endIndex);
+    return chainLength;
+  }
+  let pendingCount: u32 = 1;
+  store<u32>(pendingStartsPointer, 0);
+  store<u32>(pendingEndsPointer, chainLength - 1);
+  let outputCount: u32 = 0;
+  while (pendingCount > 0) {
+    pendingCount -= 1;
+    const localStart = load<u32>(pendingStartsPointer + pendingCount * sizeof<u32>());
+    const localEnd = load<u32>(pendingEndsPointer + pendingCount * sizeof<u32>());
+    const globalStart = circularContourIndex(startIndex, localStart, contourLength);
+    const globalEnd = circularContourIndex(startIndex, localEnd, contourLength);
+    if (localEnd - localStart <= 1) {
+      if (outputCount == 0 || load<u32>(outputIndexesPointer + (outputCount - 1) * sizeof<u32>()) != globalStart) {
+        store<u32>(outputIndexesPointer + outputCount * sizeof<u32>(), globalStart);
+        outputCount += 1;
+      }
+      if (load<u32>(outputIndexesPointer + (outputCount - 1) * sizeof<u32>()) != globalEnd) {
+        store<u32>(outputIndexesPointer + outputCount * sizeof<u32>(), globalEnd);
+        outputCount += 1;
+      }
+      continue;
+    }
+    let maximumDistance = f64.NEGATIVE_INFINITY;
+    let splitLocalIndex = localStart;
+    let localIndex = localStart + 1;
+    while (localIndex < localEnd) {
+      const distance = contourDistanceToLineSegment(
+        contourPointer,
+        circularContourIndex(startIndex, localIndex, contourLength),
+        globalStart,
+        globalEnd,
+      );
+      if (distance > maximumDistance) {
+        maximumDistance = distance;
+        splitLocalIndex = localIndex;
+      }
+      localIndex += 1;
+    }
+    if (maximumDistance <= epsilon) {
+      if (outputCount == 0 || load<u32>(outputIndexesPointer + (outputCount - 1) * sizeof<u32>()) != globalStart) {
+        store<u32>(outputIndexesPointer + outputCount * sizeof<u32>(), globalStart);
+        outputCount += 1;
+      }
+      if (load<u32>(outputIndexesPointer + (outputCount - 1) * sizeof<u32>()) != globalEnd) {
+        store<u32>(outputIndexesPointer + outputCount * sizeof<u32>(), globalEnd);
+        outputCount += 1;
+      }
+      continue;
+    }
+    store<u32>(pendingStartsPointer + pendingCount * sizeof<u32>(), splitLocalIndex);
+    store<u32>(pendingEndsPointer + pendingCount * sizeof<u32>(), localEnd);
+    pendingCount += 1;
+    store<u32>(pendingStartsPointer + pendingCount * sizeof<u32>(), localStart);
+    store<u32>(pendingEndsPointer + pendingCount * sizeof<u32>(), splitLocalIndex);
+    pendingCount += 1;
+  }
+  return outputCount;
+}
+
+function appendSimplifiedVisibilityContour(
+  contourPointer: u32,
+  contourLength: u32,
+  epsilon: f64,
+  pendingStartsPointer: u32,
+  pendingEndsPointer: u32,
+  simplifiedIndexesPointer: u32,
+  outputXPointer: u32,
+  outputYPointer: u32,
+  outputOffset: u32,
+): u32 {
+  if (contourLength <= 3) {
+    if (outputXPointer != 0) {
+      let index: u32 = 0;
+      while (index < contourLength) {
+        store<u32>(outputXPointer + (outputOffset + index) * sizeof<u32>(), <u32>contourPointX(contourPointer, index));
+        store<u32>(outputYPointer + (outputOffset + index) * sizeof<u32>(), <u32>contourPointY(contourPointer, index));
+        index += 1;
+      }
+    }
+    return contourLength;
+  }
+  let startIndex: u32 = 0;
+  let index: u32 = 1;
+  while (index < contourLength) {
+    const x = contourPointX(contourPointer, index);
+    const y = contourPointY(contourPointer, index);
+    const bestX = contourPointX(contourPointer, startIndex);
+    const bestY = contourPointY(contourPointer, startIndex);
+    if (x < bestX || (x == bestX && y < bestY)) startIndex = index;
+    index += 1;
+  }
+  const startX = contourPointX(contourPointer, startIndex);
+  const startY = contourPointY(contourPointer, startIndex);
+  let endIndex = startIndex;
+  let farthestSquared: i64 = -1;
+  index = 0;
+  while (index < contourLength) {
+    const deltaX = <i64>(contourPointX(contourPointer, index) - startX);
+    const deltaY = <i64>(contourPointY(contourPointer, index) - startY);
+    const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+    if (distanceSquared > farthestSquared) {
+      farthestSquared = distanceSquared;
+      endIndex = index;
+    }
+    index += 1;
+  }
+  if (endIndex == startIndex) {
+    if (outputXPointer != 0) {
+      index = 0;
+      while (index < contourLength) {
+        store<u32>(outputXPointer + (outputOffset + index) * sizeof<u32>(), <u32>contourPointX(contourPointer, index));
+        store<u32>(outputYPointer + (outputOffset + index) * sizeof<u32>(), <u32>contourPointY(contourPointer, index));
+        index += 1;
+      }
+    }
+    return contourLength;
+  }
+  const firstCount = simplifyVisibilityContourChain(
+    contourPointer,
+    contourLength,
+    startIndex,
+    endIndex,
+    epsilon,
+    pendingStartsPointer,
+    pendingEndsPointer,
+    simplifiedIndexesPointer,
+  );
+  const secondIndexesPointer = simplifiedIndexesPointer + contourLength * sizeof<u32>();
+  const secondCount = simplifyVisibilityContourChain(
+    contourPointer,
+    contourLength,
+    endIndex,
+    startIndex,
+    epsilon,
+    pendingStartsPointer,
+    pendingEndsPointer,
+    secondIndexesPointer,
+  );
+  const outputCount = firstCount + secondCount - 2;
+  if (outputXPointer != 0) {
+    let outputIndex: u32 = 0;
+    index = 0;
+    while (index + 1 < firstCount) {
+      const sourceIndex = load<u32>(simplifiedIndexesPointer + index * sizeof<u32>());
+      store<u32>(outputXPointer + (outputOffset + outputIndex) * sizeof<u32>(), <u32>contourPointX(contourPointer, sourceIndex));
+      store<u32>(outputYPointer + (outputOffset + outputIndex) * sizeof<u32>(), <u32>contourPointY(contourPointer, sourceIndex));
+      outputIndex += 1;
+      index += 1;
+    }
+    index = 0;
+    while (index + 1 < secondCount) {
+      const sourceIndex = load<u32>(secondIndexesPointer + index * sizeof<u32>());
+      store<u32>(outputXPointer + (outputOffset + outputIndex) * sizeof<u32>(), <u32>contourPointX(contourPointer, sourceIndex));
+      store<u32>(outputYPointer + (outputOffset + outputIndex) * sizeof<u32>(), <u32>contourPointY(contourPointer, sourceIndex));
+      outputIndex += 1;
+      index += 1;
+    }
+    if (outputIndex != outputCount) trap();
+  }
+  return outputCount;
+}
+
+function traceVisibilityContours(
+  maskPointer: u32,
+  componentIdsPointer: u32,
+  edgeCount: u32,
+  isMirrored: bool,
+  epsilon: f64,
+  outputOffsetsPointer: u32,
+  outputComponentsPointer: u32,
+  outputXPointer: u32,
+  outputYPointer: u32,
+  outputAreasPointer: u32,
+): u64 {
+  if (edgeCount == 0) {
+    if (outputOffsetsPointer != 0) store<u32>(outputOffsetsPointer, 0);
+    return 0;
+  }
+  const edgesPointer = reserveArena(edgeCount * VISIBILITY_EDGE_BYTE_LENGTH, sizeof<u32>());
+  fillVisibilityEdges(maskPointer, componentIdsPointer, edgeCount, isMirrored, edgesPointer);
+  const vertexCount = (getPlaneWidth() + 1) * (getPlaneHeight() + 1);
+  const adjacencyHeadsPointer = reserveArena(vertexCount * sizeof<i32>(), sizeof<i32>());
+  memory.fill(adjacencyHeadsPointer, 0xff, vertexCount * sizeof<i32>());
+  const adjacencyNextPointer = reserveArena(edgeCount * sizeof<i32>(), sizeof<i32>());
+  let adjacencyEdgeIndex: u32 = 0;
+  while (adjacencyEdgeIndex < edgeCount) {
+    const edgePointer = visibilityEdgePointer(edgesPointer, adjacencyEdgeIndex);
+    const startX = load<u32>(edgePointer + VISIBILITY_EDGE_START_X_OFFSET);
+    const startY = load<u32>(edgePointer + VISIBILITY_EDGE_START_Y_OFFSET);
+    const vertexIndex = startY * (getPlaneWidth() + 1) + startX;
+    store<i32>(
+      adjacencyNextPointer + adjacencyEdgeIndex * sizeof<i32>(),
+      load<i32>(adjacencyHeadsPointer + vertexIndex * sizeof<i32>()),
+    );
+    store<i32>(adjacencyHeadsPointer + vertexIndex * sizeof<i32>(), <i32>adjacencyEdgeIndex);
+    adjacencyEdgeIndex += 1;
+  }
+  const unusedPointer = reserveArena(edgeCount, 1);
+  memory.fill(unusedPointer, 1, edgeCount);
+  const contourPointer = reserveArena(edgeCount * 2 * sizeof<u32>(), sizeof<u32>());
+  const pendingStartsPointer = reserveArena(edgeCount * sizeof<u32>(), sizeof<u32>());
+  const pendingEndsPointer = reserveArena(edgeCount * sizeof<u32>(), sizeof<u32>());
+  const simplifiedIndexesPointer = reserveArena(edgeCount * 2 * sizeof<u32>(), sizeof<u32>());
+  let contourCount: u32 = 0;
+  let outputPointCount: u32 = 0;
+  let firstUnusedIndex: u32 = 0;
+  while (firstUnusedIndex < edgeCount) {
+    while (firstUnusedIndex < edgeCount && load<u8>(unusedPointer + firstUnusedIndex) == 0) firstUnusedIndex += 1;
+    if (firstUnusedIndex == edgeCount) break;
+    const firstEdgePointer = visibilityEdgePointer(edgesPointer, firstUnusedIndex);
+    const firstStartX = load<i32>(firstEdgePointer + VISIBILITY_EDGE_START_X_OFFSET);
+    const firstStartY = load<i32>(firstEdgePointer + VISIBILITY_EDGE_START_Y_OFFSET);
+    const componentId = load<u32>(firstEdgePointer + VISIBILITY_EDGE_COMPONENT_OFFSET);
+    let edgeIndex = <i32>firstUnusedIndex;
+    let contourLength: u32 = 0;
+    let isClosed = false;
+    while (edgeIndex >= 0 && contourLength <= edgeCount) {
+      const edgePointer = visibilityEdgePointer(edgesPointer, <u32>edgeIndex);
+      store<u8>(unusedPointer + <u32>edgeIndex, 0);
+      store<i32>(contourPointer + contourLength * 2 * sizeof<u32>(), load<i32>(edgePointer + VISIBILITY_EDGE_START_X_OFFSET));
+      store<i32>(contourPointer + (contourLength * 2 + 1) * sizeof<u32>(), load<i32>(edgePointer + VISIBILITY_EDGE_START_Y_OFFSET));
+      contourLength += 1;
+      if (
+        load<i32>(edgePointer + VISIBILITY_EDGE_END_X_OFFSET) == firstStartX &&
+        load<i32>(edgePointer + VISIBILITY_EDGE_END_Y_OFFSET) == firstStartY
+      ) {
+        isClosed = true;
+        break;
+      }
+      edgeIndex = selectNextVisibilityEdge(
+        edgesPointer,
+        unusedPointer,
+        adjacencyHeadsPointer,
+        adjacencyNextPointer,
+        edgePointer,
+      );
+    }
+    if (!isClosed) trap();
+    if (contourLength >= 3) {
+      if (outputOffsetsPointer != 0) {
+        store<u32>(outputOffsetsPointer + contourCount * sizeof<u32>(), outputPointCount);
+        store<u32>(outputComponentsPointer + contourCount * sizeof<u32>(), componentId);
+      }
+      const simplifiedCount = appendSimplifiedVisibilityContour(
+        contourPointer,
+        contourLength,
+        epsilon,
+        pendingStartsPointer,
+        pendingEndsPointer,
+        simplifiedIndexesPointer,
+        outputXPointer,
+        outputYPointer,
+        outputPointCount,
+      );
+      if (outputAreasPointer != 0) {
+        let doubledArea: f64 = 0;
+        let pointIndex: u32 = 0;
+        while (pointIndex < simplifiedCount) {
+          const nextIndex = (pointIndex + 1) % simplifiedCount;
+          const currentX = load<u32>(outputXPointer + (outputPointCount + pointIndex) * sizeof<u32>());
+          const currentY = load<u32>(outputYPointer + (outputPointCount + pointIndex) * sizeof<u32>());
+          const nextX = load<u32>(outputXPointer + (outputPointCount + nextIndex) * sizeof<u32>());
+          const nextY = load<u32>(outputYPointer + (outputPointCount + nextIndex) * sizeof<u32>());
+          doubledArea += <f64>currentX * <f64>nextY - <f64>nextX * <f64>currentY;
+          pointIndex += 1;
+        }
+        store<f64>(outputAreasPointer + contourCount * sizeof<f64>(), doubledArea / 2);
+      }
+      outputPointCount += simplifiedCount;
+      contourCount += 1;
+    }
+  }
+  if (outputOffsetsPointer != 0) store<u32>(outputOffsetsPointer + contourCount * sizeof<u32>(), outputPointCount);
+  return (<u64>contourCount << 32) | <u64>outputPointCount;
+}
+
 function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   if (inputByteLength != Layout.ROUTE_CREATE_INPUT_BYTE_LENGTH) trap();
   requireArenaRange(inputPointer, inputByteLength, sizeof<u64>());
@@ -501,6 +1070,47 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaRange(friendlyYPointer, friendlyCount * sizeof<f64>(), sizeof<f64>());
   requireArenaRange(policyPointer, policyLength * sizeof<f64>(), sizeof<f64>());
   requireArenaRange(lookaheadPointer, lookaheadLength, 1);
+  const visibilityConcaveCrossTolerance = loadNonNegativePolicyValue(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_CONCAVE_CROSS_TOLERANCE_INDEX,
+  );
+  const visibilityCollinearDistanceTolerance = loadNonNegativePolicyValue(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_COLLINEAR_DISTANCE_TOLERANCE_INDEX,
+  );
+  const visibilityFreeCellSearchRadius = loadPositivePolicyInteger(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_FREE_CELL_SEARCH_RADIUS_INDEX,
+    max<u32>(getPlaneWidth(), getPlaneHeight()),
+  );
+  const visibilityRdpToleranceRatio = loadNonNegativePolicyValue(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_RDP_TOLERANCE_RATIO_INDEX,
+  );
+  const visibilityRdpMaxEpsilon = loadNonNegativePolicyValue(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_RDP_MAX_EPSILON_INDEX,
+  );
+  const visibilityRdpMinEpsilon = loadNonNegativePolicyValue(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_RDP_MIN_EPSILON_INDEX,
+  );
+  if (visibilityRdpMinEpsilon > visibilityRdpMaxEpsilon) trap();
+  const visibilityPreviewCandidateLimit = loadPositivePolicyInteger(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_PREVIEW_CANDIDATE_LIMIT_INDEX,
+    cellCount,
+  );
+  const visibilityPreviewEdgeLimit = loadPositivePolicyInteger(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_PREVIEW_EDGE_LIMIT_INDEX,
+    cellCount,
+  );
+  const visibilityPreviewExpansionInterval = loadPositivePolicyInteger(
+    policyPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_PREVIEW_EXPANSION_INTERVAL_INDEX,
+    u32.MAX_VALUE,
+  );
   const thetaPreviewCandidateLimit = loadPositivePolicyInteger(
     policyPointer,
     Layout.ROUTE_POLICY_THETA_PREVIEW_CANDIDATE_LIMIT_INDEX,
@@ -577,6 +1187,56 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
     boundaryEdgeCount,
     isMirrored,
   );
+  const visibilityComponentStatsPointer = createVisibilityComponentStats(componentIdsPointer, componentCount);
+  const visibilityComponentStatsLength = componentCount * VISIBILITY_COMPONENT_RECORD_LENGTH;
+  const visibilityEpsilon = clampValue(
+    NativeMath.abs(routeTolerance) * visibilityRdpToleranceRatio,
+    visibilityRdpMinEpsilon,
+    visibilityRdpMaxEpsilon,
+  );
+  const visibilityCountMark = markArena();
+  const visibilityCounts = traceVisibilityContours(
+    routeMaskPointer,
+    componentIdsPointer,
+    boundaryEdgeCount,
+    isMirrored,
+    visibilityEpsilon,
+    0,
+    0,
+    0,
+    0,
+    0,
+  );
+  const visibilityContourCount = <u32>(visibilityCounts >> 32);
+  const visibilityContourPointCount = <u32>visibilityCounts;
+  resetArena(visibilityCountMark);
+  const visibilityContourOffsetsPointer = reserveArena(
+    (visibilityContourCount + 1) * sizeof<u32>(),
+    sizeof<u32>(),
+  );
+  const visibilityContourComponentsPointer =
+    visibilityContourCount == 0 ? 0 : reserveArena(visibilityContourCount * sizeof<u32>(), sizeof<u32>());
+  const visibilityContourXPointer =
+    visibilityContourPointCount == 0 ? 0 : reserveArena(visibilityContourPointCount * sizeof<u32>(), sizeof<u32>());
+  const visibilityContourYPointer =
+    visibilityContourPointCount == 0 ? 0 : reserveArena(visibilityContourPointCount * sizeof<u32>(), sizeof<u32>());
+  const visibilityContourSignedAreasPointer =
+    visibilityContourCount == 0 ? 0 : reserveArena(visibilityContourCount * sizeof<f64>(), sizeof<f64>());
+  const visibilityFillMark = markArena();
+  const filledVisibilityCounts = traceVisibilityContours(
+    routeMaskPointer,
+    componentIdsPointer,
+    boundaryEdgeCount,
+    isMirrored,
+    visibilityEpsilon,
+    visibilityContourOffsetsPointer,
+    visibilityContourComponentsPointer,
+    visibilityContourXPointer,
+    visibilityContourYPointer,
+    visibilityContourSignedAreasPointer,
+  );
+  if (filledVisibilityCounts != visibilityCounts) trap();
+  resetArena(visibilityFillMark);
   const freeSpanCount = countFreeColumnSpans(routeMaskPointer, isMirrored, boundaryInset);
   const freeSpanOffsetsLength = getPlaneWidth() + 1;
   const freeSpanOffsetsPointer = reserveArena(freeSpanOffsetsLength * sizeof<u32>(), sizeof<u32>());
@@ -658,6 +1318,46 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   store<u32>(
     contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_EXPANSION_INTERVAL_OFFSET,
     thetaPreviewExpansionInterval,
+  );
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_COMPONENT_STATS_POINTER_OFFSET,
+    visibilityComponentStatsPointer,
+  );
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_COMPONENT_STATS_LENGTH_OFFSET,
+    visibilityComponentStatsLength,
+  );
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_OFFSETS_POINTER_OFFSET,
+    visibilityContourOffsetsPointer,
+  );
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_OFFSETS_LENGTH_OFFSET,
+    visibilityContourCount + 1,
+  );
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_COMPONENTS_POINTER_OFFSET,
+    visibilityContourComponentsPointer,
+  );
+  store<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_X_POINTER_OFFSET, visibilityContourXPointer);
+  store<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_Y_POINTER_OFFSET, visibilityContourYPointer);
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_SIGNED_AREAS_POINTER_OFFSET,
+    visibilityContourSignedAreasPointer,
+  );
+  store<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_COUNT_OFFSET, visibilityContourCount);
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_POINT_COUNT_OFFSET,
+    visibilityContourPointCount,
+  );
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_CANDIDATE_LIMIT_OFFSET,
+    visibilityPreviewCandidateLimit,
+  );
+  store<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EDGE_LIMIT_OFFSET, visibilityPreviewEdgeLimit);
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EXPANSION_INTERVAL_OFFSET,
+    visibilityPreviewExpansionInterval,
   );
   return contextPointer;
 }
@@ -1063,20 +1763,16 @@ const ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET: u32 = 24;
 const ROUTE_PREVIEW_STATE_BYTE_LENGTH: u32 = 32;
 const ROUTE_PREVIEW_ACCEPTED_EDGE_BYTE_LENGTH: u32 = 16;
 
-function createRoutePreviewState(contextPointer: u32): u32 {
+function createRoutePreviewState(edgeLimit: u32, candidateLimit: u32): u32 {
   const statePointer = reserveArena(ROUTE_PREVIEW_STATE_BYTE_LENGTH, sizeof<u32>());
   memory.fill(statePointer, 0, ROUTE_PREVIEW_STATE_BYTE_LENGTH);
-  const edgeLimit = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_EDGE_LIMIT_OFFSET);
   const acceptedPointer = reserveArena(
     edgeLimit * ROUTE_PREVIEW_ACCEPTED_EDGE_BYTE_LENGTH,
     sizeof<u32>(),
   );
   store<u32>(statePointer + ROUTE_PREVIEW_ACCEPTED_POINTER_OFFSET, acceptedPointer);
   store<u32>(statePointer + ROUTE_PREVIEW_EDGE_LIMIT_OFFSET, edgeLimit);
-  store<u32>(
-    statePointer + ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET,
-    load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_CANDIDATE_LIMIT_OFFSET),
-  );
+  store<u32>(statePointer + ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET, candidateLimit);
   return statePointer;
 }
 
@@ -1529,7 +2225,13 @@ function runThetaStarSearch(inputPointer: u32, inputByteLength: u32): u32 {
   const targetY = readPlaneCoordinate(inputPointer, Layout.ROUTE_SEARCH_INPUT_TARGET_Y_OFFSET, getPlaneHeight());
   const shouldCollectPreviews = load<u32>(inputPointer + Layout.ROUTE_SEARCH_INPUT_COLLECT_PREVIEWS_OFFSET);
   if (shouldCollectPreviews > 1) trap();
-  const previewStatePointer = shouldCollectPreviews == 0 ? 0 : createRoutePreviewState(contextPointer);
+  const previewStatePointer =
+    shouldCollectPreviews == 0
+      ? 0
+      : createRoutePreviewState(
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_EDGE_LIMIT_OFFSET),
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_THETA_PREVIEW_CANDIDATE_LIMIT_OFFSET),
+        );
   resetThetaSearchScratch(contextPointer);
   if (
     pointHitsRouteContext(contextPointer, startX, startY) ||
@@ -1703,6 +2405,794 @@ function runThetaStarSearch(inputPointer: u32, inputByteLength: u32): u32 {
   return createNoRouteSearchResult(expansions, previewStatePointer);
 }
 
+const VISIBILITY_CANDIDATE_X_POINTER_OFFSET: u32 = 0;
+const VISIBILITY_CANDIDATE_Y_POINTER_OFFSET: u32 = 4;
+const VISIBILITY_CANDIDATE_COUNT_OFFSET: u32 = 8;
+const VISIBILITY_CANDIDATE_DESCRIPTOR_BYTE_LENGTH: u32 = 16;
+
+@inline
+function visibilityPolicyValue(contextPointer: u32, index: u32): f64 {
+  return loadContextValue(load<u32>(contextPointer + Layout.ROUTE_CONTEXT_POLICY_POINTER_OFFSET), index);
+}
+
+function visibilityDistanceToLineSegment(
+  pointX: i32,
+  pointY: i32,
+  startX: i32,
+  startY: i32,
+  endX: i32,
+  endY: i32,
+): f64 {
+  const deltaX = <f64>(endX - startX);
+  const deltaY = <f64>(endY - startY);
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared == 0) return planePointDistance(pointX, pointY, startX, startY);
+  const ratio = clampValue(
+    (<f64>(pointX - startX) * deltaX + <f64>(pointY - startY) * deltaY) / lengthSquared,
+    0,
+    1,
+  );
+  return distanceBetweenValues(
+    <f64>pointX - (<f64>startX + deltaX * ratio),
+    <f64>pointY - (<f64>startY + deltaY * ratio),
+  );
+}
+
+function selectVisibilityFreeCandidate(
+  contextPointer: u32,
+  componentId: u32,
+  boundaryX: i32,
+  boundaryY: i32,
+  minimumPathX: i32,
+  maximumPathX: i32,
+  outputPointer: u32,
+): bool {
+  const statsPointer =
+    load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_COMPONENT_STATS_POINTER_OFFSET) +
+    (componentId - 1) * VISIBILITY_COMPONENT_RECORD_LENGTH * sizeof<u32>();
+  const cellCount = load<u32>(statsPointer + VISIBILITY_COMPONENT_CELL_COUNT_INDEX * sizeof<u32>());
+  const centroidX = <f64>load<u32>(statsPointer + VISIBILITY_COMPONENT_SUM_X_INDEX * sizeof<u32>()) / <f64>cellCount;
+  const centroidY = <f64>load<u32>(statsPointer + VISIBILITY_COMPONENT_SUM_Y_INDEX * sizeof<u32>()) / <f64>cellCount;
+  const searchRadius = <i32>visibilityPolicyValue(
+    contextPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_FREE_CELL_SEARCH_RADIUS_INDEX,
+  );
+  let radius: i32 = 1;
+  while (radius <= searchRadius) {
+    let hasCandidate = false;
+    let bestX: i32 = 0;
+    let bestY: i32 = 0;
+    let bestBoundaryDistance: i64 = i64.MAX_VALUE;
+    let bestCentroidDistance = f64.NEGATIVE_INFINITY;
+    let offsetY = -radius;
+    while (offsetY <= radius) {
+      let offsetX = -radius;
+      while (offsetX <= radius) {
+        const absoluteX = offsetX < 0 ? -offsetX : offsetX;
+        const absoluteY = offsetY < 0 ? -offsetY : offsetY;
+        if ((absoluteX > absoluteY ? absoluteX : absoluteY) == radius) {
+          const candidateX = boundaryX + offsetX;
+          const candidateY = boundaryY + offsetY;
+          if (
+            candidateX >= minimumPathX &&
+            candidateX <= maximumPathX &&
+            !pointHitsRouteContext(contextPointer, candidateX, candidateY)
+          ) {
+            const boundaryDeltaX = <i64>(candidateX - boundaryX);
+            const boundaryDeltaY = <i64>(candidateY - boundaryY);
+            const boundaryDistance = boundaryDeltaX * boundaryDeltaX + boundaryDeltaY * boundaryDeltaY;
+            const centroidDeltaX = <f64>candidateX - centroidX;
+            const centroidDeltaY = <f64>candidateY - centroidY;
+            const centroidDistance = centroidDeltaX * centroidDeltaX + centroidDeltaY * centroidDeltaY;
+            if (
+              !hasCandidate ||
+              boundaryDistance < bestBoundaryDistance ||
+              (boundaryDistance == bestBoundaryDistance && centroidDistance > bestCentroidDistance) ||
+              (boundaryDistance == bestBoundaryDistance &&
+                centroidDistance == bestCentroidDistance &&
+                (candidateX < bestX || (candidateX == bestX && candidateY < bestY)))
+            ) {
+              hasCandidate = true;
+              bestX = candidateX;
+              bestY = candidateY;
+              bestBoundaryDistance = boundaryDistance;
+              bestCentroidDistance = centroidDistance;
+            }
+          }
+        }
+        offsetX += 1;
+      }
+      offsetY += 1;
+    }
+    if (hasCandidate) {
+      store<u32>(outputPointer, <u32>bestX);
+      store<u32>(outputPointer + sizeof<u32>(), <u32>bestY);
+      return true;
+    }
+    radius += 1;
+  }
+  return false;
+}
+
+function collectVisibilityCandidates(
+  contextPointer: u32,
+  startX: i32,
+  startY: i32,
+  targetX: i32,
+  targetY: i32,
+): u32 {
+  const width = getPlaneWidth();
+  const height = getPlaneHeight();
+  const seenPointer = reserveArena(width * height, 1);
+  memory.fill(seenPointer, 0, width * height);
+  const contourCount = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_COUNT_OFFSET);
+  const offsetsPointer =
+    load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_OFFSETS_POINTER_OFFSET);
+  const componentsPointer =
+    load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_COMPONENTS_POINTER_OFFSET);
+  const xPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_X_POINTER_OFFSET);
+  const yPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_Y_POINTER_OFFSET);
+  const areasPointer =
+    load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_CONTOUR_SIGNED_AREAS_POINTER_OFFSET);
+  const collinearTolerance = visibilityPolicyValue(
+    contextPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_COLLINEAR_DISTANCE_TOLERANCE_INDEX,
+  );
+  const concaveTolerance = visibilityPolicyValue(
+    contextPointer,
+    Layout.ROUTE_POLICY_VISIBILITY_CONCAVE_CROSS_TOLERANCE_INDEX,
+  );
+  const minimumPathX = startX < targetX ? startX : targetX;
+  const maximumPathX = startX > targetX ? startX : targetX;
+  const selectedPointPointer = reserveArena(2 * sizeof<u32>(), sizeof<u32>());
+  let selectedCount: u32 = 0;
+  let contourIndex: u32 = 0;
+  while (contourIndex < contourCount) {
+    const contourStart = load<u32>(offsetsPointer + contourIndex * sizeof<u32>());
+    const contourEnd = load<u32>(offsetsPointer + (contourIndex + 1) * sizeof<u32>());
+    const contourLength = contourEnd - contourStart;
+    const signedArea = load<f64>(areasPointer + contourIndex * sizeof<f64>());
+    let localIndex: u32 = 0;
+    while (localIndex < contourLength) {
+      const previousIndex = contourStart + (localIndex + contourLength - 1) % contourLength;
+      const currentIndex = contourStart + localIndex;
+      const nextIndex = contourStart + (localIndex + 1) % contourLength;
+      const previousX = <i32>load<u32>(xPointer + previousIndex * sizeof<u32>());
+      const previousY = <i32>load<u32>(yPointer + previousIndex * sizeof<u32>());
+      const currentX = <i32>load<u32>(xPointer + currentIndex * sizeof<u32>());
+      const currentY = <i32>load<u32>(yPointer + currentIndex * sizeof<u32>());
+      const nextX = <i32>load<u32>(xPointer + nextIndex * sizeof<u32>());
+      const nextY = <i32>load<u32>(yPointer + nextIndex * sizeof<u32>());
+      const cross =
+        <i64>(currentX - previousX) * <i64>(nextY - currentY) -
+        <i64>(currentY - previousY) * <i64>(nextX - currentX);
+      if (
+        visibilityDistanceToLineSegment(currentX, currentY, previousX, previousY, nextX, nextY) >
+          collinearTolerance &&
+        (NativeMath.abs(<f64>cross) <= concaveTolerance || signedArea * <f64>cross >= 0) &&
+        selectVisibilityFreeCandidate(
+          contextPointer,
+          load<u32>(componentsPointer + contourIndex * sizeof<u32>()),
+          currentX,
+          currentY,
+          minimumPathX,
+          maximumPathX,
+          selectedPointPointer,
+        )
+      ) {
+        const candidateX = load<u32>(selectedPointPointer);
+        const candidateY = load<u32>(selectedPointPointer + sizeof<u32>());
+        if (
+          (<i32>candidateX > startX || <i32>candidateX < targetX) &&
+          !(candidateX == <u32>startX && candidateY == <u32>startY) &&
+          !(candidateX == <u32>targetX && candidateY == <u32>targetY)
+        ) {
+          const cellIndex = candidateY * width + candidateX;
+          if (load<u8>(seenPointer + cellIndex) == 0) {
+            store<u8>(seenPointer + cellIndex, 1);
+            selectedCount += 1;
+          }
+        }
+      }
+      localIndex += 1;
+    }
+    contourIndex += 1;
+  }
+  const candidateCount = selectedCount + 2;
+  const candidateXPointer = reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  const candidateYPointer = reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  store<u32>(candidateXPointer, <u32>startX);
+  store<u32>(candidateYPointer, <u32>startY);
+  store<u32>(candidateXPointer + sizeof<u32>(), <u32>targetX);
+  store<u32>(candidateYPointer + sizeof<u32>(), <u32>targetY);
+  let candidateIndex: u32 = 2;
+  let x: u32 = 0;
+  while (x < width) {
+    let y: u32 = 0;
+    while (y < height) {
+      if (load<u8>(seenPointer + y * width + x) != 0) {
+        store<u32>(candidateXPointer + candidateIndex * sizeof<u32>(), x);
+        store<u32>(candidateYPointer + candidateIndex * sizeof<u32>(), y);
+        candidateIndex += 1;
+      }
+      y += 1;
+    }
+    x += 1;
+  }
+  if (candidateIndex != candidateCount) trap();
+  const descriptorPointer = reserveArena(VISIBILITY_CANDIDATE_DESCRIPTOR_BYTE_LENGTH, sizeof<u32>());
+  store<u32>(descriptorPointer + VISIBILITY_CANDIDATE_X_POINTER_OFFSET, candidateXPointer);
+  store<u32>(descriptorPointer + VISIBILITY_CANDIDATE_Y_POINTER_OFFSET, candidateYPointer);
+  store<u32>(descriptorPointer + VISIBILITY_CANDIDATE_COUNT_OFFSET, candidateCount);
+  return descriptorPointer;
+}
+
+@inline
+function nearlyEqualVisibilityCosts(left: f64, right: f64): bool {
+  const scale = NativeMath.max(1, NativeMath.max(NativeMath.abs(left), NativeMath.abs(right)));
+  return NativeMath.abs(left - right) <= f64.EPSILON * scale;
+}
+
+const VISIBILITY_HEAP_NODE_INDEX_OFFSET: u32 = 0;
+const VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET: u32 = 4;
+const VISIBILITY_HEAP_NODE_SECONDARY_OFFSET: u32 = 8;
+const VISIBILITY_HEAP_NODE_BYTE_LENGTH: u32 = 16;
+const VISIBILITY_HEAP_NODES_POINTER_OFFSET: u32 = 0;
+const VISIBILITY_HEAP_LENGTH_OFFSET: u32 = 4;
+const VISIBILITY_HEAP_CAPACITY_OFFSET: u32 = 8;
+const VISIBILITY_HEAP_BYTE_LENGTH: u32 = 16;
+
+function compareVisibilitySearchNodes(
+  leftPointer: u32,
+  rightPointer: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  targetIndex: u32,
+): i32 {
+  const leftSegments = load<u32>(leftPointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET);
+  const rightSegments = load<u32>(rightPointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET);
+  if (leftSegments != rightSegments) return leftSegments < rightSegments ? -1 : 1;
+  const leftIndex = load<u32>(leftPointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET);
+  const rightIndex = load<u32>(rightPointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET);
+  const targetX = <i32>load<u32>(candidatesXPointer + targetIndex * sizeof<u32>());
+  const targetY = <i32>load<u32>(candidatesYPointer + targetIndex * sizeof<u32>());
+  const leftX = <i32>load<u32>(candidatesXPointer + leftIndex * sizeof<u32>());
+  const leftY = <i32>load<u32>(candidatesYPointer + leftIndex * sizeof<u32>());
+  const rightX = <i32>load<u32>(candidatesXPointer + rightIndex * sizeof<u32>());
+  const rightY = <i32>load<u32>(candidatesYPointer + rightIndex * sizeof<u32>());
+  const leftSecondary = load<f64>(leftPointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET);
+  const rightSecondary = load<f64>(rightPointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET);
+  const leftEstimated = leftSecondary + planePointDistance(leftX, leftY, targetX, targetY);
+  const rightEstimated = rightSecondary + planePointDistance(rightX, rightY, targetX, targetY);
+  if (!nearlyEqualVisibilityCosts(leftEstimated, rightEstimated)) return leftEstimated < rightEstimated ? -1 : 1;
+  if (leftSecondary != rightSecondary) return leftSecondary < rightSecondary ? -1 : 1;
+  const leftTargetX = targetX >= leftX ? targetX - leftX : leftX - targetX;
+  const rightTargetX = targetX >= rightX ? targetX - rightX : rightX - targetX;
+  if (leftTargetX != rightTargetX) return leftTargetX < rightTargetX ? -1 : 1;
+  const leftTargetY = targetY >= leftY ? targetY - leftY : leftY - targetY;
+  const rightTargetY = targetY >= rightY ? targetY - rightY : rightY - targetY;
+  if (leftTargetY != rightTargetY) return leftTargetY < rightTargetY ? -1 : 1;
+  return leftIndex < rightIndex ? -1 : leftIndex > rightIndex ? 1 : 0;
+}
+
+function swapVisibilityHeapNodes(leftPointer: u32, rightPointer: u32): void {
+  const leftIndex = load<u32>(leftPointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET);
+  const leftSegments = load<u32>(leftPointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET);
+  const leftSecondary = load<f64>(leftPointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET);
+  memory.copy(leftPointer, rightPointer, VISIBILITY_HEAP_NODE_BYTE_LENGTH);
+  store<u32>(rightPointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET, leftIndex);
+  store<u32>(rightPointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET, leftSegments);
+  store<f64>(rightPointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET, leftSecondary);
+}
+
+@inline
+function visibilityHeapNodePointer(heapPointer: u32, index: u32): u32 {
+  return load<u32>(heapPointer + VISIBILITY_HEAP_NODES_POINTER_OFFSET) + index * VISIBILITY_HEAP_NODE_BYTE_LENGTH;
+}
+
+function pushVisibilityHeap(
+  heapPointer: u32,
+  candidateIndex: u32,
+  segments: u32,
+  secondary: f64,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  targetIndex: u32,
+): void {
+  let length = load<u32>(heapPointer + VISIBILITY_HEAP_LENGTH_OFFSET);
+  let capacity = load<u32>(heapPointer + VISIBILITY_HEAP_CAPACITY_OFFSET);
+  if (length == capacity) {
+    const nextCapacity: u32 = capacity == 0 ? 64 : capacity * 2;
+    if (nextCapacity <= capacity || nextCapacity > u32.MAX_VALUE / VISIBILITY_HEAP_NODE_BYTE_LENGTH) trap();
+    const nextPointer = reserveArena(nextCapacity * VISIBILITY_HEAP_NODE_BYTE_LENGTH, sizeof<u64>());
+    const previousPointer = load<u32>(heapPointer + VISIBILITY_HEAP_NODES_POINTER_OFFSET);
+    if (length > 0) memory.copy(nextPointer, previousPointer, length * VISIBILITY_HEAP_NODE_BYTE_LENGTH);
+    store<u32>(heapPointer + VISIBILITY_HEAP_NODES_POINTER_OFFSET, nextPointer);
+    store<u32>(heapPointer + VISIBILITY_HEAP_CAPACITY_OFFSET, nextCapacity);
+    capacity = nextCapacity;
+  }
+  let pointer = visibilityHeapNodePointer(heapPointer, length);
+  store<u32>(pointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET, candidateIndex);
+  store<u32>(pointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET, segments);
+  store<f64>(pointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET, secondary);
+  length += 1;
+  store<u32>(heapPointer + VISIBILITY_HEAP_LENGTH_OFFSET, length);
+  let nodeIndex = length - 1;
+  while (nodeIndex > 0) {
+    const parentIndex = (nodeIndex - 1) / 2;
+    pointer = visibilityHeapNodePointer(heapPointer, nodeIndex);
+    const parentPointer = visibilityHeapNodePointer(heapPointer, parentIndex);
+    if (
+      compareVisibilitySearchNodes(pointer, parentPointer, candidatesXPointer, candidatesYPointer, targetIndex) >= 0
+    ) break;
+    swapVisibilityHeapNodes(pointer, parentPointer);
+    nodeIndex = parentIndex;
+  }
+}
+
+function popVisibilityHeap(
+  heapPointer: u32,
+  outputPointer: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  targetIndex: u32,
+): bool {
+  let length = load<u32>(heapPointer + VISIBILITY_HEAP_LENGTH_OFFSET);
+  if (length == 0) return false;
+  const rootPointer = visibilityHeapNodePointer(heapPointer, 0);
+  memory.copy(outputPointer, rootPointer, VISIBILITY_HEAP_NODE_BYTE_LENGTH);
+  length -= 1;
+  store<u32>(heapPointer + VISIBILITY_HEAP_LENGTH_OFFSET, length);
+  if (length == 0) return true;
+  memory.copy(rootPointer, visibilityHeapNodePointer(heapPointer, length), VISIBILITY_HEAP_NODE_BYTE_LENGTH);
+  let nodeIndex: u32 = 0;
+  while (true) {
+    const leftIndex = nodeIndex * 2 + 1;
+    if (leftIndex >= length) break;
+    const rightIndex = leftIndex + 1;
+    let bestIndex = leftIndex;
+    if (
+      rightIndex < length &&
+      compareVisibilitySearchNodes(
+        visibilityHeapNodePointer(heapPointer, rightIndex),
+        visibilityHeapNodePointer(heapPointer, leftIndex),
+        candidatesXPointer,
+        candidatesYPointer,
+        targetIndex,
+      ) < 0
+    ) bestIndex = rightIndex;
+    const pointer = visibilityHeapNodePointer(heapPointer, nodeIndex);
+    const bestPointer = visibilityHeapNodePointer(heapPointer, bestIndex);
+    if (
+      compareVisibilitySearchNodes(bestPointer, pointer, candidatesXPointer, candidatesYPointer, targetIndex) >= 0
+    ) break;
+    swapVisibilityHeapNodes(pointer, bestPointer);
+    nodeIndex = bestIndex;
+  }
+  return true;
+}
+
+function countVisibilityPath(targetIndex: u32, previousPointer: u32, candidateCount: u32): u32 {
+  let count: u32 = 0;
+  let index = <i32>targetIndex;
+  while (index >= 0 && count <= candidateCount) {
+    count += 1;
+    index = load<i32>(previousPointer + <u32>index * sizeof<i32>());
+  }
+  if (count > candidateCount) trap();
+  return count;
+}
+
+function createVisibilityPath(
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  previousPointer: u32,
+  targetIndex: u32,
+  candidateCount: u32,
+): u32 {
+  const pathLength = countVisibilityPath(targetIndex, previousPointer, candidateCount);
+  const pathXPointer = reserveArena(pathLength * sizeof<f64>(), sizeof<f64>());
+  const pathYPointer = reserveArena(pathLength * sizeof<f64>(), sizeof<f64>());
+  let pathIndex = pathLength;
+  let candidateIndex = <i32>targetIndex;
+  while (pathIndex > 0) {
+    pathIndex -= 1;
+    store<f64>(
+      pathXPointer + pathIndex * sizeof<f64>(),
+      <f64>load<u32>(candidatesXPointer + <u32>candidateIndex * sizeof<u32>()),
+    );
+    store<f64>(
+      pathYPointer + pathIndex * sizeof<f64>(),
+      <f64>load<u32>(candidatesYPointer + <u32>candidateIndex * sizeof<u32>()),
+    );
+    candidateIndex = load<i32>(previousPointer + <u32>candidateIndex * sizeof<i32>());
+  }
+  const descriptorPointer = reserveArena(3 * sizeof<u32>(), sizeof<u32>());
+  store<u32>(descriptorPointer, pathXPointer);
+  store<u32>(descriptorPointer + sizeof<u32>(), pathYPointer);
+  store<u32>(descriptorPointer + 2 * sizeof<u32>(), pathLength);
+  return descriptorPointer;
+}
+
+function selectBestOpenVisibilityIndex(
+  openPointer: u32,
+  segmentsPointer: u32,
+  secondaryPointer: u32,
+  candidateCount: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  targetIndex: u32,
+): i32 {
+  const nodesPointer = reserveArena(2 * VISIBILITY_HEAP_NODE_BYTE_LENGTH, sizeof<u64>());
+  let bestIndex: i32 = -1;
+  let index: u32 = 0;
+  while (index < candidateCount) {
+    if (load<u8>(openPointer + index) != 0) {
+      if (bestIndex < 0) {
+        bestIndex = <i32>index;
+      } else {
+        store<u32>(nodesPointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET, index);
+        store<u32>(nodesPointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET, load<u32>(segmentsPointer + index * sizeof<u32>()));
+        store<f64>(nodesPointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET, load<f64>(secondaryPointer + index * sizeof<f64>()));
+        store<u32>(nodesPointer + VISIBILITY_HEAP_NODE_BYTE_LENGTH + VISIBILITY_HEAP_NODE_INDEX_OFFSET, <u32>bestIndex);
+        store<u32>(
+          nodesPointer + VISIBILITY_HEAP_NODE_BYTE_LENGTH + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET,
+          load<u32>(segmentsPointer + <u32>bestIndex * sizeof<u32>()),
+        );
+        store<f64>(
+          nodesPointer + VISIBILITY_HEAP_NODE_BYTE_LENGTH + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET,
+          load<f64>(secondaryPointer + <u32>bestIndex * sizeof<f64>()),
+        );
+        if (
+          compareVisibilitySearchNodes(
+            nodesPointer,
+            nodesPointer + VISIBILITY_HEAP_NODE_BYTE_LENGTH,
+            candidatesXPointer,
+            candidatesYPointer,
+            targetIndex,
+          ) < 0
+        ) bestIndex = <i32>index;
+      }
+    }
+    index += 1;
+  }
+  return bestIndex;
+}
+
+@inline
+function visibilityPreviewCandidateComesFirst(
+  leftIndex: u32,
+  rightIndex: u32,
+  currentX: i32,
+  currentY: i32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+): bool {
+  const leftX = <i32>load<u32>(candidatesXPointer + leftIndex * sizeof<u32>());
+  const leftY = <i32>load<u32>(candidatesYPointer + leftIndex * sizeof<u32>());
+  const rightX = <i32>load<u32>(candidatesXPointer + rightIndex * sizeof<u32>());
+  const rightY = <i32>load<u32>(candidatesYPointer + rightIndex * sizeof<u32>());
+  const leftDeltaX = <i64>(leftX - currentX);
+  const leftDeltaY = <i64>(leftY - currentY);
+  const rightDeltaX = <i64>(rightX - currentX);
+  const rightDeltaY = <i64>(rightY - currentY);
+  const leftDistance = leftDeltaX * leftDeltaX + leftDeltaY * leftDeltaY;
+  const rightDistance = rightDeltaX * rightDeltaX + rightDeltaY * rightDeltaY;
+  return leftDistance != rightDistance
+    ? leftDistance < rightDistance
+    : leftX != rightX
+      ? leftX < rightX
+      : leftY < rightY;
+}
+
+function collectVisibilityPreviewCandidates(
+  statePointer: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  candidateCount: u32,
+  currentIndex: u32,
+  outputPointer: u32,
+): u32 {
+  const limit = load<u32>(statePointer + ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET);
+  if (candidateCount <= limit) {
+    let index: u32 = 0;
+    while (index < candidateCount) {
+      store<u32>(outputPointer + index * sizeof<u32>(), index);
+      index += 1;
+    }
+    return candidateCount;
+  }
+  store<u32>(outputPointer, 0);
+  store<u32>(outputPointer + sizeof<u32>(), 1);
+  const selectedLimit = limit - 2;
+  const currentX = <i32>load<u32>(candidatesXPointer + currentIndex * sizeof<u32>());
+  const currentY = <i32>load<u32>(candidatesYPointer + currentIndex * sizeof<u32>());
+  let selectedCount: u32 = 0;
+  let candidateIndex: u32 = 2;
+  while (candidateIndex < candidateCount) {
+    let insertionIndex = selectedCount;
+    while (
+      insertionIndex > 0 &&
+      visibilityPreviewCandidateComesFirst(
+        candidateIndex,
+        load<u32>(outputPointer + (insertionIndex + 1) * sizeof<u32>()),
+        currentX,
+        currentY,
+        candidatesXPointer,
+        candidatesYPointer,
+      )
+    ) {
+      if (insertionIndex < selectedLimit) {
+        store<u32>(
+          outputPointer + (insertionIndex + 2) * sizeof<u32>(),
+          load<u32>(outputPointer + (insertionIndex + 1) * sizeof<u32>()),
+        );
+      }
+      insertionIndex -= 1;
+    }
+    if (insertionIndex < selectedLimit) {
+      store<u32>(outputPointer + (insertionIndex + 2) * sizeof<u32>(), candidateIndex);
+      if (selectedCount < selectedLimit) selectedCount += 1;
+    }
+    candidateIndex += 1;
+  }
+  return selectedCount + 2;
+}
+
+function publishVisibilityPreview(
+  contextPointer: u32,
+  statePointer: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  candidateCount: u32,
+  previousPointer: u32,
+  currentIndex: u32,
+  bestPathTargetIndex: u32,
+): void {
+  const acceptedPointer = load<u32>(statePointer + ROUTE_PREVIEW_ACCEPTED_POINTER_OFFSET);
+  const acceptedCount = load<u32>(statePointer + ROUTE_PREVIEW_ACCEPTED_COUNT_OFFSET);
+  const bestPathLength = countVisibilityPath(bestPathTargetIndex, previousPointer, candidateCount);
+  const candidateLimit = load<u32>(statePointer + ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET);
+  const candidateIndexesPointer = reserveArena(candidateLimit * sizeof<u32>(), sizeof<u32>());
+  const previewCandidateCount = collectVisibilityPreviewCandidates(
+    statePointer,
+    candidatesXPointer,
+    candidatesYPointer,
+    candidateCount,
+    currentIndex,
+    candidateIndexesPointer,
+  );
+  const pointCount = acceptedCount * 2 + bestPathLength + previewCandidateCount + 1;
+  const pointsXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<f64>());
+  const pointsYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<f64>());
+  const acceptedIndexesPointer =
+    acceptedCount == 0 ? 0 : reserveArena(acceptedCount * 2 * sizeof<u32>(), sizeof<u32>());
+  const bestPathIndexesPointer = reserveArena(bestPathLength * sizeof<u32>(), sizeof<u32>());
+  const candidateOutputIndexesPointer = reserveArena(previewCandidateCount * sizeof<u32>(), sizeof<u32>());
+  let pointIndex: u32 = 0;
+  let edgeIndex: u32 = 0;
+  while (edgeIndex < acceptedCount) {
+    const edgePointer = acceptedPointer + edgeIndex * ROUTE_PREVIEW_ACCEPTED_EDGE_BYTE_LENGTH;
+    let endpoint: u32 = 0;
+    while (endpoint < 2) {
+      const coordinateOffset = endpoint * 8;
+      store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(edgePointer + coordinateOffset));
+      store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(edgePointer + coordinateOffset + 4));
+      store<u32>(acceptedIndexesPointer + pointIndex * sizeof<u32>(), pointIndex);
+      pointIndex += 1;
+      endpoint += 1;
+    }
+    edgeIndex += 1;
+  }
+  let pathWriteIndex = pointIndex + bestPathLength;
+  let pathCandidateIndex = <i32>bestPathTargetIndex;
+  while (pathWriteIndex > pointIndex) {
+    pathWriteIndex -= 1;
+    store<f64>(pointsXPointer + pathWriteIndex * sizeof<f64>(), <f64>load<u32>(candidatesXPointer + <u32>pathCandidateIndex * sizeof<u32>()));
+    store<f64>(pointsYPointer + pathWriteIndex * sizeof<f64>(), <f64>load<u32>(candidatesYPointer + <u32>pathCandidateIndex * sizeof<u32>()));
+    store<u32>(bestPathIndexesPointer + (pathWriteIndex - pointIndex) * sizeof<u32>(), pathWriteIndex);
+    pathCandidateIndex = load<i32>(previousPointer + <u32>pathCandidateIndex * sizeof<i32>());
+  }
+  pointIndex += bestPathLength;
+  let previewCandidateIndex: u32 = 0;
+  while (previewCandidateIndex < previewCandidateCount) {
+    const sourceIndex = load<u32>(candidateIndexesPointer + previewCandidateIndex * sizeof<u32>());
+    store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(candidatesXPointer + sourceIndex * sizeof<u32>()));
+    store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(candidatesYPointer + sourceIndex * sizeof<u32>()));
+    store<u32>(candidateOutputIndexesPointer + previewCandidateIndex * sizeof<u32>(), pointIndex);
+    pointIndex += 1;
+    previewCandidateIndex += 1;
+  }
+  const currentPointIndex = pointIndex;
+  store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(candidatesXPointer + currentIndex * sizeof<u32>()));
+  store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), <f64>load<u32>(candidatesYPointer + currentIndex * sizeof<u32>()));
+  const recordPointer = appendRoutePreviewEventRecord(statePointer);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_POINTS_X_POINTER_OFFSET, pointsXPointer);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_POINTS_Y_POINTER_OFFSET, pointsYPointer);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_POINT_COUNT_OFFSET, pointCount);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_ACCEPTED_INDEXES_POINTER_OFFSET, acceptedIndexesPointer);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_ACCEPTED_INDEXES_LENGTH_OFFSET, acceptedCount * 2);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_BEST_PATH_INDEXES_POINTER_OFFSET, bestPathIndexesPointer);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_BEST_PATH_INDEXES_LENGTH_OFFSET, bestPathLength);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_CANDIDATE_INDEXES_POINTER_OFFSET, candidateOutputIndexesPointer);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_CANDIDATE_INDEXES_LENGTH_OFFSET, previewCandidateCount);
+  store<u32>(recordPointer + Layout.ROUTE_PREVIEW_CURRENT_INDEX_OFFSET, currentPointIndex);
+  store<u32>(
+    recordPointer + Layout.ROUTE_PREVIEW_FLAGS_OFFSET,
+    load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_MIRRORED,
+  );
+}
+
+function runVisibilityGraphSearch(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ROUTE_SEARCH_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u64>());
+  const contextPointer = load<u32>(inputPointer + Layout.ROUTE_SEARCH_INPUT_CONTEXT_POINTER_OFFSET);
+  requireRouteContext(contextPointer);
+  const startX = readPlaneCoordinate(inputPointer, Layout.ROUTE_SEARCH_INPUT_START_X_OFFSET, getPlaneWidth());
+  const startY = readPlaneCoordinate(inputPointer, Layout.ROUTE_SEARCH_INPUT_START_Y_OFFSET, getPlaneHeight());
+  const targetX = readPlaneCoordinate(inputPointer, Layout.ROUTE_SEARCH_INPUT_TARGET_X_OFFSET, getPlaneWidth());
+  const targetY = readPlaneCoordinate(inputPointer, Layout.ROUTE_SEARCH_INPUT_TARGET_Y_OFFSET, getPlaneHeight());
+  const shouldCollectPreviews = load<u32>(inputPointer + Layout.ROUTE_SEARCH_INPUT_COLLECT_PREVIEWS_OFFSET);
+  if (shouldCollectPreviews > 1) trap();
+  const previewStatePointer =
+    shouldCollectPreviews == 0
+      ? 0
+      : createRoutePreviewState(
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EDGE_LIMIT_OFFSET),
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_CANDIDATE_LIMIT_OFFSET),
+        );
+  if (
+    pointHitsRouteContext(contextPointer, startX, startY) ||
+    pointHitsRouteContext(contextPointer, targetX, targetY) ||
+    targetX < startX
+  ) return createNoRouteSearchResult(0, previewStatePointer);
+  if (targetX > startX && !lineHitsRouteContext(contextPointer, startX, startY, targetX, targetY)) {
+    const directXPointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+    const directYPointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+    store<f64>(directXPointer, <f64>startX);
+    store<f64>(directXPointer + sizeof<f64>(), <f64>targetX);
+    store<f64>(directYPointer, <f64>startY);
+    store<f64>(directYPointer + sizeof<f64>(), <f64>targetY);
+    if (previewStatePointer != 0) {
+      publishDirectThetaPreview(contextPointer, previewStatePointer, startX, startY, targetX, targetY);
+    }
+    return createRouteSearchResult(
+      Layout.ROUTE_SEARCH_RESULT_STATUS_SUCCESS,
+      directXPointer,
+      directYPointer,
+      2,
+      0,
+      previewStatePointer,
+    );
+  }
+  const candidatesPointer = collectVisibilityCandidates(contextPointer, startX, startY, targetX, targetY);
+  const candidatesXPointer = load<u32>(candidatesPointer + VISIBILITY_CANDIDATE_X_POINTER_OFFSET);
+  const candidatesYPointer = load<u32>(candidatesPointer + VISIBILITY_CANDIDATE_Y_POINTER_OFFSET);
+  const candidateCount = load<u32>(candidatesPointer + VISIBILITY_CANDIDATE_COUNT_OFFSET);
+  const hasStatePointer = reserveArena(candidateCount, 1);
+  const openPointer = reserveArena(candidateCount, 1);
+  const closedPointer = reserveArena(candidateCount, 1);
+  memory.fill(hasStatePointer, 0, candidateCount);
+  memory.fill(openPointer, 0, candidateCount);
+  memory.fill(closedPointer, 0, candidateCount);
+  const segmentsPointer = reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  const secondaryPointer = reserveArena(candidateCount * sizeof<f64>(), sizeof<f64>());
+  const previousPointer = reserveArena(candidateCount * sizeof<i32>(), sizeof<i32>());
+  memory.fill(previousPointer, 0xff, candidateCount * sizeof<i32>());
+  store<u8>(hasStatePointer, 1);
+  store<u8>(openPointer, 1);
+  store<u32>(segmentsPointer, 0);
+  store<f64>(secondaryPointer, 0);
+  const heapPointer = reserveArena(VISIBILITY_HEAP_BYTE_LENGTH, sizeof<u32>());
+  memory.fill(heapPointer, 0, VISIBILITY_HEAP_BYTE_LENGTH);
+  pushVisibilityHeap(heapPointer, 0, 0, 0, candidatesXPointer, candidatesYPointer, 1);
+  const poppedPointer = reserveArena(VISIBILITY_HEAP_NODE_BYTE_LENGTH, sizeof<u64>());
+  let expansions: u32 = 0;
+  while (popVisibilityHeap(heapPointer, poppedPointer, candidatesXPointer, candidatesYPointer, 1)) {
+    const currentIndex = load<u32>(poppedPointer + VISIBILITY_HEAP_NODE_INDEX_OFFSET);
+    const currentSegments = load<u32>(poppedPointer + VISIBILITY_HEAP_NODE_SEGMENTS_OFFSET);
+    const currentSecondary = load<f64>(poppedPointer + VISIBILITY_HEAP_NODE_SECONDARY_OFFSET);
+    if (
+      load<u8>(openPointer + currentIndex) == 0 ||
+      load<u8>(closedPointer + currentIndex) != 0 ||
+      currentSegments != load<u32>(segmentsPointer + currentIndex * sizeof<u32>()) ||
+      currentSecondary != load<f64>(secondaryPointer + currentIndex * sizeof<f64>())
+    ) continue;
+    store<u8>(openPointer + currentIndex, 0);
+    if (currentIndex == 1) {
+      const pathPointer = createVisibilityPath(
+        candidatesXPointer,
+        candidatesYPointer,
+        previousPointer,
+        currentIndex,
+        candidateCount,
+      );
+      if (previewStatePointer != 0) {
+        publishVisibilityPreview(
+          contextPointer,
+          previewStatePointer,
+          candidatesXPointer,
+          candidatesYPointer,
+          candidateCount,
+          previousPointer,
+          currentIndex,
+          currentIndex,
+        );
+      }
+      return createSuccessfulThetaResult(pathPointer, expansions, previewStatePointer);
+    }
+    store<u8>(closedPointer + currentIndex, 1);
+    const currentX = <i32>load<u32>(candidatesXPointer + currentIndex * sizeof<u32>());
+    const currentY = <i32>load<u32>(candidatesYPointer + currentIndex * sizeof<u32>());
+    let nextIndex: u32 = 0;
+    while (nextIndex < candidateCount) {
+      if (nextIndex != currentIndex && load<u8>(closedPointer + nextIndex) == 0) {
+        const nextX = <i32>load<u32>(candidatesXPointer + nextIndex * sizeof<u32>());
+        const nextY = <i32>load<u32>(candidatesYPointer + nextIndex * sizeof<u32>());
+        if (nextX > currentX && !lineHitsRouteContext(contextPointer, currentX, currentY, nextX, nextY)) {
+          if (previewStatePointer != 0) {
+            appendRoutePreviewAcceptedEdge(previewStatePointer, currentX, currentY, nextX, nextY);
+          }
+          const nextSegments = currentSegments + 1;
+          const nextSecondary = currentSecondary + planePointDistance(currentX, currentY, nextX, nextY);
+          const hasPrevious = load<u8>(hasStatePointer + nextIndex) != 0;
+          const previousSegments = load<u32>(segmentsPointer + nextIndex * sizeof<u32>());
+          const previousSecondary = load<f64>(secondaryPointer + nextIndex * sizeof<f64>());
+          if (
+            !hasPrevious ||
+            previousSegments > nextSegments ||
+            (previousSegments == nextSegments &&
+              !nearlyEqualVisibilityCosts(previousSecondary, nextSecondary) &&
+              previousSecondary > nextSecondary)
+          ) {
+            store<u8>(hasStatePointer + nextIndex, 1);
+            store<u8>(openPointer + nextIndex, 1);
+            store<u32>(segmentsPointer + nextIndex * sizeof<u32>(), nextSegments);
+            store<f64>(secondaryPointer + nextIndex * sizeof<f64>(), nextSecondary);
+            store<i32>(previousPointer + nextIndex * sizeof<i32>(), <i32>currentIndex);
+            pushVisibilityHeap(
+              heapPointer,
+              nextIndex,
+              nextSegments,
+              nextSecondary,
+              candidatesXPointer,
+              candidatesYPointer,
+              1,
+            );
+          }
+        }
+      }
+      nextIndex += 1;
+    }
+    expansions += 1;
+    if (
+      previewStatePointer != 0 &&
+      expansions % load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EXPANSION_INTERVAL_OFFSET) == 0
+    ) {
+      const bestOpenIndex = selectBestOpenVisibilityIndex(
+        openPointer,
+        segmentsPointer,
+        secondaryPointer,
+        candidateCount,
+        candidatesXPointer,
+        candidatesYPointer,
+        1,
+      );
+      publishVisibilityPreview(
+        contextPointer,
+        previewStatePointer,
+        candidatesXPointer,
+        candidatesYPointer,
+        candidateCount,
+        previousPointer,
+        currentIndex,
+        bestOpenIndex < 0 ? currentIndex : <u32>bestOpenIndex,
+      );
+    }
+  }
+  return createNoRouteSearchResult(expansions, previewStatePointer);
+}
+
 /** Executes one coarse route-context or collision command without crossing the JS boundary inside a loop. */
 export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
@@ -1713,6 +3203,7 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_GRAPH_REGION_HIT) return runGraphRegionHitQuery(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_PLANE_REGION_COUNT) return runPlaneRegionCountQuery(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_THETA_STAR) return runThetaStarSearch(inputPointer, inputByteLength);
+  if (command == Layout.ROUTE_COMMAND_VISIBILITY_GRAPH) return runVisibilityGraphSearch(inputPointer, inputByteLength);
   trap();
   return 0;
 }

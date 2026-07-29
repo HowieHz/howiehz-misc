@@ -1,4 +1,7 @@
-import { graphwarThetaStarHeuristics } from "../../pathfinding/routing/canonical-data";
+import {
+  graphwarThetaStarHeuristics,
+  graphwarVisibilityGraphHeuristics,
+} from "../../pathfinding/routing/canonical-data";
 import type { GraphClosedRegion, PlaneMaskClosedRegion } from "../../pathfinding/routing/step-envelope";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { PlaneGridPoint } from "../plane-grid";
@@ -27,9 +30,10 @@ const routeCommand = {
   planeRegionCount: 5,
   pointHit: 2,
   thetaStar: 6,
+  visibilityGraph: 7,
 } as const;
 const routeCreateInputByteLength = 48;
-const routeContextByteLength = 208;
+const routeContextByteLength = 264;
 const routeContextMagic = 0x524f_5554;
 const routeContextMirroredFlag = 1;
 const routeQueryResultByteLength = 8;
@@ -57,6 +61,11 @@ export interface GraphwarWasmRouteContext {
   countPlaneRegionObstacles: (region: PlaneMaskClosedRegion) => number;
   dispose: () => void;
   findThetaStarPath: (
+    start: PlaneGridPoint,
+    target: PlaneGridPoint,
+    shouldCollectPreviews?: boolean,
+  ) => GraphwarWasmRouteSearchResult;
+  findVisibilityGraphPath: (
     start: PlaneGridPoint,
     target: PlaneGridPoint,
     shouldCollectPreviews?: boolean,
@@ -278,6 +287,64 @@ export function createGraphwarWasmRouteContext(
         "output",
       );
     }
+    const visibilityComponentStatsLength = contextView.getUint32(212, true);
+    if (visibilityComponentStatsLength !== routeComponentCount * 7) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM visibility component-stat length is invalid",
+        "output",
+      );
+    }
+    const visibilityComponentStats = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: visibilityComponentStatsLength, pointer: contextView.getUint32(208, true) },
+      runtime.arenaBase,
+    );
+    const visibilityContourCount = contextView.getUint32(240, true);
+    const visibilityContourPointCount = contextView.getUint32(244, true);
+    if (contextView.getUint32(220, true) !== visibilityContourCount + 1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM visibility contour-offset length is invalid",
+        "output",
+      );
+    }
+    const visibilityContourOffsets = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: visibilityContourCount + 1, pointer: contextView.getUint32(216, true) },
+      runtime.arenaBase,
+    );
+    const visibilityContourComponents = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: visibilityContourCount, pointer: contextView.getUint32(224, true) },
+      runtime.arenaBase,
+    );
+    const visibilityContourX = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: visibilityContourPointCount, pointer: contextView.getUint32(228, true) },
+      runtime.arenaBase,
+    );
+    const visibilityContourY = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: visibilityContourPointCount, pointer: contextView.getUint32(232, true) },
+      runtime.arenaBase,
+    );
+    const visibilityContourSignedAreas = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: visibilityContourCount, pointer: contextView.getUint32(236, true) },
+      runtime.arenaBase,
+    );
+    if (
+      contextView.getUint32(248, true) !== graphwarVisibilityGraphHeuristics.previewCandidateLimit ||
+      contextView.getUint32(252, true) !== graphwarVisibilityGraphHeuristics.previewEdgeLimit ||
+      contextView.getUint32(256, true) !== graphwarVisibilityGraphHeuristics.previewExpansionInterval
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Graphwar WASM route context does not preserve its visibility preview policy",
+        "output",
+      );
+    }
     validateDisjointRouteContextRanges([
       { byteLength: packed.sourceMask.length, label: "source mask input", pointer: packed.sourceMask.pointer },
       {
@@ -343,6 +410,36 @@ export function createGraphwarWasmRouteContext(
         pointer: thetaCandidateRange.byteOffset,
       },
       { byteLength: thetaSeenRange.byteLength, label: "Theta seen", pointer: thetaSeenRange.byteOffset },
+      {
+        byteLength: visibilityComponentStats.byteLength,
+        label: "visibility component stats",
+        pointer: contextView.getUint32(208, true),
+      },
+      {
+        byteLength: visibilityContourOffsets.byteLength,
+        label: "visibility contour offsets",
+        pointer: contextView.getUint32(216, true),
+      },
+      {
+        byteLength: visibilityContourComponents.byteLength,
+        label: "visibility contour components",
+        pointer: contextView.getUint32(224, true),
+      },
+      {
+        byteLength: visibilityContourX.byteLength,
+        label: "visibility contour x",
+        pointer: contextView.getUint32(228, true),
+      },
+      {
+        byteLength: visibilityContourY.byteLength,
+        label: "visibility contour y",
+        pointer: contextView.getUint32(232, true),
+      },
+      {
+        byteLength: visibilityContourSignedAreas.byteLength,
+        label: "visibility contour areas",
+        pointer: contextView.getUint32(236, true),
+      },
     ]);
     if (
       new Uint8Array(thetaClosedRange.buffer, thetaClosedRange.byteOffset, thetaClosedRange.elementLength).some(
@@ -384,6 +481,16 @@ export function createGraphwarWasmRouteContext(
       routeBoundaryEdgeCount,
     );
     validateRouteFreeSpanCache(routeMask, isMirrored, input.boundaryExpansion, freeSpanOffsets, freeSpanValues);
+    validateVisibilityContourCache(
+      componentLabels,
+      routeComponentCount,
+      visibilityComponentStats,
+      visibilityContourOffsets,
+      visibilityContourComponents,
+      visibilityContourX,
+      visibilityContourY,
+      visibilityContourSignedAreas,
+    );
 
     function assertActive() {
       if (isDisposed) {
@@ -429,6 +536,22 @@ export function createGraphwarWasmRouteContext(
           target,
           shouldCollectPreviews,
           isMirrored,
+          graphwarThetaStarHeuristics.previewExpansionInterval,
+        );
+      },
+      findVisibilityGraphPath(start, target, shouldCollectPreviews = false) {
+        assertActive();
+        validatePlanePoint(start, "start");
+        validatePlanePoint(target, "target");
+        return runRouteSearch(
+          runtime,
+          routeCommand.visibilityGraph,
+          contextPointer,
+          start,
+          target,
+          shouldCollectPreviews,
+          isMirrored,
+          graphwarVisibilityGraphHeuristics.previewExpansionInterval,
         );
       },
       graphRegionHitsObstacle(region) {
@@ -473,6 +596,7 @@ function runRouteSearch(
   target: PlaneGridPoint,
   shouldCollectPreviews: boolean,
   isMirrored: boolean,
+  previewExpansionInterval: number,
 ): GraphwarWasmRouteSearchResult {
   const mark = runtime.markArena();
   try {
@@ -504,7 +628,7 @@ function runRouteSearch(
     const previewCount = resultView.getUint32(24, true);
     const expansionCount = validateGraphwarWasmU32(resultView.getUint32(28, true), "route expansion count", "output");
     const expectedPreviewCount = shouldCollectPreviews
-      ? Math.floor(expansionCount / graphwarThetaStarHeuristics.previewExpansionInterval) + status
+      ? Math.floor(expansionCount / previewExpansionInterval) + status
       : 0;
     if ((previewCount === 0) !== (previewPointer === 0) || previewCount !== expectedPreviewCount) {
       throw new GraphwarWasmAdapterError(
@@ -547,7 +671,7 @@ function runRouteSearch(
           "output",
         );
       }
-      validateRoutePreview(preview, start, target, index);
+      validateRoutePreview(preview, start, target, index, command === routeCommand.thetaStar);
       return preview;
     });
     if (status === 0) {
@@ -687,6 +811,7 @@ function validateRoutePreview(
   start: PlaneGridPoint,
   target: PlaneGridPoint,
   previewIndex: number,
+  shouldBestPathEndAtCurrentOrTarget: boolean,
 ) {
   const fieldPrefix = `previews[${previewIndex}]`;
   for (let edgeIndex = 0; edgeIndex < preview.acceptedEdges.length; edgeIndex += 1) {
@@ -731,7 +856,9 @@ function validateRoutePreview(
   validatePlanePoint(preview.current, `${fieldPrefix}.current`, "output");
   if (
     !pointsEqual(preview.bestPath[0], start) ||
-    (!pointsEqual(preview.bestPath.at(-1), preview.current) && !pointsEqual(preview.bestPath.at(-1), target)) ||
+    (shouldBestPathEndAtCurrentOrTarget
+      ? !pointsEqual(preview.bestPath.at(-1), preview.current) && !pointsEqual(preview.bestPath.at(-1), target)
+      : false) ||
     !pointsEqual(preview.candidates[0], start) ||
     !preview.candidates.some((point) => pointsEqual(point, target)) ||
     !preview.candidates.some((point) => pointsEqual(point, preview.current))
@@ -1020,5 +1147,119 @@ function validateDisjointRouteContextRanges(
         );
       }
     }
+  }
+}
+
+function validateVisibilityContourCache(
+  componentLabels: Uint32Array,
+  componentCount: number,
+  componentStats: Uint32Array,
+  contourOffsets: Uint32Array,
+  contourComponents: Uint32Array,
+  contourX: Uint32Array,
+  contourY: Uint32Array,
+  contourSignedAreas: Float64Array,
+) {
+  const expectedStats = new Uint32Array(componentCount * 7);
+  for (let componentIndex = 0; componentIndex < componentCount; componentIndex += 1) {
+    expectedStats[componentIndex * 7] = GRAPHWAR_PLANE_LENGTH;
+    expectedStats[componentIndex * 7 + 2] = GRAPHWAR_PLANE_HEIGHT;
+  }
+  for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+    for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+      const componentId = componentLabels[y * GRAPHWAR_PLANE_LENGTH + x] ?? 0;
+      if (componentId === 0) continue;
+      const offset = (componentId - 1) * 7;
+      expectedStats[offset] = Math.min(expectedStats[offset] ?? GRAPHWAR_PLANE_LENGTH, x);
+      expectedStats[offset + 1] = Math.max(expectedStats[offset + 1] ?? 0, x);
+      expectedStats[offset + 2] = Math.min(expectedStats[offset + 2] ?? GRAPHWAR_PLANE_HEIGHT, y);
+      expectedStats[offset + 3] = Math.max(expectedStats[offset + 3] ?? 0, y);
+      expectedStats[offset + 4] = (expectedStats[offset + 4] ?? 0) + x;
+      expectedStats[offset + 5] = (expectedStats[offset + 5] ?? 0) + y;
+      expectedStats[offset + 6] = (expectedStats[offset + 6] ?? 0) + 1;
+    }
+  }
+  if (!componentStats.every((value, index) => value === expectedStats[index])) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Graphwar WASM visibility component stats are inconsistent",
+      "output",
+    );
+  }
+  if (
+    contourOffsets[0] !== 0 ||
+    contourOffsets.at(-1) !== contourX.length ||
+    contourX.length !== contourY.length ||
+    contourComponents.length !== contourSignedAreas.length
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Graphwar WASM visibility contour ranges are inconsistent",
+      "output",
+    );
+  }
+  const hasComponentContour = new Uint8Array(componentCount);
+  for (let contourIndex = 0; contourIndex < contourComponents.length; contourIndex += 1) {
+    const start = contourOffsets[contourIndex] ?? Number.NaN;
+    const end = contourOffsets[contourIndex + 1] ?? Number.NaN;
+    const componentId = contourComponents[contourIndex] ?? 0;
+    if (end - start < 2 || componentId < 1 || componentId > componentCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM visibility contour record is invalid",
+        "output",
+      );
+    }
+    hasComponentContour[componentId - 1] = 1;
+    let doubledArea = 0;
+    for (let pointIndex = start; pointIndex < end; pointIndex += 1) {
+      const nextIndex = pointIndex + 1 === end ? start : pointIndex + 1;
+      const x = contourX[pointIndex] ?? Number.NaN;
+      const y = contourY[pointIndex] ?? Number.NaN;
+      const nextX = contourX[nextIndex] ?? Number.NaN;
+      const nextY = contourY[nextIndex] ?? Number.NaN;
+      if (x > GRAPHWAR_PLANE_LENGTH || y > GRAPHWAR_PLANE_HEIGHT) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM visibility contour point is invalid",
+          "output",
+        );
+      }
+      let hasComponentCell = false;
+      let hasExteriorCell = false;
+      for (let cellY = y - 1; cellY <= y; cellY += 1) {
+        for (let cellX = x - 1; cellX <= x; cellX += 1) {
+          if (cellX < 0 || cellX >= GRAPHWAR_PLANE_LENGTH || cellY < 0 || cellY >= GRAPHWAR_PLANE_HEIGHT) {
+            hasExteriorCell = true;
+          } else if (componentLabels[cellY * GRAPHWAR_PLANE_LENGTH + cellX] === componentId) {
+            hasComponentCell = true;
+          } else {
+            hasExteriorCell = true;
+          }
+        }
+      }
+      if (!hasComponentCell || !hasExteriorCell) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM visibility contour point is not on its component boundary",
+          "output",
+        );
+      }
+      doubledArea += x * nextY - nextX * y;
+    }
+    if (!Object.is(contourSignedAreas[contourIndex], doubledArea / 2)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM visibility contour area is inconsistent",
+        "output",
+      );
+    }
+  }
+  if (hasComponentContour.some((value) => value === 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Graphwar WASM visibility contour components are incomplete",
+      "output",
+    );
   }
 }

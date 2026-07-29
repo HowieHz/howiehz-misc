@@ -7,7 +7,11 @@ import {
   graphClosedRegionHitsPlaneMask,
 } from "../../pathfinding/routing/step-envelope";
 import { buildGraphwarThetaStarPathForMask } from "../../pathfinding/routing/theta-star";
-import { lineHitsPlaneMask, pointHitsPlaneMask } from "../../pathfinding/routing/visibility-graph";
+import {
+  buildGraphwarVisibilityGraphPathForMask,
+  lineHitsPlaneMask,
+  pointHitsPlaneMask,
+} from "../../pathfinding/routing/visibility-graph";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { mirrorPlaneGridPoint } from "../plane-grid";
 import { createPixelPoint } from "../types";
@@ -155,6 +159,193 @@ describe("Graphwar WASM route context", () => {
     context.dispose();
   });
 
+  it.each([
+    { boundaryExpansion: 0, isMirrored: false, name: "direct", obstacle: "none" as const, routeTolerance: 0 },
+    {
+      boundaryExpansion: 0,
+      isMirrored: false,
+      name: "routed tie-break",
+      obstacle: "two-gaps" as const,
+      routeTolerance: 0,
+    },
+    {
+      boundaryExpansion: 0,
+      isMirrored: true,
+      name: "mirrored routed tie-break",
+      obstacle: "two-gaps" as const,
+      routeTolerance: 0,
+    },
+    { boundaryExpansion: 0, isMirrored: false, name: "no route", obstacle: "wall" as const, routeTolerance: 0 },
+    {
+      boundaryExpansion: 0,
+      isMirrored: false,
+      name: "positive tolerance",
+      obstacle: "two-wide-gaps" as const,
+      routeTolerance: 2.25,
+    },
+    {
+      boundaryExpansion: 0,
+      isMirrored: false,
+      name: "negative tolerance",
+      obstacle: "wall" as const,
+      routeTolerance: -2.25,
+    },
+    {
+      boundaryExpansion: 3.75,
+      isMirrored: false,
+      name: "boundary expansion",
+      obstacle: "two-wide-gaps" as const,
+      routeTolerance: 0,
+    },
+  ])(
+    "matches stateless visibility graph for $name",
+    async ({ boundaryExpansion, isMirrored, obstacle, routeTolerance }) => {
+      const runtime = await createRuntime();
+      const sourceMask = new Uint8Array(planeCellCount);
+      if (obstacle !== "none") {
+        for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+          if (
+            (obstacle === "two-gaps" && (y === 100 || y === 350)) ||
+            (obstacle === "two-wide-gaps" && ((y >= 90 && y <= 110) || (y >= 340 && y <= 360)))
+          ) {
+            continue;
+          }
+          sourceMask[y * GRAPHWAR_PLANE_LENGTH + 300] = 1;
+        }
+      }
+      const routeBounds = isMirrored ? { ...bounds, maxX: bounds.minX, minX: bounds.maxX } : bounds;
+      const context = createGraphwarWasmRouteContext(runtime, {
+        boundaryExpansion,
+        bounds: routeBounds,
+        boundsRect,
+        friendlySoldierCenters: [],
+        routeOriginPoint: { x: 100, y: 225 },
+        routeTolerancePlanePixels: routeTolerance,
+        simulationTolerancePlanePixels: 0,
+        soldierHitRadiusPixels: 7,
+        sourceMask,
+      });
+      const start = { x: 100, y: 225 };
+      const target = { x: 600, y: 225 };
+      const physicalStart = mirrorPlaneGridPoint(start, isMirrored);
+      const physicalTarget = mirrorPlaneGridPoint(target, isMirrored);
+      const expectedPreviews: unknown[] = [];
+      const expected = await buildGraphwarVisibilityGraphPathForMask({
+        boundaryExpansion,
+        bounds: routeBounds,
+        boundsRect,
+        onPreview: (preview) => expectedPreviews.push(structuredClone(preview)),
+        routeMask: context.routeMask,
+        routeTolerancePlanePixels: routeTolerance,
+        startPoint: createPixelPoint(physicalStart.x + 0.5, physicalStart.y + 0.5),
+        targetPoint: createPixelPoint(physicalTarget.x + 0.5, physicalTarget.y + 0.5),
+      });
+
+      const actual = context.findVisibilityGraphPath(start, target, true);
+      if (!expected) {
+        expect(actual).toEqual({ expansionCount: expect.any(Number), previews: expectedPreviews, type: "no-route" });
+      } else {
+        expect(actual.type).toBe("success");
+        if (actual.type === "success") {
+          expect(actual.path).toEqual(expected.map((point) => mirrorPlaneGridPoint(point, isMirrored)));
+        }
+      }
+      expect(actual.previews).toEqual(expectedPreviews);
+      context.dispose();
+    },
+  );
+
+  it.each([
+    { fixture: 2, isMirrored: false, routeTolerance: 0 },
+    { fixture: 7, isMirrored: true, routeTolerance: 2.25 },
+  ])(
+    "matches complex visibility path and preview ordering for fixture $fixture",
+    async ({ fixture, isMirrored, routeTolerance }) => {
+      const runtime = await createRuntime();
+      const routeBounds = isMirrored ? { ...bounds, maxX: bounds.minX, minX: bounds.maxX } : bounds;
+      const context = createGraphwarWasmRouteContext(runtime, {
+        boundaryExpansion: fixture % 3,
+        bounds: routeBounds,
+        boundsRect,
+        friendlySoldierCenters: [],
+        routeOriginPoint: { x: 100, y: 225 },
+        routeTolerancePlanePixels: routeTolerance,
+        simulationTolerancePlanePixels: 0,
+        soldierHitRadiusPixels: 7,
+        sourceMask: createDeterministicThetaMask(fixture),
+      });
+      const start = { x: 100, y: 225 };
+      const target = { x: 600, y: 225 };
+      const physicalStart = mirrorPlaneGridPoint(start, isMirrored);
+      const physicalTarget = mirrorPlaneGridPoint(target, isMirrored);
+      const expectedPreviews: unknown[] = [];
+      const expected = await buildGraphwarVisibilityGraphPathForMask({
+        boundaryExpansion: fixture % 3,
+        bounds: routeBounds,
+        boundsRect,
+        onPreview: (preview) => expectedPreviews.push(structuredClone(preview)),
+        routeMask: context.routeMask,
+        routeTolerancePlanePixels: routeTolerance,
+        startPoint: createPixelPoint(physicalStart.x + 0.5, physicalStart.y + 0.5),
+        targetPoint: createPixelPoint(physicalTarget.x + 0.5, physicalTarget.y + 0.5),
+      });
+
+      const actual = context.findVisibilityGraphPath(start, target, true);
+      expect(actual.type).toBe(expected ? "success" : "no-route");
+      if (actual.type === "success") {
+        expect(actual.path).toEqual(expected?.map((point) => mirrorPlaneGridPoint(point, isMirrored)));
+      }
+      expect(actual.previews).toEqual(expectedPreviews);
+      context.dispose();
+    },
+  );
+
+  it("matches visibility search for a stationary request and across arena growth", async () => {
+    const runtime = await createRuntime();
+    const input = {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 1.5,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: createDeterministicThetaMask(4),
+    };
+    const context = createGraphwarWasmRouteContext(runtime, input);
+    const point = { x: 100, y: 225 };
+    const expectedPreviews: unknown[] = [];
+    const expected = await buildGraphwarVisibilityGraphPathForMask({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      onPreview: (preview) => expectedPreviews.push(structuredClone(preview)),
+      routeMask: context.routeMask,
+      routeTolerancePlanePixels: 1.5,
+      startPoint: createPixelPoint(point.x + 0.5, point.y + 0.5),
+      targetPoint: createPixelPoint(point.x + 0.5, point.y + 0.5),
+    });
+    const expectedResult = context.findVisibilityGraphPath(point, point, true);
+    expect(expected).toBeUndefined();
+    expect(expectedResult).toEqual({
+      expansionCount: expect.any(Number),
+      previews: expectedPreviews,
+      type: "no-route",
+    });
+    const contextCursor = runtime.arenaCursor;
+    expect(context.findVisibilityGraphPath({ x: 100, y: 225 }, { x: 600, y: 225 }, true)).toEqual(
+      context.findVisibilityGraphPath({ x: 100, y: 225 }, { x: 600, y: 225 }, true),
+    );
+    expect(runtime.arenaCursor).toBe(contextCursor);
+    const scratchMark = runtime.markArena();
+    runtime.reserveArena(runtime.buffer.byteLength * 2, 16);
+    runtime.resetArena(scratchMark);
+    expect(context.findVisibilityGraphPath(point, point, true)).toEqual(expectedResult);
+    expect(runtime.arenaCursor).toBe(contextCursor);
+    context.dispose();
+  });
+
   it("reuses Theta* scratch across searches, memory growth, and replacement contexts", async () => {
     const runtime = await createRuntime();
     let contextPointer = 0;
@@ -290,6 +481,40 @@ describe("Graphwar WASM route context", () => {
         const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
         const policyPointer = inputView.getUint32(28, true);
         new DataView(runtime.buffer).setFloat64(policyPointer + 9 * Float64Array.BYTES_PER_ELEMENT, value, true);
+      }
+      return originalRunRouteTask(command, inputPointer, inputByteLength);
+    });
+
+    expect(() =>
+      createGraphwarWasmRouteContext(runtime, {
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        friendlySoldierCenters: [],
+        routeOriginPoint: { x: 100, y: 225 },
+        routeTolerancePlanePixels: 0,
+        simulationTolerancePlanePixels: 0,
+        soldierHitRadiusPixels: 7,
+        sourceMask: new Uint8Array(planeCellCount),
+      }),
+    ).toThrow();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    { index: 0, value: -1 },
+    { index: 2, value: 1.5 },
+    { index: 4, value: 0.5 },
+    { index: 6, value: 0 },
+    { index: 8, value: Number.POSITIVE_INFINITY },
+  ])("rejects invalid visibility policy index $index value $value", async ({ index, value }) => {
+    const runtime = await createRuntime();
+    const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      if (command === 1) {
+        const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
+        const policyPointer = inputView.getUint32(28, true);
+        new DataView(runtime.buffer).setFloat64(policyPointer + index * Float64Array.BYTES_PER_ELEMENT, value, true);
       }
       return originalRunRouteTask(command, inputPointer, inputByteLength);
     });
@@ -605,6 +830,37 @@ describe("Graphwar WASM route context", () => {
       expectedMessage: /invalid initial state/u,
       name: "dirty Theta scratch",
     },
+    {
+      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, contextView: DataView) {
+        contextView.setUint32(228, contextView.getUint32(232, true), true);
+      },
+      expectedMessage: /ranges overlap/u,
+      name: "aliased visibility contours",
+    },
+    {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, contextView: DataView) {
+        const offsetsPointer = contextView.getUint32(216, true);
+        new Uint32Array(runtime.buffer, offsetsPointer, contextView.getUint32(220, true))[0] = 1;
+      },
+      expectedMessage: /contour ranges/u,
+      name: "invalid visibility contour offset",
+    },
+    {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, contextView: DataView) {
+        const areaPointer = contextView.getUint32(236, true);
+        new Float64Array(runtime.buffer, areaPointer, contextView.getUint32(240, true))[0] = Number.NaN;
+      },
+      expectedMessage: /contour area/u,
+      name: "invalid visibility contour area",
+    },
+    {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, contextView: DataView) {
+        const xPointer = contextView.getUint32(228, true);
+        new Uint32Array(runtime.buffer, xPointer, contextView.getUint32(244, true))[0] = 0;
+      },
+      expectedMessage: /component boundary/u,
+      name: "visibility contour point outside its component boundary",
+    },
   ])("rejects a malformed retained $name", async ({ corrupt, expectedMessage }) => {
     const runtime = await createRuntime();
     const sourceMask = new Uint8Array(planeCellCount);
@@ -613,7 +869,7 @@ describe("Graphwar WASM route context", () => {
     vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
       const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
       if (command === 1) {
-        corrupt(runtime, new DataView(runtime.buffer, resultPointer, 208));
+        corrupt(runtime, new DataView(runtime.buffer, resultPointer, 264));
       }
       return resultPointer;
     });

@@ -259,14 +259,43 @@ test("preserves signed zero through VM operations", async () => {
   }
 });
 
-test("normalizes only final NaN/Infinity and permits finite recovery from intermediate Infinity", async () => {
-  for (const constants of [[Number.POSITIVE_INFINITY], [Number.NaN]]) {
+test("preserves Java terminal non-finite values and permits finite recovery from intermediate Infinity", async () => {
+  for (const expected of [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, Number.NaN]) {
     const [actual] = await evaluateProgram({
-      constants: new Float64Array(constants),
+      constants: new Float64Array([expected]),
       maximumStackSize: 1,
       opcodes: new Uint8Array([Opcode.Constant]),
     });
-    assert.equal(Number.isNaN(actual), true);
+    assert.equal(Object.is(actual, expected), true);
+  }
+
+  for (const { constants, expected, maximumStackSize, opcodes } of [
+    {
+      constants: [1, 0],
+      expected: Number.POSITIVE_INFINITY,
+      maximumStackSize: 2,
+      opcodes: [Opcode.Divide, Opcode.Constant, Opcode.Constant],
+    },
+    {
+      constants: [-1, 0],
+      expected: Number.NEGATIVE_INFINITY,
+      maximumStackSize: 2,
+      opcodes: [Opcode.Divide, Opcode.Constant, Opcode.Constant],
+    },
+    { constants: [-1], expected: Number.NaN, maximumStackSize: 1, opcodes: [Opcode.Sqrt, Opcode.Constant] },
+    {
+      constants: [2, 1024],
+      expected: Number.POSITIVE_INFINITY,
+      maximumStackSize: 2,
+      opcodes: [Opcode.Pow, Opcode.Constant, Opcode.Constant],
+    },
+  ]) {
+    const [actual] = await evaluateProgram({
+      constants: new Float64Array(constants),
+      maximumStackSize,
+      opcodes: new Uint8Array(opcodes),
+    });
+    assert.equal(Object.is(actual, expected), true);
   }
 
   const [reciprocalInfinity] = await evaluateProgram({
@@ -318,7 +347,7 @@ test("keeps extreme finite pow results within the 64 ULP numerical gate", async 
       maximumStackSize: 2,
       opcodes: new Uint8Array([Opcode.Pow, Opcode.Constant, Opcode.Constant]),
     });
-    assert.equal(Number.isNaN(actual), true);
+    assert.equal(Object.is(actual, Math.pow(base, exponent)), true);
   }
 });
 

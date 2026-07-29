@@ -86,6 +86,11 @@ function isFiniteValue(value: f64): bool {
 }
 
 @inline
+function isInfiniteValue(value: f64): bool {
+  return value == f64.POSITIVE_INFINITY || value == f64.NEGATIVE_INFINITY;
+}
+
+@inline
 function isCanonicalZero(value: f64): bool {
   return reinterpret<u64>(value) == 0;
 }
@@ -908,7 +913,7 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       step,
     );
     let isCandidateFinite = isTrajectoryScalarCandidateFinite(resultPointer, equation);
-    while (isCandidateFinite && isTrajectoryScalarCandidateTooDistant(resultPointer, statePointer)) {
+    while (isTrajectoryScalarCandidateTooDistant(resultPointer, statePointer)) {
       if (
         load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_X_OFFSET) -
           load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET) <=
@@ -938,6 +943,39 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       isCandidateFinite = isTrajectoryScalarCandidateFinite(resultPointer, equation);
     }
     if (!isCandidateFinite) {
+      const candidateX = load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_X_OFFSET);
+      const candidateY = load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_Y_OFFSET);
+      if (
+        maskPointer != 0 &&
+        trajectoryScalarPointHitsObstacle(
+          candidateX,
+          candidateY,
+          boundsMinX,
+          boundsMaxX,
+          boundsMinY,
+          boundsMaxY,
+          hasTargetPolicy ? boundsRectX : 0,
+          hasTargetPolicy ? boundsRectY : 0,
+          hasTargetPolicy ? boundsRectWidth : getGraphwarPlaneLength(),
+          hasTargetPolicy ? boundsRectHeight : getGraphwarPlaneHeight(),
+          maskPointer,
+          boundaryExpansion,
+        )
+      ) {
+        store<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_FLAGS_OFFSET, TRAJECTORY_SCALAR_RESULT_FLAG_OBSTACLE_HIT);
+        if (hasTargetPolicy) {
+          store<i32>(
+            targetStatePointer + TRAJECTORY_TARGET_STATE_OBSTACLE_HIT_INDEX_OFFSET,
+            <i32>load<u32>(statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET),
+          );
+        }
+        writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OBSTACLE);
+        return;
+      }
+      if (isInfiniteValue(candidateX) || isInfiniteValue(candidateY)) {
+        writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OUT_OF_BOUNDS);
+        return;
+      }
       writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_INVALID);
       return;
     }
@@ -1144,23 +1182,36 @@ function trajectoryScalarPointHitsObstacle(
 ): bool {
   const pixelX = boundsRectX + ((x - boundsMinX) / (boundsMaxX - boundsMinX)) * boundsRectWidth;
   const pixelY = boundsRectY + ((boundsMaxY - y) / (boundsMaxY - boundsMinY)) * boundsRectHeight;
-  const planeX = NativeMath.floor(
+  const planeX = graphwarJavaPixelCoordinate(
     (pixelX - boundsRectX) * (getGraphwarPlaneLength() / boundsRectWidth),
   );
-  const planeY = NativeMath.floor(
+  const planeY = graphwarJavaPixelCoordinate(
     (pixelY - boundsRectY) * (getGraphwarPlaneHeight() / boundsRectHeight),
   );
   if (
-    !isFiniteValue(planeX) ||
-    !isFiniteValue(planeY) ||
-    planeX < <f64>boundaryExpansion ||
-    planeX >= getGraphwarPlaneLength() - boundaryExpansion ||
-    planeY < <f64>boundaryExpansion ||
-    planeY >= getGraphwarPlaneHeight() - boundaryExpansion
+    planeX < <i32>boundaryExpansion ||
+    planeX >= <i32>getGraphwarPlaneLength() - <i32>boundaryExpansion ||
+    planeY < <i32>boundaryExpansion ||
+    planeY >= <i32>getGraphwarPlaneHeight() - <i32>boundaryExpansion
   ) {
     return true;
   }
   return load<u8>(maskPointer + <u32>planeY * <u32>getGraphwarPlaneLength() + <u32>planeX) != 0;
+}
+
+/** Java's `(int)` conversion maps NaN to zero and saturates infinities. */
+@inline
+function graphwarJavaPixelCoordinate(value: f64): i32 {
+  if (value != value) {
+    return 0;
+  }
+  if (value >= 2147483647) {
+    return 2147483647;
+  }
+  if (value <= -2147483648) {
+    return -2147483648;
+  }
+  return <i32>value;
 }
 
 function validateTrajectoryScalarState(statePointer: u32, equation: i32): void {

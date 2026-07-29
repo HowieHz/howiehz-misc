@@ -2,7 +2,11 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createGraphwarTrajectoryDebugMetrics } from "../../formula/debug-metrics";
 import { parseGraphwarExpressionProgram } from "../../formula/expression/evaluator";
-import { createGraphwarExpressionProgramEvaluator } from "../../formula/expression/program";
+import {
+  createGraphwarExpressionProgram,
+  createGraphwarExpressionProgramEvaluator,
+  GraphwarExpressionOpcode,
+} from "../../formula/expression/program";
 import {
   compileFormulaEvaluator,
   compileGraphwarFormulaMaterials,
@@ -79,6 +83,54 @@ describe("Graphwar WASM formula Adapter", () => {
       values: Array.from({ length: 16_384 }, (_, index) => ({ dy: index / 5, x: index / 3, y: index / 7 })),
     });
     expect([...result]).toEqual(snapshot);
+  });
+
+  it("returns owned Java-compatible terminal non-finite expression results", async () => {
+    const runtime = await createRuntime();
+    const canonicalNonFinitePrograms = [
+      { expected: Number.POSITIVE_INFINITY, program: parseGraphwarExpressionProgram("1/0") },
+      { expected: Number.NEGATIVE_INFINITY, program: parseGraphwarExpressionProgram("-1/0") },
+      {
+        expected: Number.NEGATIVE_INFINITY,
+        program: createGraphwarExpressionProgram(
+          new Uint8Array([GraphwarExpressionOpcode.Constant]),
+          new Float64Array([Number.NEGATIVE_INFINITY]),
+        ),
+      },
+      {
+        expected: Number.POSITIVE_INFINITY,
+        program: createGraphwarExpressionProgram(
+          new Uint8Array([GraphwarExpressionOpcode.Constant]),
+          new Float64Array([Number.POSITIVE_INFINITY]),
+        ),
+      },
+      {
+        expected: Number.NaN,
+        program: createGraphwarExpressionProgram(
+          new Uint8Array([GraphwarExpressionOpcode.Constant]),
+          new Float64Array([Number.NaN]),
+        ),
+      },
+    ] as const;
+
+    for (const entry of canonicalNonFinitePrograms) {
+      const { program } = entry;
+      expect(program).toBeDefined();
+      if (!program) {
+        continue;
+      }
+      const result = runGraphwarWasmExpressionBatch(runtime, {
+        program,
+        values: [{ dy: 0, x: 0, y: 0 }],
+      });
+      expect(Object.is(result[0], entry.expected)).toBe(true);
+
+      runGraphwarWasmExpressionBatch(runtime, {
+        program,
+        values: Array.from({ length: 1_024 }, (_, index) => ({ dy: 0, x: index, y: 0 })),
+      });
+      expect(Object.is(result[0], entry.expected)).toBe(true);
+    }
   });
 
   for (const algorithm of ["abs", "step", "pchip", "akima"] as const) {

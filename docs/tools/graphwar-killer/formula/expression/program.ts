@@ -134,8 +134,7 @@ function evaluateGraphwarExpressionProgram(
     }
   }
 
-  const value = stack[0];
-  return Number.isFinite(value) ? value : Number.NaN;
+  return stack[0];
 }
 
 /** 返回反向求值 stack 的精确高水位，或拒绝 malformed program。 */

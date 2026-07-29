@@ -189,8 +189,7 @@ function evaluateExpression(
     }
   }
 
-  const value = load<f64>(stackPointer);
-  return isFinite(value) ? value : f64.NaN;
+  return load<f64>(stackPointer);
 }
 
 /** Validates and evaluates a canonical expression program for parallel x/y/dy input records. */

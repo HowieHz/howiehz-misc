@@ -381,7 +381,7 @@ function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
     ? moveFromSoldierCenter(options.soldierCenter, angle)
     : options.soldierCenter;
   const offset = launchPoint.y - evaluateY(launchPoint.x);
-  if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
+  if (!isFinitePoint(launchPoint)) {
     return { ok: false as const, stopReason: "invalid" as const };
   }
 
@@ -458,7 +458,7 @@ function sampleNormalExpression(options: SampleGraphwarExpressionTrajectoryOptio
     ? moveFromSoldierCenter(options.soldierCenter, angle)
     : options.soldierCenter;
   const offset = launchPoint.y - evaluateY(launchPoint.x);
-  if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
+  if (!isFinitePoint(launchPoint)) {
     return createTrajectorySample([], "invalid");
   }
 
@@ -853,7 +853,10 @@ function findNextSample<TPoint extends GraphPoint>(
   let step = GRAPHWAR_STEP_SIZE;
   let next = calculateNext(previous, step);
 
-  while (isFinitePoint(next) && distanceSquared(previous, next) > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
+  // Graphwar evaluates the distance loop before checking the candidate's y
+  // classification. Infinity can therefore reach the minimum-step branch,
+  // while NaN makes the distance comparison false and reaches numeric stop.
+  while (distanceSquared(previous, next) > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
     if (next.x - previous.x <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
       // y= 会在这里爆炸；ODE 官方源码的 for 条件会直接退出并继续用当前过长点。
       return options.stopAtMinStep

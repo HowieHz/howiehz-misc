@@ -3016,18 +3016,25 @@ function popStepHeap(heapPointer: u32, outputPointer: u32): bool {
     const leftIndex = nodeIndex * 2 + 1;
     if (leftIndex >= length) break;
     const rightIndex = leftIndex + 1;
-    let bestIndex = leftIndex;
+    let bestIndex = nodeIndex;
+    if (
+      compareStepHeapNodes(
+        heapPointer,
+        stepHeapNodePointer(heapPointer, leftIndex),
+        stepHeapNodePointer(heapPointer, bestIndex),
+      ) < 0
+    ) bestIndex = leftIndex;
     if (
       rightIndex < length &&
       compareStepHeapNodes(
         heapPointer,
         stepHeapNodePointer(heapPointer, rightIndex),
-        stepHeapNodePointer(heapPointer, leftIndex),
+        stepHeapNodePointer(heapPointer, bestIndex),
       ) < 0
     ) bestIndex = rightIndex;
+    if (bestIndex == nodeIndex) break;
     const nodePointer = stepHeapNodePointer(heapPointer, nodeIndex);
     const bestPointer = stepHeapNodePointer(heapPointer, bestIndex);
-    if (compareStepHeapNodes(heapPointer, bestPointer, nodePointer) >= 0) break;
     swapStepHeapNodes(nodePointer, bestPointer);
     nodeIndex = bestIndex;
   }

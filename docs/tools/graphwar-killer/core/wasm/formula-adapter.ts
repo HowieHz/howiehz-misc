@@ -289,11 +289,6 @@ export function runGraphwarWasmExpressionBatch(
     ) {
       throwFormulaResultError("Expression result contains unexpected formula material fields");
     }
-    for (let index = 0; index < result.values.length; index += 1) {
-      if (result.values[index] === Number.POSITIVE_INFINITY || result.values[index] === Number.NEGATIVE_INFINITY) {
-        throwFormulaResultError(`Expression result values[${index}] was not normalized`);
-      }
-    }
     return result.values;
   });
 }

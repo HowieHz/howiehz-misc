@@ -139,10 +139,13 @@ describe("Graphwar canonical expression programs", () => {
     ).toBeUndefined();
   });
 
-  it("keeps final non-finite normalization but permits finite recovery from an infinite constant", () => {
+  it("preserves Java terminal non-finite values and permits finite recovery from an infinite constant", () => {
     const overflowingDecimal = "9".repeat(400);
 
-    expect(createGraphwarExpressionEvaluator("1/0")?.(0, 0, 0)).toBeNaN();
+    expect(createGraphwarExpressionEvaluator("1/0")?.(0, 0, 0)).toBe(Number.POSITIVE_INFINITY);
+    expect(createGraphwarExpressionEvaluator("-1/0")?.(0, 0, 0)).toBe(Number.NEGATIVE_INFINITY);
+    expect(createGraphwarExpressionEvaluator("sqrt(-1)")?.(0, 0, 0)).toBeNaN();
+    expect(createGraphwarExpressionEvaluator("2^1024")?.(0, 0, 0)).toBe(Number.POSITIVE_INFINITY);
     expect(createGraphwarExpressionEvaluator(`1/${overflowingDecimal}`)?.(0, 0, 0)).toBe(0);
     expect(Object.is(createGraphwarExpressionEvaluator("-0.0")?.(0, 0, 0), 0)).toBe(true);
   });
@@ -188,15 +191,17 @@ describe("Graphwar canonical expression programs", () => {
     expect(isGraphwarExpressionProgram(program)).toBe(false);
   });
 
-  it("accepts canonical programs with non-finite constants and rejects forged metadata", () => {
-    const program = createGraphwarExpressionProgram(
-      new Uint8Array([GraphwarExpressionOpcode.Constant]),
-      new Float64Array([Number.POSITIVE_INFINITY]),
-    );
-    expect(program).toBeDefined();
-    expect(isGraphwarExpressionProgram(program)).toBe(true);
-    expect(program && createGraphwarExpressionProgramEvaluator(program)(0, 0, 0)).toBeNaN();
-    expect(program && isGraphwarExpressionProgram({ ...program, maximumStackSize: 2 })).toBe(false);
+  it("accepts canonical programs with Java-compatible non-finite constants and rejects forged metadata", () => {
+    for (const expected of [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, Number.NaN]) {
+      const program = createGraphwarExpressionProgram(
+        new Uint8Array([GraphwarExpressionOpcode.Constant]),
+        new Float64Array([expected]),
+      );
+      expect(program).toBeDefined();
+      expect(isGraphwarExpressionProgram(program)).toBe(true);
+      expect(Object.is(program && createGraphwarExpressionProgramEvaluator(program)(0, 0, 0), expected)).toBe(true);
+      expect(program && isGraphwarExpressionProgram({ ...program, maximumStackSize: 2 })).toBe(false);
+    }
   });
 
   it.each(["", " ", "+", "sin", "()", "x?"])("keeps invalid source %j outside the VM", (expression) => {

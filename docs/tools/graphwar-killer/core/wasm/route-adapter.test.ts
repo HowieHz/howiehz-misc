@@ -582,55 +582,112 @@ describe("Graphwar WASM route context", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
-  it.each([
-    {
-      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
-        resultView.setUint32(4, 0, true);
-        resultView.setUint32(8, 0, true);
-        resultView.setUint32(12, 0, true);
-        resultView.setUint32(16, 0, true);
+  it.each(
+    [
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setUint32(4, 2, true);
+        },
+        expectedMessage: /status/u,
+        name: "status",
       },
-      expectedMessage: /no-route result contains path state/u,
-      name: "no-route half-state",
-    },
-    {
-      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
-        resultView.setInt32(40, 2, true);
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setUint32(4, 0, true);
+          resultView.setUint32(8, 0, true);
+          resultView.setUint32(12, 0, true);
+          resultView.setUint32(16, 0, true);
+        },
+        expectedMessage: /no-route result contains path state/u,
+        name: "no-route half-state",
       },
-      expectedMessage: /sign is not canonical/u,
-      name: "state sign",
-    },
-    {
-      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
-        resultView.setUint32(44, runtime.arenaBase, true);
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setInt32(40, 2, true);
+        },
+        expectedMessage: /sign is not canonical/u,
+        name: "state sign",
       },
-      expectedMessage: /outside the raw arena/u,
-      name: "state pointing into retained context",
-    },
-    {
-      corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
-        resultView.setFloat64(32, resultView.getFloat64(32, true) + 1, true);
+      {
+        corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setUint32(44, runtime.arenaBase, true);
+        },
+        expectedMessage: /outside the raw arena/u,
+        name: "state pointing into retained context",
       },
-      expectedMessage: /runtime height does not match/u,
-      name: "runtime height",
-    },
-    {
-      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
-        const statePointer = resultView.getUint32(44, true);
-        const stateCount = resultView.getUint32(48, true);
-        new DataView(runtime.buffer).setUint32(statePointer + (stateCount - 1) * 4, 0, true);
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setFloat64(32, Number.NaN, true);
+        },
+        expectedMessage: /must be finite/u,
+        name: "non-finite runtime height",
       },
-      expectedMessage: /magnitude is not canonical/u,
-      name: "state magnitude",
-    },
-    {
-      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
-        resultView.setUint32(8, runtime.arenaBase, true);
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setFloat64(32, resultView.getFloat64(32, true) + 1, true);
+        },
+        expectedMessage: /runtime height does not match/u,
+        name: "runtime height",
       },
-      expectedMessage: /outside the raw arena/u,
-      name: "path pointing into retained context",
-    },
-  ])("rejects a malformed Step Theta* $name", async ({ corrupt, expectedMessage }) => {
+      {
+        corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          const statePointer = resultView.getUint32(44, true);
+          const stateCount = resultView.getUint32(48, true);
+          new DataView(runtime.buffer).setUint32(statePointer + (stateCount - 1) * 4, 0, true);
+        },
+        expectedMessage: /magnitude is not canonical/u,
+        name: "state magnitude",
+      },
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setUint32(44, resultView.getUint32(44, true) + 2, true);
+        },
+        expectedMessage: /element alignment/u,
+        name: "unaligned state limbs",
+      },
+      {
+        corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          const pathXPointer = resultView.getUint32(8, true);
+          const pathLength = resultView.getUint32(16, true);
+          const pathView = new DataView(runtime.buffer);
+          pathView.setFloat64(
+            pathXPointer + (pathLength - 1) * Float64Array.BYTES_PER_ELEMENT,
+            pathView.getFloat64(pathXPointer, true),
+            true,
+          );
+        },
+        expectedMessage: /does not advance in x\+ order/u,
+        name: "non-forward path",
+      },
+      {
+        corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          const pathYPointer = resultView.getUint32(12, true);
+          const pathLength = resultView.getUint32(16, true);
+          const terminalOffset = pathYPointer + (pathLength - 1) * Float64Array.BYTES_PER_ELEMENT;
+          const pathView = new DataView(runtime.buffer);
+          pathView.setFloat64(terminalOffset, pathView.getFloat64(terminalOffset, true) + 1, true);
+        },
+        expectedMessage: /path endpoints do not match/u,
+        name: "endpoint identity",
+      },
+      {
+        corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setUint32(8, resultView.getUint32(8, true) + 4, true);
+        },
+        expectedMessage: /element alignment/u,
+        name: "unaligned path",
+      },
+      {
+        corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+          resultView.setUint32(8, runtime.arenaBase, true);
+        },
+        expectedMessage: /outside the raw arena/u,
+        name: "path pointing into retained context",
+      },
+    ].flatMap((fixture) =>
+      (["Theta*", "visibility"] as const).map((routeAlgorithm) => ({ ...fixture, routeAlgorithm })),
+    ),
+  )("rejects a malformed Step $routeAlgorithm $name", async ({ corrupt, expectedMessage, routeAlgorithm }) => {
     const runtime = await createRuntime();
     const model = createGraphwarStepRouteModel(0, {
       decimalPlaces: 4,
@@ -642,7 +699,9 @@ describe("Graphwar WASM route context", () => {
     const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
     vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
       const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
-      if (command === 9) corrupt(runtime, new DataView(runtime.buffer, resultPointer, 56));
+      if (command === (routeAlgorithm === "Theta*" ? 9 : 10)) {
+        corrupt(runtime, new DataView(runtime.buffer, resultPointer, 56));
+      }
       return resultPointer;
     });
     const context = createGraphwarWasmRouteContext(runtime, {
@@ -662,14 +721,15 @@ describe("Graphwar WASM route context", () => {
     });
     const stepRoute = context.stepRoute;
     if (!stepRoute) throw new Error("Expected a retained Step route capability");
+    const request = {
+      exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
+      exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
+      initialState: { resolvedY: 0, routeStateKey: "0" },
+      start: { x: 100, y: 225 },
+      target: { x: 300, y: 150 },
+    } as const;
     expect(() =>
-      stepRoute.findThetaStarPath({
-        exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
-        exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
-        initialState: { resolvedY: 0, routeStateKey: "0" },
-        start: { x: 100, y: 225 },
-        target: { x: 300, y: 150 },
-      }),
+      routeAlgorithm === "Theta*" ? stepRoute.findThetaStarPath(request) : stepRoute.findVisibilityGraphPath(request),
     ).toThrow(expectedMessage);
     context.dispose();
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
@@ -701,15 +761,15 @@ describe("Graphwar WASM route context", () => {
     });
     const stepRoute = context.stepRoute;
     if (!stepRoute) throw new Error("Expected a retained Step route capability");
-    expect(() =>
-      stepRoute.findThetaStarPath({
-        exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
-        exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
-        initialState: { resolvedY: 1, routeStateKey: "0" },
-        start: { x: 100, y: 225 },
-        target: { x: 300, y: 150 },
-      }),
-    ).toThrow(/runtime height does not match/u);
+    const request = {
+      exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
+      exactTarget: imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect),
+      initialState: { resolvedY: 1, routeStateKey: "0" },
+      start: { x: 100, y: 225 },
+      target: { x: 300, y: 150 },
+    } as const;
+    expect(() => stepRoute.findThetaStarPath(request)).toThrow(/runtime height does not match/u);
+    expect(() => stepRoute.findVisibilityGraphPath(request)).toThrow(/runtime height does not match/u);
     context.dispose();
   });
 
@@ -746,18 +806,73 @@ describe("Graphwar WASM route context", () => {
       start: { x: 100, y: 225 },
       target: { x: 300, y: 150 },
     } as const;
+    for (const search of [stepRoute.findThetaStarPath, stepRoute.findVisibilityGraphPath]) {
+      expect(() =>
+        search({
+          ...request,
+          exactStart: imageToGraphPoint(createPixelPoint(101.25, 225.25), bounds, boundsRect),
+        }),
+      ).toThrow(/exactStart does not identify/u);
+      expect(() =>
+        search({
+          ...request,
+          exactTarget: imageToGraphPoint(createPixelPoint(301.75, 150.75), bounds, boundsRect),
+        }),
+      ).toThrow(/exactTarget does not identify/u);
+    }
+    context.dispose();
+  });
+
+  it.each([
+    { name: "stationary", target: { x: 100, y: 225 } },
+    { name: "reverse", target: { x: 50, y: 225 } },
+  ])("rejects a Step visibility success for a $name request", async ({ target }) => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) throw new Error("Expected a valid Step route model");
+    const forwardExactTarget = imageToGraphPoint(createPixelPoint(300.75, 150.75), bounds, boundsRect);
+    const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      if (command === 10) {
+        const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
+        inputView.setFloat64(24, 300, true);
+        inputView.setFloat64(32, 150, true);
+        inputView.setFloat64(88, forwardExactTarget.x, true);
+        inputView.setFloat64(96, forwardExactTarget.y, true);
+      }
+      return originalRunRouteTask(command, inputPointer, inputByteLength);
+    });
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) throw new Error("Expected a retained Step route capability");
     expect(() =>
-      stepRoute.findThetaStarPath({
-        ...request,
-        exactStart: imageToGraphPoint(createPixelPoint(101.25, 225.25), bounds, boundsRect),
+      stepRoute.findVisibilityGraphPath({
+        exactStart: imageToGraphPoint(createPixelPoint(100.25, 225.25), bounds, boundsRect),
+        exactTarget: imageToGraphPoint(createPixelPoint(target.x + 0.25, target.y + 0.25), bounds, boundsRect),
+        initialState: { resolvedY: 0, routeStateKey: "0" },
+        start: { x: 100, y: 225 },
+        target,
       }),
-    ).toThrow(/exactStart does not identify/u);
-    expect(() =>
-      stepRoute.findThetaStarPath({
-        ...request,
-        exactTarget: imageToGraphPoint(createPixelPoint(301.75, 150.75), bounds, boundsRect),
-      }),
-    ).toThrow(/exactTarget does not identify/u);
+    ).toThrow(/requires forward progress/u);
     context.dispose();
   });
 

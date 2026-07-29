@@ -42,7 +42,17 @@ export const TRAJECTORY_SCALAR_RESULT_CURRENT_Y_OFFSET: u32 = 24;
 export const TRAJECTORY_SCALAR_RESULT_DY_OFFSET: u32 = 32;
 export const TRAJECTORY_SCALAR_RESULT_MIN_STEP_JUMP_COUNT_OFFSET: u32 = 40;
 export const TRAJECTORY_SCALAR_RESULT_FLAGS_OFFSET: u32 = 44;
-export const TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH: u32 = 48;
+export const TRAJECTORY_SCALAR_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET: u32 = 48;
+export const TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH: u32 = 56;
+
+const TRAJECTORY_DEBUG_RK4_STEP_COUNT_OFFSET: u32 = 0;
+const TRAJECTORY_DEBUG_BISECTION_COUNT_OFFSET: u32 = 8;
+const TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_OFFSET: u32 = 16;
+const TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET: u32 = 24;
+const TRAJECTORY_DEBUG_REPLAY_COUNT_OFFSET: u32 = 32;
+export const TRAJECTORY_DEBUG_COUNTER_BYTE_LENGTH: u32 = 40;
+
+let trajectoryDebugCounterPointer: u32 = 0;
 
 export const TRAJECTORY_SCALAR_RESULT_FLAG_OBSTACLE_HIT: u32 = 1;
 export const TRAJECTORY_SCALAR_RESULT_JUMP_WINDOW_COUNT_SHIFT: u32 = 1;
@@ -91,6 +101,53 @@ function rangesOverlap(leftPointer: u32, leftByteLength: u32, rightPointer: u32,
   const rightEnd = <u64>rightPointer + rightByteLength;
   return <u64>leftPointer < rightEnd && <u64>rightPointer < leftEnd;
 }
+
+/** Binds one production command counter record across launch preparation, refinement probes, and final replay. */
+export function beginTrajectoryDebugCounters(pointer: u32): void {
+  if (trajectoryDebugCounterPointer != 0) {
+    trap();
+  }
+  requireArenaRange(pointer, TRAJECTORY_DEBUG_COUNTER_BYTE_LENGTH, sizeof<u64>());
+  memory.fill(pointer, 0, TRAJECTORY_DEBUG_COUNTER_BYTE_LENGTH);
+  trajectoryDebugCounterPointer = pointer;
+}
+
+/** Clears the command binding before its arena scope can be reset. */
+export function endTrajectoryDebugCounters(pointer: u32): void {
+  if (pointer == 0 || trajectoryDebugCounterPointer != pointer) {
+    trap();
+  }
+  trajectoryDebugCounterPointer = 0;
+}
+
+/** First-order launch-angle RK4 calls do not produce a scalar replay result, so record them at their owner. */
+export function recordTrajectoryDebugLaunchRk4Step(): void {
+  if (trajectoryDebugCounterPointer != 0) {
+    addTrajectoryDebugCounter(TRAJECTORY_DEBUG_RK4_STEP_COUNT_OFFSET, 1);
+  }
+}
+
+/** Reads one command-wide u64 counter after all launch/refinement/final work has stabilized. */
+export function getTrajectoryDebugCounter(pointer: u32, offset: u32): u64 {
+  requireArenaRange(pointer, TRAJECTORY_DEBUG_COUNTER_BYTE_LENGTH, sizeof<u64>());
+  if (
+    offset != TRAJECTORY_DEBUG_RK4_STEP_COUNT_OFFSET &&
+    offset != TRAJECTORY_DEBUG_BISECTION_COUNT_OFFSET &&
+    offset != TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_OFFSET &&
+    offset != TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET &&
+    offset != TRAJECTORY_DEBUG_REPLAY_COUNT_OFFSET
+  ) {
+    trap();
+  }
+  return load<u64>(pointer + offset);
+}
+
+export const TRAJECTORY_DEBUG_RK4_STEP_COUNT_FIELD_OFFSET: u32 = TRAJECTORY_DEBUG_RK4_STEP_COUNT_OFFSET;
+export const TRAJECTORY_DEBUG_BISECTION_COUNT_FIELD_OFFSET: u32 = TRAJECTORY_DEBUG_BISECTION_COUNT_OFFSET;
+export const TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_FIELD_OFFSET: u32 = TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_OFFSET;
+export const TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_FIELD_OFFSET: u32 =
+  TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET;
+export const TRAJECTORY_DEBUG_REPLAY_COUNT_FIELD_OFFSET: u32 = TRAJECTORY_DEBUG_REPLAY_COUNT_OFFSET;
 
 /** Writes one legal fresh or resumable scalar state without allocating managed objects. */
 export function initializeTrajectoryScalarState(
@@ -760,6 +817,7 @@ function replayFormulaTrajectoryScalarToStopXInternal(
 
   memory.fill(resultPointer, 0, TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH);
   store<i32>(resultPointer + TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET, TRAJECTORY_SCALAR_STOP_REASON_NOT_RUN);
+  store<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET, 1);
   const initialSampleIndex = load<u32>(statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET);
   if (
     !shouldSkipInitialStop &&
@@ -891,6 +949,10 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OUT_OF_BOUNDS);
       return;
     }
+    store<u32>(
+      resultPointer + TRAJECTORY_SCALAR_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET,
+      load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET) + 1,
+    );
     if (pointXPointer != 0) {
       appendTrajectoryPoint(pointXPointer, pointYPointer, pointDyPointer, pointCapacity, pointCountPointer, statePointer, equation);
     }
@@ -969,6 +1031,85 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       return;
     }
   }
+}
+
+/** Records the metrics returned by one scalar sampler after its launch preparation succeeded. */
+export function recordTrajectoryDebugScalarResult(resultPointer: u32): void {
+  if (trajectoryDebugCounterPointer == 0) {
+    return;
+  }
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_RK4_STEP_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_RK4_STEP_COUNT_OFFSET),
+  );
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_BISECTION_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_BISECTION_COUNT_OFFSET),
+  );
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_MIN_STEP_JUMP_COUNT_OFFSET),
+  );
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET),
+  );
+}
+
+/** Records the entry into one logical `sampleGraphwarTrajectory` call, including invalid launch attempts. */
+export function recordTrajectoryDebugReplayStart(): void {
+  if (trajectoryDebugCounterPointer != 0) {
+    addTrajectoryDebugCounter(TRAJECTORY_DEBUG_REPLAY_COUNT_OFFSET, 1);
+  }
+}
+
+/** Records one complete scalar replay at its owning production boundary. */
+export function recordTrajectoryDebugScalarReplay(resultPointer: u32): void {
+  recordTrajectoryDebugReplayStart();
+  recordTrajectoryDebugScalarResult(resultPointer);
+}
+
+/** Reassembles scalar suffixes that implement one TS replay without counting each repeated initial point. */
+export function recordTrajectoryDebugScalarReplayPart(resultPointer: u32, shouldStartReplay: bool): void {
+  if (trajectoryDebugCounterPointer == 0) {
+    return;
+  }
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_RK4_STEP_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_RK4_STEP_COUNT_OFFSET),
+  );
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_BISECTION_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_BISECTION_COUNT_OFFSET),
+  );
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_OFFSET,
+    load<u32>(resultPointer + TRAJECTORY_SCALAR_RESULT_MIN_STEP_JUMP_COUNT_OFFSET),
+  );
+  const acceptedSamplePointCount = load<u32>(
+    resultPointer + TRAJECTORY_SCALAR_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET,
+  );
+  if (acceptedSamplePointCount == 0) {
+    trap();
+  }
+  addTrajectoryDebugCounter(
+    TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET,
+    shouldStartReplay ? acceptedSamplePointCount : acceptedSamplePointCount - 1,
+  );
+  if (shouldStartReplay) {
+    addTrajectoryDebugCounter(TRAJECTORY_DEBUG_REPLAY_COUNT_OFFSET, 1);
+  }
+}
+
+@inline
+function addTrajectoryDebugCounter(offset: u32, value: u32): void {
+  const pointer = trajectoryDebugCounterPointer + offset;
+  const current = load<u64>(pointer);
+  const next = current + value;
+  if (next < current) {
+    trap();
+  }
+  store<u64>(pointer, next);
 }
 
 function acceptedTrajectoryScalarJumpIntersectsWindow(statePointer: u32, startX: f64, endX: f64): bool {

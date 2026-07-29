@@ -9,7 +9,6 @@ import {
   GraphwarSignRole,
 } from "../../formula/generation/build";
 import type { FormulaEvaluationOptions } from "../../formula/generation/step-numeric-strategy";
-import { sampleGraphwarTrajectory } from "../../formula/simulation/simulator";
 import { createGraphwarTrajectoryFormulaMode, resolveGraphwarTrajectory } from "../../formula/trajectory/sampling";
 import { GraphwarWasmFault } from "../algorithm-backend";
 import {
@@ -520,6 +519,25 @@ describe("Graphwar WASM formula Adapter", () => {
     expect(Object.is(result.initialDy, 0)).toBe(true);
     expect(result.continuationEvidence.state.sampleIndex).toBe(result.points.length - 1);
     expect(result.startType).toBe("cold");
+  });
+
+  it("stabilizes launch-only zero-sign protection before publishing the result", async () => {
+    const launchX = 0.44;
+    const descriptor = {
+      ...createDescriptor("abs", "dy"),
+      points: [createGraphPoint(-1, 0), createGraphPoint(launchX, 0), createGraphPoint(2, 1)],
+      soldierCenter: createGraphPoint(launchX - GRAPHWAR_GAME_SOLDIER_RADIUS, 0),
+    } satisfies GraphwarWasmFormulaInputDescriptor;
+    const result = runGraphwarWasmTrajectory(await createRuntime(), {
+      descriptor,
+      start: { type: "cold" },
+      stop: { observationXs: [], stopX: launchX, type: "stop-x-observations" },
+    });
+
+    expect(result?.launchPoint.x).toBe(launchX);
+    expect(result?.points).toEqual(result ? [result.launchPoint] : undefined);
+    expect(result?.continuationEvidence.observedSignProtection.some((roles) => roles !== 0)).toBe(true);
+    expect(result?.replayCount).toBeGreaterThan(1);
   });
 
   it("continues an identical trajectory to a later stop-x frontier", async () => {
@@ -1286,6 +1304,8 @@ describe("Graphwar WASM formula Adapter", () => {
     { label: "result flags", offset: 96, value: 8 },
     { label: "state flags", offset: 196, value: 0 },
     { label: "evidence byte length", offset: 204, value: 0 },
+    { label: "accepted sample count", offset: 212, value: 0 },
+    { label: "replay count", offset: 216, value: 0 },
   ])("rejects a malformed trajectory $label", async ({ offset, value }) => {
     const runtime = await createRuntime();
     const runTrajectory = runtime.runTrajectory.bind(runtime);
@@ -1301,6 +1321,26 @@ describe("Graphwar WASM formula Adapter", () => {
         stop: { observationXs: [], stopX: 3, type: "stop-x-observations" },
       }),
     ).toThrowError(expect.objectContaining({ code: "invalid-formula-result" }));
+  });
+
+  it("permits replay starts whose invalid launch produced no accepted sample point", async () => {
+    const runtime = await createRuntime();
+    const runTrajectory = runtime.runTrajectory.bind(runtime);
+    let replayCount = 0;
+    vi.spyOn(runtime, "runTrajectory").mockImplementation((inputPointer, inputByteLength) => {
+      const resultPointer = runTrajectory(inputPointer, inputByteLength);
+      const view = new DataView(runtime.buffer);
+      replayCount = view.getUint32(resultPointer + 212, true) + 1;
+      view.setUint32(resultPointer + 216, replayCount, true);
+      return resultPointer;
+    });
+    expect(
+      runGraphwarWasmTrajectory(runtime, {
+        descriptor: createDescriptor("pchip", "y"),
+        start: { type: "cold" },
+        stop: { observationXs: [], stopX: 3, type: "stop-x-observations" },
+      }),
+    ).toEqual(expect.objectContaining({ replayCount }));
   });
 
   it("rejects an obstacle result when the stop policy has no collision mask", async () => {
@@ -1658,41 +1698,33 @@ describe("Graphwar WASM formula Adapter", () => {
         }
         const debugMetrics = createGraphwarTrajectoryDebugMetrics();
         const signProtection = [...launch.observedSignProtection];
-        let launchRk4StepCount = 0;
-        let hasCapturedLaunchRk4StepCount = false;
-        const ts = sampleGraphwarTrajectory({
-          algorithm,
+        const tsResolution = resolveGraphwarTrajectory({
           bounds,
-          compiledFormulaMaterials: launch.compiledMaterials,
+          boundsRect: { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 },
+          continueAfterTargetsUntilGraphX: 3,
           debugMetrics,
-          equation,
-          formulaEvaluation: {
-            equation,
-            formulaDecimalPlaces: descriptor.settings.decimalPlaces,
-            isStepOverflowProtectionEnabled: descriptor.settings.isStepOverflowProtectionEnabled,
-            signProtection,
-          },
-          ...(launch.launch.equation === "y" ? {} : { launchAngleRadians: launch.launch.angleRadians }),
-          points: launch.formulaPoints,
-          secondOrderLaunchAngleMode: descriptor.settings.secondOrderLaunchAngleMode,
-          shouldStop: (point) => {
-            if (!hasCapturedLaunchRk4StepCount) {
-              launchRk4StepCount = debugMetrics.counters.rk4StepCount;
-              hasCapturedLaunchRk4StepCount = true;
-            }
-            return point.x >= 3;
-          },
+          formulaMode: createGraphwarTrajectoryFormulaMode(descriptor.settings),
+          points: descriptor.points.map((point) => createGraphPoint(point.x, point.y)),
           soldierCenter: createGraphPoint(descriptor.soldierCenter.x, descriptor.soldierCenter.y),
-          steepness: descriptor.settings.steepness,
         });
+        const ts = tsResolution.result.sample;
         expect(wasm.points.length, `${algorithm}:${equation} point count`).toBe(ts.points.length);
         expect(wasm.stopReason, `${algorithm}:${equation} stop reason`).toBe(1);
         expect(ts.stopReason, `${algorithm}:${equation} TS stop reason`).toBe("stopped");
-        const expectedRk4StepCount = debugMetrics.counters.rk4StepCount - launchRk4StepCount;
-        expect(wasm.rk4StepCount, `${algorithm}:${equation} RK4 count`).toBe(expectedRk4StepCount);
-        expect(wasm.bisectionCount, `${algorithm}:${equation} bisection count`).toBe(
-          debugMetrics.counters.stepBisectionCount,
-        );
+        expect(
+          {
+            acceptedSamplePointCount: wasm.acceptedSamplePointCount,
+            bisectionCount: wasm.bisectionCount,
+            replayCount: wasm.replayCount,
+            rk4StepCount: wasm.rk4StepCount,
+          },
+          `${algorithm}:${equation} debug counters`,
+        ).toEqual({
+          acceptedSamplePointCount: debugMetrics.counters.acceptedSamplePointCount,
+          bisectionCount: debugMetrics.counters.stepBisectionCount,
+          replayCount: debugMetrics.counters.trajectoryReplayCount,
+          rk4StepCount: debugMetrics.counters.rk4StepCount,
+        });
         expect(wasm.minStepJumpCount, `${algorithm}:${equation} minimum-step jumps`).toBe(0);
         expect(wasm.continuationEvidence.observedSignProtection, `${algorithm}:${equation} protection`).toEqual(
           signProtection,
@@ -1728,7 +1760,107 @@ describe("Graphwar WASM formula Adapter", () => {
       }
     }
   });
+
+  it.each([
+    {
+      algorithm: "abs",
+      equation: "dy",
+      label: "ABS first-order post-refinement launch identity",
+      points: [
+        createGraphPoint(-1.341283624060452, 5.0580352419056),
+        createGraphPoint(-1.0872874894645066, 1.1070912964642048),
+        createGraphPoint(1.0133794643450527, 2.2286983393132687),
+        createGraphPoint(2.887202304601669, -0.962669488042593),
+        createGraphPoint(4.863218688312918, -0.012183446437120438),
+        createGraphPoint(5.915760804666206, 6.822678226977587),
+      ],
+      stopX: 6.665760804666206,
+    },
+    {
+      algorithm: "step",
+      equation: "ddy",
+      label: "Step second-order two-point replay ownership",
+      points: [
+        createGraphPoint(-3.5380588804837316, -1.165888569317758),
+        createGraphPoint(-0.47953188584651807, -2.413776397705078),
+      ],
+      stopX: 0.27046811415348193,
+    },
+    {
+      algorithm: "step",
+      equation: "ddy",
+      label: "Step second-order multi-segment boundary reuse",
+      points: [
+        createGraphPoint(-3.0906359646469355, -2.897300101350993),
+        createGraphPoint(-1.977198375063017, 0.13732606545090675),
+        createGraphPoint(-1.2920960109215232, -0.7364090271294117),
+        createGraphPoint(-1.023707421217114, -3.001071374863386),
+        createGraphPoint(2.0677895042113956, -5.732403222471476),
+      ],
+      stopX: 2.8177895042113956,
+    },
+    {
+      algorithm: "step",
+      equation: "ddy",
+      label: "Step second-order first-segment candidate fixed-point identity",
+      points: [
+        createGraphPoint(-2.5288573056459427, 0.007110160309821367),
+        createGraphPoint(-2.0427219743374736, 7.947813186794519),
+        createGraphPoint(-1.559820193378255, -4.968278635293245),
+        createGraphPoint(1.1674214483238754, -5.851921629160643),
+      ],
+      stopX: 1.9174214483238754,
+    },
+  ] as const)("matches the TS trajectory for $label", async ({ algorithm, equation, points, stopX }) => {
+    await expectGraphwarWasmTrajectoryToMatchTypescript({
+      descriptor: {
+        ...createDescriptor(algorithm, equation),
+        points,
+        soldierCenter: points[0],
+      },
+      stopX,
+    });
+  });
 });
+
+async function expectGraphwarWasmTrajectoryToMatchTypescript(options: {
+  descriptor: GraphwarWasmFormulaInputDescriptor;
+  stopX: number;
+}) {
+  const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+  const wasm = runGraphwarWasmTrajectory(await createRuntime(), {
+    descriptor: options.descriptor,
+    start: { type: "cold" },
+    stop: { observationXs: [], stopX: options.stopX, type: "stop-x-observations" },
+  });
+  const ts = resolveGraphwarTrajectory({
+    bounds,
+    boundsRect: { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 },
+    continueAfterTargetsUntilGraphX: options.stopX,
+    debugMetrics,
+    formulaMode: createGraphwarTrajectoryFormulaMode(options.descriptor.settings),
+    points: options.descriptor.points.map((point) => createGraphPoint(point.x, point.y)),
+    soldierCenter: createGraphPoint(options.descriptor.soldierCenter.x, options.descriptor.soldierCenter.y),
+  }).result.sample;
+  expect(wasm?.points.length).toBe(ts.points.length);
+  expect(wasm?.stopReason).toBe(1);
+  expect(ts.stopReason).toBe("stopped");
+  expect({
+    acceptedSamplePointCount: wasm?.acceptedSamplePointCount,
+    bisectionCount: wasm?.bisectionCount,
+    replayCount: wasm?.replayCount,
+    rk4StepCount: wasm?.rk4StepCount,
+  }).toEqual({
+    acceptedSamplePointCount: debugMetrics.counters.acceptedSamplePointCount,
+    bisectionCount: debugMetrics.counters.stepBisectionCount,
+    replayCount: debugMetrics.counters.trajectoryReplayCount,
+    rk4StepCount: debugMetrics.counters.rk4StepCount,
+  });
+  for (let index = 0; index < ts.points.length; index += 1) {
+    expect(Math.abs((wasm?.points[index]?.x ?? Number.NaN) - ts.points[index].x)).toBeLessThanOrEqual(1e-12);
+    expect(Math.abs((wasm?.points[index]?.y ?? Number.NaN) - ts.points[index].y)).toBeLessThanOrEqual(1e-12);
+  }
+}
 
 function getGraphwarWasmTestPreviousPoint(state: GraphwarWasmTrajectoryPhysicalState) {
   return state.equation === "ddy" ? state.previous?.point : state.previousPoint;

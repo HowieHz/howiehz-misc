@@ -115,7 +115,11 @@ import {
   STEP_TRANSITION_EFFECTIVE_DELTA_Y_OFFSET,
 } from "./formula-step-resolution";
 import { commitArena, markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
-import { evaluateFirstOrderFormulaRk4Y, initializeTrajectoryScalarState } from "./trajectory-scalar";
+import {
+  evaluateFirstOrderFormulaRk4Y,
+  initializeTrajectoryScalarState,
+  recordTrajectoryDebugLaunchRk4Step,
+} from "./trajectory-scalar";
 
 const FORMULA_STATE_HEADER_BYTE_LENGTH: u32 = 24;
 
@@ -549,6 +553,7 @@ function getFirstOrderAngle(
       baseY,
       protectionPointer,
     );
+    recordTrajectoryDebugLaunchRk4Step();
     const tangent = (nextY - finalY) / (finalX + getGraphwarStepSize() - finalX);
     const nextAngle = NativeMath.atan(tangent);
     error = NativeMath.abs(nextAngle - angle);
@@ -739,8 +744,8 @@ function initializeStepColdRefinementLaunchState(
 
 /**
  * Resolves the launch-point/material fixed point for the overrides already installed in `buildInputPointer`.
- * Step cold refinement changes the formula identity, so production must run this same loop once before and once
- * after refinement instead of publishing the stale pre-refinement launch point.
+ * Cold refinement can change the formula identity, so production must run this same loop once before and once
+ * after refinement instead of publishing stale pre-refinement formula points.
  */
 function resolveFormulaPathPointIdentity(
   buildInputPointer: u32,
@@ -874,6 +879,50 @@ function resolveFormulaPathPointIdentity(
     stateIndex += 1;
   }
   return formulaPointIterationCount;
+}
+
+/** Resolves the exact formula points used by a first-segment Step cold-refinement candidate. */
+function resolveStepColdCandidateFormulaPoints(
+  buildInputPointer: u32,
+  targetXPointer: u32,
+  targetYPointer: u32,
+  sourceXPointer: u32,
+  sourceYPointer: u32,
+  outputXPointer: u32,
+  outputYPointer: u32,
+  pathSteepness: f64,
+  protectionPointer: u32,
+  observedProtectionPointer: u32,
+  contextPointer: u32,
+): bool {
+  const pointCount = load<u32>(buildInputPointer + FORMULA_INPUT_POINT_COUNT_OFFSET);
+  const pointByteLength = checkedByteLength(pointCount, sizeof<f64>());
+  const currentXPointer = reserveArena(pointByteLength, sizeof<f64>());
+  const currentYPointer = reserveArena(pointByteLength, sizeof<f64>());
+  const materialSteepness = load<f64>(buildInputPointer + FORMULA_INPUT_STEEPNESS_OFFSET);
+  const disabledSegmentPointer = load<u32>(buildInputPointer + FORMULA_INPUT_DISABLED_SEGMENT_POINTER_OFFSET);
+  store<u32>(buildInputPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, sourceXPointer);
+  store<u32>(buildInputPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, sourceYPointer);
+  store<u32>(buildInputPointer + FORMULA_INPUT_DISABLED_SEGMENT_POINTER_OFFSET, 0);
+  const contextFlags = load<u32>(contextPointer + COLD_LAUNCH_CONTEXT_FLAGS_OFFSET);
+  const iterationCount = resolveFormulaPathPointIdentity(
+    buildInputPointer,
+    targetXPointer,
+    targetYPointer,
+    currentXPointer,
+    currentYPointer,
+    outputXPointer,
+    outputYPointer,
+    load<f64>(contextPointer + COLD_LAUNCH_CONTEXT_CENTER_X_OFFSET),
+    load<f64>(contextPointer + COLD_LAUNCH_CONTEXT_CENTER_Y_OFFSET),
+    pathSteepness,
+    protectionPointer,
+    observedProtectionPointer,
+    (contextFlags & COLD_LAUNCH_CONTEXT_FLAG_DISPLAY_ROUNDED) != 0,
+  );
+  store<f64>(buildInputPointer + FORMULA_INPUT_STEEPNESS_OFFSET, materialSteepness);
+  store<u32>(buildInputPointer + FORMULA_INPUT_DISABLED_SEGMENT_POINTER_OFFSET, disabledSegmentPointer);
+  return iterationCount != 0;
 }
 
 function writeLaunchResult(
@@ -1243,6 +1292,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
         acceptedHardLaunchAnglePointer,
         coldLaunchContextPointer,
         initializeStepColdRefinementLaunchState,
+        resolveStepColdCandidateFormulaPoints,
       );
     } else if (algorithm == FORMULA_ALGORITHM_ABS && equation == FORMULA_EQUATION_DY) {
       coldRefinementStatus = collectAbsFirstOrderSegmentStartsCold(
@@ -1301,7 +1351,10 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
         0,
       );
     }
-    if (algorithm == FORMULA_ALGORITHM_STEP && equation != FORMULA_EQUATION_Y) {
+    if (
+      (algorithm == FORMULA_ALGORITHM_STEP && equation != FORMULA_EQUATION_Y) ||
+      (algorithm == FORMULA_ALGORITHM_ABS && equation == FORMULA_EQUATION_DY)
+    ) {
       const refinedFormulaPointIterationCount = resolveFormulaPathPointIdentity(
         buildInputPointer,
         pointXPointer,

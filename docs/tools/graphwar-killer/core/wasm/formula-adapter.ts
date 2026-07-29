@@ -80,7 +80,7 @@ const FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY = 1;
 const FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET = 2;
 const FORMULA_LAUNCH_FLAG_USED_USER_ANGLE = 4;
 const TRAJECTORY_INPUT_BYTE_LENGTH = 284;
-const TRAJECTORY_RESULT_BYTE_LENGTH = 216;
+const TRAJECTORY_RESULT_BYTE_LENGTH = 224;
 const TRAJECTORY_EVIDENCE_BYTE_LENGTH = 104;
 const TRAJECTORY_STOP_TYPE_NATURAL = 0;
 const TRAJECTORY_STOP_TYPE_STOP_X = 1;
@@ -169,6 +169,7 @@ export type GraphwarWasmFormulaLaunchResult =
     };
 
 export interface GraphwarWasmTrajectoryResult {
+  acceptedSamplePointCount: number;
   bisectionCount: number;
   continuationEvidence: GraphwarWasmTrajectoryContinuationEvidence;
   initialDy: number;
@@ -181,6 +182,7 @@ export interface GraphwarWasmTrajectoryResult {
   points: readonly GraphPoint[];
   reachedRequiredTargetCount: number;
   reachedTargetCount: number;
+  replayCount: number;
   requiredTargetsHitIndex: number;
   rk4StepCount: number;
   startType: "cold" | "continuation";
@@ -790,6 +792,11 @@ export function runGraphwarWasmTrajectory(
     const requiredTargetsHitIndex = resultView.getInt32(112, true);
     const obstacleHitIndex = resultView.getInt32(116, true);
     const state = unpackGraphwarWasmTrajectoryResultState(resultView, descriptor.settings.equation);
+    const acceptedSamplePointCount = validateGraphwarWasmU32(
+      resultView.getUint32(212, true),
+      "trajectory.acceptedSamplePointCount",
+    );
+    const replayCount = validateGraphwarWasmU32(resultView.getUint32(216, true), "trajectory.replayCount");
     const continuationEvidence = unpackGraphwarWasmTrajectoryEvidence(
       runtime,
       {
@@ -802,6 +809,7 @@ export function runGraphwarWasmTrajectory(
     );
     validateGraphwarWasmTrajectoryResultConsistency({
       bounds: descriptor.bounds,
+      acceptedSamplePointCount,
       continuationEvidence,
       isContinuationUsed,
       observations,
@@ -809,6 +817,7 @@ export function runGraphwarWasmTrajectory(
       pointCount,
       pointDys,
       points,
+      replayCount,
       reachedRequiredTargetCount,
       reachedTargetCount,
       requiredTargetsHitIndex,
@@ -824,6 +833,7 @@ export function runGraphwarWasmTrajectory(
       throwFormulaResultError("Trajectory result and continuation evidence protection differ");
     }
     return {
+      acceptedSamplePointCount,
       bisectionCount: validateGraphwarWasmU32(resultView.getUint32(16, true), "trajectory.bisectionCount"),
       continuationEvidence,
       initialDy: rawInitialDy,
@@ -843,6 +853,7 @@ export function runGraphwarWasmTrajectory(
       points,
       reachedRequiredTargetCount,
       reachedTargetCount,
+      replayCount,
       requiredTargetsHitIndex,
       rk4StepCount: validateGraphwarWasmU32(resultView.getUint32(12, true), "trajectory.rk4StepCount"),
       startType: isContinuationUsed ? "continuation" : "cold",
@@ -872,7 +883,8 @@ function validateGraphwarWasmInvalidTrajectoryResult(
 ): void {
   if (
     view.getInt32(4, true) !== TRAJECTORY_STOP_REASON_INVALID ||
-    !graphwarWasmBytesAreZero(view, 8, 100) ||
+    view.getUint32(8, true) !== 0 ||
+    !graphwarWasmBytesAreZero(view, 24, 84) ||
     view.getInt32(108, true) !== -1 ||
     view.getInt32(112, true) !== -1 ||
     view.getInt32(116, true) !== -1 ||
@@ -891,6 +903,11 @@ function validateGraphwarWasmInvalidTrajectoryResult(
   if (protection.length !== segmentCount) {
     throwFormulaResultError("Invalid trajectory protection count does not match the formula segments");
   }
+  validateGraphwarWasmU32(view.getUint32(12, true), "trajectory.rk4StepCount");
+  validateGraphwarWasmU32(view.getUint32(16, true), "trajectory.bisectionCount");
+  validateGraphwarWasmU32(view.getUint32(20, true), "trajectory.minStepJumpCount");
+  validateGraphwarWasmU32(view.getUint32(212, true), "trajectory.acceptedSamplePointCount");
+  validateGraphwarWasmU32(view.getUint32(216, true), "trajectory.replayCount");
 }
 
 function graphwarWasmBytesAreZero(view: DataView, offset: number, byteLength: number) {
@@ -1075,6 +1092,7 @@ function createGraphwarWasmTrajectoryPhysicalState(
 }
 
 function validateGraphwarWasmTrajectoryResultConsistency(options: {
+  acceptedSamplePointCount: number;
   bounds: GraphBounds;
   continuationEvidence: GraphwarWasmTrajectoryContinuationEvidence;
   isContinuationUsed: boolean;
@@ -1083,6 +1101,7 @@ function validateGraphwarWasmTrajectoryResultConsistency(options: {
   pointCount: number;
   pointDys: Float64Array;
   points: readonly GraphPoint[];
+  replayCount: number;
   reachedRequiredTargetCount: number;
   reachedTargetCount: number;
   requiredTargetsHitIndex: number;
@@ -1095,6 +1114,7 @@ function validateGraphwarWasmTrajectoryResultConsistency(options: {
   trackedTargetHitIndexes: readonly number[];
 }): void {
   const {
+    acceptedSamplePointCount,
     bounds,
     continuationEvidence,
     isContinuationUsed,
@@ -1103,6 +1123,7 @@ function validateGraphwarWasmTrajectoryResultConsistency(options: {
     pointCount,
     pointDys,
     points,
+    replayCount,
     reachedRequiredTargetCount,
     reachedTargetCount,
     requiredTargetsHitIndex,
@@ -1114,6 +1135,9 @@ function validateGraphwarWasmTrajectoryResultConsistency(options: {
     targetHitIndex,
     trackedTargetHitIndexes,
   } = options;
+  if (replayCount < 1 || acceptedSamplePointCount < pointCount) {
+    throwFormulaResultError("Trajectory debug counters are inconsistent with the published result");
+  }
   if (!graphwarWasmTrajectoryStatesEqual(state, continuationEvidence.state)) {
     throwFormulaResultError("Trajectory result and continuation evidence physical states differ");
   }

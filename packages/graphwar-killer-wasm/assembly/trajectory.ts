@@ -39,15 +39,17 @@ import {
   resetArena,
 } from "./memory";
 import {
+  beginTrajectoryDebugCounters,
+  endTrajectoryDebugCounters,
+  getTrajectoryDebugCounter,
+  initializeTrajectoryScalarState,
+  recordTrajectoryDebugScalarReplay,
   replayFormulaTrajectoryScalarToStopXWithPoints,
   replayFormulaTrajectoryScalarWithTargetsAndPoints,
-  TRAJECTORY_SCALAR_RESULT_BISECTION_COUNT_OFFSET,
   TRAJECTORY_SCALAR_RESULT_DY_OFFSET,
   TRAJECTORY_SCALAR_RESULT_CURRENT_X_OFFSET,
   TRAJECTORY_SCALAR_RESULT_CURRENT_Y_OFFSET,
   TRAJECTORY_SCALAR_RESULT_FLAGS_OFFSET,
-  TRAJECTORY_SCALAR_RESULT_MIN_STEP_JUMP_COUNT_OFFSET,
-  TRAJECTORY_SCALAR_RESULT_RK4_STEP_COUNT_OFFSET,
   TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET,
   TRAJECTORY_SCALAR_STOP_REASON_STOP_X,
   TRAJECTORY_SCALAR_STOP_REASON_TARGET,
@@ -64,6 +66,12 @@ import {
   TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET,
   TRAJECTORY_SCALAR_STATE_BYTE_LENGTH,
   TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH,
+  TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_FIELD_OFFSET,
+  TRAJECTORY_DEBUG_BISECTION_COUNT_FIELD_OFFSET,
+  TRAJECTORY_DEBUG_COUNTER_BYTE_LENGTH,
+  TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_FIELD_OFFSET,
+  TRAJECTORY_DEBUG_REPLAY_COUNT_FIELD_OFFSET,
+  TRAJECTORY_DEBUG_RK4_STEP_COUNT_FIELD_OFFSET,
   TRAJECTORY_TARGET_STATE_BYTE_LENGTH,
   TRAJECTORY_TARGET_STATE_OBSTACLE_HIT_INDEX_OFFSET,
   TRAJECTORY_TARGET_STATE_REACHED_ORDERED_COUNT_OFFSET,
@@ -72,7 +80,6 @@ import {
   TRAJECTORY_TARGET_STATE_REQUIRED_HITS_POINTER_OFFSET,
   TRAJECTORY_TARGET_STATE_TARGET_HIT_INDEX_OFFSET,
   TRAJECTORY_TARGET_STATE_TRACKED_HIT_INDEXES_POINTER_OFFSET,
-  initializeTrajectoryScalarState,
 } from "./trajectory-scalar";
 import {
   TRAJECTORY_INPUT_BYTE_LENGTH,
@@ -107,6 +114,7 @@ import {
   TRAJECTORY_INPUT_TARGET_RECORD_POINTER_OFFSET,
   TRAJECTORY_INPUT_TRACKED_TARGET_COUNT_OFFSET,
   TRAJECTORY_RESULT_BYTE_LENGTH,
+  TRAJECTORY_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET,
   TRAJECTORY_RESULT_BISECTION_COUNT_OFFSET,
   TRAJECTORY_RESULT_CURRENT_DY_OFFSET,
   TRAJECTORY_RESULT_CURRENT_X_OFFSET,
@@ -143,6 +151,7 @@ import {
   TRAJECTORY_RESULT_STATE_FLAG_HAS_PREVIOUS_POINT,
   TRAJECTORY_RESULT_REACHED_ORDERED_TARGET_COUNT_OFFSET,
   TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+  TRAJECTORY_RESULT_REPLAY_COUNT_OFFSET,
   TRAJECTORY_RESULT_REQUIRED_TARGETS_HIT_INDEX_OFFSET,
   TRAJECTORY_RESULT_STOP_REASON_OFFSET,
   TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET,
@@ -409,8 +418,8 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
         : 0,
     );
   }
-  let discardedRk4StepCount: u64 = 0;
-  let discardedBisectionCount: u64 = 0;
+  const debugCounterPointer = reserveArena(TRAJECTORY_DEBUG_COUNTER_BYTE_LENGTH, sizeof<u64>());
+  beginTrajectoryDebugCounters(debugCounterPointer);
   while (true) {
   const attemptMark = markArena();
   const launchInputPointer = reserveArena(TRAJECTORY_INPUT_FORMULA_BYTE_LENGTH, sizeof<u64>());
@@ -444,6 +453,8 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
   store<u32>(resultPointer + TRAJECTORY_RESULT_PROTECTION_COUNT_OFFSET, segmentCount);
   if (launchStatus != FORMULA_LAUNCH_STATUS_SUCCESS) {
     store<i32>(resultPointer + TRAJECTORY_RESULT_STOP_REASON_OFFSET, 2);
+    writeTrajectoryDebugCounters(resultPointer, debugCounterPointer);
+    endTrajectoryDebugCounters(debugCounterPointer);
     commitArena(attemptMark);
     return resultPointer;
   }
@@ -580,6 +591,7 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
       load<f64>(inputPointer + TRAJECTORY_INPUT_STOP_X_OFFSET),
       (flags & TRAJECTORY_INPUT_FLAG_STOP_ON_TARGETS_COMPLETE) != 0,
     );
+    recordTrajectoryDebugScalarReplay(scalarResultPointer);
   } else {
     replayFormulaTrajectoryScalarToStopXWithPoints(
       materialResultPointer,
@@ -604,14 +616,10 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
       maskPointer,
       false,
     );
+    recordTrajectoryDebugScalarReplay(scalarResultPointer);
   }
 
   if (mergeProtectionBits(observedProtectionPointer, stableProtectionPointer, segmentCount)) {
-    discardedRk4StepCount += load<u32>(scalarResultPointer + TRAJECTORY_SCALAR_RESULT_RK4_STEP_COUNT_OFFSET);
-    discardedBisectionCount += load<u32>(scalarResultPointer + TRAJECTORY_SCALAR_RESULT_BISECTION_COUNT_OFFSET);
-    if (discardedRk4StepCount > 0xffff_ffff || discardedBisectionCount > 0xffff_ffff) {
-      trap();
-    }
     canUseContinuation = false;
     resetArena(attemptMark);
     continue;
@@ -720,16 +728,7 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
   );
   store<i32>(resultPointer + TRAJECTORY_RESULT_STOP_REASON_OFFSET, stopReason);
   store<u32>(resultPointer + TRAJECTORY_RESULT_POINT_COUNT_OFFSET, load<u32>(pointCountPointer));
-  const rk4StepCount =
-    discardedRk4StepCount + load<u32>(scalarResultPointer + TRAJECTORY_SCALAR_RESULT_RK4_STEP_COUNT_OFFSET);
-  const bisectionCount =
-    discardedBisectionCount + load<u32>(scalarResultPointer + TRAJECTORY_SCALAR_RESULT_BISECTION_COUNT_OFFSET);
-  if (rk4StepCount > 0xffff_ffff || bisectionCount > 0xffff_ffff) {
-    trap();
-  }
-  store<u32>(resultPointer + TRAJECTORY_RESULT_RK4_STEP_COUNT_OFFSET, <u32>rk4StepCount);
-  store<u32>(resultPointer + TRAJECTORY_RESULT_BISECTION_COUNT_OFFSET, <u32>bisectionCount);
-  store<u32>(resultPointer + TRAJECTORY_RESULT_MIN_STEP_JUMP_COUNT_OFFSET, load<u32>(scalarResultPointer + TRAJECTORY_SCALAR_RESULT_MIN_STEP_JUMP_COUNT_OFFSET));
+  writeTrajectoryDebugCounters(resultPointer, debugCounterPointer);
   store<u32>(resultPointer + TRAJECTORY_RESULT_POINT_X_POINTER_OFFSET, pointXPointer);
   store<u32>(resultPointer + TRAJECTORY_RESULT_POINT_Y_POINTER_OFFSET, pointYPointer);
   store<u32>(resultPointer + TRAJECTORY_RESULT_POINT_DY_POINTER_OFFSET, pointDyPointer);
@@ -813,11 +812,52 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
     );
     store<u32>(resultPointer + TRAJECTORY_RESULT_TRACKED_TARGET_COUNT_OFFSET, trackedTargetCount);
   }
+  endTrajectoryDebugCounters(debugCounterPointer);
   commitArena(attemptMark);
   return resultPointer;
   }
   trap();
   return 0;
+}
+
+function writeTrajectoryDebugCounters(resultPointer: u32, debugCounterPointer: u32): void {
+  const rk4StepCount = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_RK4_STEP_COUNT_FIELD_OFFSET,
+  );
+  const bisectionCount = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_BISECTION_COUNT_FIELD_OFFSET,
+  );
+  const minStepJumpCount = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_MIN_STEP_JUMP_COUNT_FIELD_OFFSET,
+  );
+  const acceptedSamplePointCount = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_FIELD_OFFSET,
+  );
+  const replayCount = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_REPLAY_COUNT_FIELD_OFFSET,
+  );
+  if (
+    rk4StepCount > 0xffff_ffff ||
+    bisectionCount > 0xffff_ffff ||
+    minStepJumpCount > 0xffff_ffff ||
+    acceptedSamplePointCount > 0xffff_ffff ||
+    replayCount > 0xffff_ffff
+  ) {
+    trap();
+  }
+  store<u32>(resultPointer + TRAJECTORY_RESULT_RK4_STEP_COUNT_OFFSET, <u32>rk4StepCount);
+  store<u32>(resultPointer + TRAJECTORY_RESULT_BISECTION_COUNT_OFFSET, <u32>bisectionCount);
+  store<u32>(resultPointer + TRAJECTORY_RESULT_MIN_STEP_JUMP_COUNT_OFFSET, <u32>minStepJumpCount);
+  store<u32>(
+    resultPointer + TRAJECTORY_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET,
+    <u32>acceptedSamplePointCount,
+  );
+  store<u32>(resultPointer + TRAJECTORY_RESULT_REPLAY_COUNT_OFFSET, <u32>replayCount);
 }
 
 /** Mirrors the TS quality metric without interpolating between accepted trajectory states. */

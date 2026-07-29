@@ -13,6 +13,7 @@ import {
   FORMULA_INPUT_FLAGS_OFFSET,
   FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET,
   FORMULA_INPUT_MASK_POINTER_OFFSET,
+  FORMULA_INPUT_PATH_STEEPNESS_OFFSET,
   FORMULA_INPUT_POINT_COUNT_OFFSET,
   FORMULA_INPUT_POINT_X_POINTER_OFFSET,
   FORMULA_INPUT_POINT_Y_POINTER_OFFSET,
@@ -66,6 +67,9 @@ import { getGraphwarGameSoldierRadius, getGraphwarPlaneHeight, getGraphwarStepSi
 import { markArena, reserveArena, resetArena } from "./memory";
 import {
   initializeTrajectoryScalarState,
+  recordTrajectoryDebugReplayStart,
+  recordTrajectoryDebugScalarReplay,
+  recordTrajectoryDebugScalarResult,
   replayFormulaTrajectoryScalarToStopX,
   replayFormulaTrajectoryScalarToStopXWithMask,
   replayFormulaTrajectoryScalarToStopXWithMaskAndJumpWindow,
@@ -110,6 +114,21 @@ export type StepColdLaunchStateInitializer = (
   contextPointer: u32,
 ) => bool;
 
+/** Formula-launch owns the launch-point fixed-point loop needed by cold first-segment candidates. */
+export type StepColdFormulaPointResolver = (
+  buildInputPointer: u32,
+  targetXPointer: u32,
+  targetYPointer: u32,
+  sourceXPointer: u32,
+  sourceYPointer: u32,
+  outputXPointer: u32,
+  outputYPointer: u32,
+  pathSteepness: f64,
+  protectionPointer: u32,
+  observedProtectionPointer: u32,
+  contextPointer: u32,
+) => bool;
+
 @inline
 function isFiniteValue(value: f64): bool {
   return value == value && value != f64.POSITIVE_INFINITY && value != f64.NEGATIVE_INFINITY;
@@ -130,6 +149,7 @@ export function refineStepFormulaCold(
   acceptedHardLaunchAnglePointer: u32,
   launchContextPointer: u32,
   initializeLaunchState: StepColdLaunchStateInitializer,
+  resolveCandidateFormulaPoints: StepColdFormulaPointResolver,
 ): i32 {
   const equation = load<i32>(inputPointer + FORMULA_INPUT_EQUATION_OFFSET);
   if (equation != FORMULA_EQUATION_DY && equation != FORMULA_EQUATION_DDY) {
@@ -151,6 +171,7 @@ export function refineStepFormulaCold(
   const boundsMinY = load<f64>(inputPointer + FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET);
   const boundsMaxY = load<f64>(inputPointer + FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET);
   const positionTargetPlanePixels = load<f64>(inputPointer + FORMULA_INPUT_QUALITY_TARGET_PLANE_PIXELS_OFFSET);
+  const pathSteepness = load<f64>(inputPointer + FORMULA_INPUT_PATH_STEEPNESS_OFFSET);
   const soldierX = load<f64>(inputPointer + FORMULA_INPUT_SOLDIER_X_OFFSET);
   const soldierY = load<f64>(inputPointer + FORMULA_INPUT_SOLDIER_Y_OFFSET);
   const isStepGlitchModeEnabled = (load<u32>(inputPointer + FORMULA_INPUT_FLAGS_OFFSET) & FORMULA_FLAG_STEP_GLITCH_MODE) != 0;
@@ -203,13 +224,14 @@ export function refineStepFormulaCold(
     checkedByteLength(segmentCount, sizeof<u32>()),
     sizeof<u32>(),
   );
-  const acceptedBoundaryMaterialIdentityPointer = reserveArena(
-    checkedAddByteLength(
-      STEP_BOUNDARY_MATERIAL_IDENTITY_HEADER_BYTE_LENGTH,
-      checkedByteLength(segmentCount, STEP_MATERIAL_BYTE_LENGTH),
-    ),
-    sizeof<u64>(),
+  const boundaryMaterialIdentityByteLength = checkedAddByteLength(
+    STEP_BOUNDARY_MATERIAL_IDENTITY_HEADER_BYTE_LENGTH,
+    checkedByteLength(segmentCount, STEP_MATERIAL_BYTE_LENGTH),
   );
+  const candidateBoundaryMaterialIdentityPointer = reserveArena(boundaryMaterialIdentityByteLength, sizeof<u64>());
+  const softBoundaryMaterialIdentityPointer = reserveArena(boundaryMaterialIdentityByteLength, sizeof<u64>());
+  const hardBoundaryMaterialIdentityPointer = reserveArena(boundaryMaterialIdentityByteLength, sizeof<u64>());
+  const acceptedBoundaryMaterialIdentityPointer = reserveArena(boundaryMaterialIdentityByteLength, sizeof<u64>());
   let hasProtectionChanged = false;
   let hasAcceptedBoundaryState = false;
   let acceptedHardLaunchAngle = f64.NaN;
@@ -276,6 +298,7 @@ export function refineStepFormulaCold(
         resultPointer,
         false,
       );
+      recordTrajectoryDebugScalarReplay(resultPointer);
       if (load<i32>(resultPointer + TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET) != TRAJECTORY_SCALAR_STOP_REASON_STOP_X) {
         resetArena(segmentMark);
         if (isStepGlitchModeEnabled) {
@@ -305,6 +328,31 @@ export function refineStepFormulaCold(
       store<f64>(segmentStartYPointer + segmentIndex * sizeof<f64>(), actualStartY);
     }
 
+    // The first launch preparation belongs to the reused target replay, or to the cold boundary replay otherwise.
+    // Only the cold boundary path therefore needs a second preparation for its target replay.
+    if (segmentIndex > 0 && !canReuseAcceptedBoundary) {
+      const isPrefixTargetLaunchValid = initializeLaunchState(
+        prefixMaterialPointer,
+        equation,
+        baseY,
+        protectionPointer,
+        prefixTargetStatePointer,
+        prefixLaunchAnglePointer,
+        acceptedHardLaunchAngle,
+        launchContextPointer,
+      );
+      mergeObservedProtection(prefixMaterialPointer, combinedProtectionPointer, segmentCount);
+      if (hasNewProtection(combinedProtectionPointer, protectionPointer, segmentCount)) {
+        hasProtectionChanged = true;
+      }
+      if (!isPrefixTargetLaunchValid) {
+        resetArena(segmentMark);
+        if (isStepGlitchModeEnabled) {
+          return hasProtectionChanged ? STEP_COLD_REFINEMENT_PROTECTION_CHANGED : STEP_COLD_REFINEMENT_INVALID;
+        }
+        break;
+      }
+    }
     memory.copy(prefixTargetStatePointer, startStatePointer, TRAJECTORY_SCALAR_STATE_BYTE_LENGTH);
     const targetX = load<f64>(pointXPointer + (segmentIndex + 1) * sizeof<f64>());
     replayFormulaTrajectoryScalarToStopX(
@@ -322,6 +370,7 @@ export function refineStepFormulaCold(
       resultPointer,
       false,
     );
+    recordTrajectoryDebugScalarReplay(resultPointer);
     mergeObservedProtection(prefixMaterialPointer, combinedProtectionPointer, segmentCount);
     if (hasNewProtection(combinedProtectionPointer, protectionPointer, segmentCount)) {
       hasProtectionChanged = true;
@@ -395,6 +444,12 @@ export function refineStepFormulaCold(
         acceptedHardLaunchAngle,
         launchContextPointer,
         initializeLaunchState,
+        pointXPointer,
+        pointYPointer,
+        pointCount,
+        pathSteepness,
+        candidateBoundaryMaterialIdentityPointer,
+        resolveCandidateFormulaPoints,
       );
       if (softReplayStatus == CANDIDATE_REPLAY_SUCCESS) {
         softLaunchAngle = load<f64>(candidateLaunchAnglePointer);
@@ -419,6 +474,11 @@ export function refineStepFormulaCold(
             softProtectionPointer,
             candidateProtectionPointer,
             checkedByteLength(segmentCount, sizeof<u32>()),
+          );
+          memory.copy(
+            softBoundaryMaterialIdentityPointer,
+            candidateBoundaryMaterialIdentityPointer,
+            boundaryMaterialIdentityByteLength,
           );
         }
       }
@@ -483,6 +543,12 @@ export function refineStepFormulaCold(
               acceptedHardLaunchAngle,
               launchContextPointer,
               initializeLaunchState,
+              pointXPointer,
+              pointYPointer,
+              pointCount,
+              pathSteepness,
+              candidateBoundaryMaterialIdentityPointer,
+              resolveCandidateFormulaPoints,
             );
             if (derivativeReplayStatus == CANDIDATE_REPLAY_SUCCESS) {
               const derivativePositionError = calculatePositionErrorPlanePixels(
@@ -525,6 +591,11 @@ export function refineStepFormulaCold(
                   softProtectionPointer,
                   candidateProtectionPointer,
                   checkedByteLength(segmentCount, sizeof<u32>()),
+                );
+                memory.copy(
+                  softBoundaryMaterialIdentityPointer,
+                  candidateBoundaryMaterialIdentityPointer,
+                  boundaryMaterialIdentityByteLength,
                 );
               }
             }
@@ -669,6 +740,7 @@ export function refineStepFormulaCold(
                 resultPointer,
                 false,
               );
+              recordTrajectoryDebugScalarReplay(resultPointer);
               mergeObservedProtection(prefixMaterialPointer, combinedProtectionPointer, segmentCount);
               if (hasNewProtection(combinedProtectionPointer, protectionPointer, segmentCount)) {
                 hasProtectionChanged = true;
@@ -763,6 +835,12 @@ export function refineStepFormulaCold(
                       : acceptedHardLaunchAngle,
                     launchContextPointer,
                     initializeLaunchState,
+                    pointXPointer,
+                    pointYPointer,
+                    pointCount,
+                    pathSteepness,
+                    candidateBoundaryMaterialIdentityPointer,
+                    resolveCandidateFormulaPoints,
                   );
                   if (
                     candidateReplayStatus == CANDIDATE_REPLAY_SUCCESS &&
@@ -812,6 +890,11 @@ export function refineStepFormulaCold(
                         candidateProtectionPointer,
                         checkedByteLength(segmentCount, sizeof<u32>()),
                       );
+                      memory.copy(
+                        hardBoundaryMaterialIdentityPointer,
+                        candidateBoundaryMaterialIdentityPointer,
+                        boundaryMaterialIdentityByteLength,
+                      );
                     }
                   }
                 }
@@ -860,9 +943,10 @@ export function refineStepFormulaCold(
       acceptedBoundaryLaunchAngle = hardLaunchAngle;
       acceptedHardLaunchAngle = hardLaunchAngle;
       acceptedBoundaryStopX = load<f64>(hardSegmentPointer + STEP_GLITCH_RECORD_END_X_OFFSET);
-      captureStepBoundaryMaterialIdentity(
-        runStepLaunchBatch(buildInputPointer),
+      memory.copy(
         acceptedBoundaryMaterialIdentityPointer,
+        hardBoundaryMaterialIdentityPointer,
+        boundaryMaterialIdentityByteLength,
       );
       hasAcceptedBoundaryState = true;
       if (acceptedHardLaunchAnglePointer != 0) {
@@ -892,9 +976,10 @@ export function refineStepFormulaCold(
       );
       acceptedBoundaryLaunchAngle = softLaunchAngle;
       acceptedBoundaryStopX = targetX;
-      captureStepBoundaryMaterialIdentity(
-        runStepLaunchBatch(buildInputPointer),
+      memory.copy(
         acceptedBoundaryMaterialIdentityPointer,
+        softBoundaryMaterialIdentityPointer,
+        boundaryMaterialIdentityByteLength,
       );
       hasAcceptedBoundaryState = true;
     } else if (shouldReplaySoft) {
@@ -942,6 +1027,12 @@ function replayCurrentCandidate(
   forcedLaunchAngle: f64,
   launchContextPointer: u32,
   initializeLaunchState: StepColdLaunchStateInitializer,
+  targetXPointer: u32,
+  targetYPointer: u32,
+  pointCount: u32,
+  pathSteepness: f64,
+  candidateMaterialIdentityPointer: u32,
+  resolveCandidateFormulaPoints: StepColdFormulaPointResolver,
 ): i32 {
   const candidateMark = markArena();
   const protectionByteLength = checkedByteLength(segmentCount, sizeof<u32>());
@@ -951,20 +1042,60 @@ function replayCurrentCandidate(
   let replayStatus = CANDIDATE_REPLAY_INVALID;
   while (true) {
     const replayMark = markArena();
-    store<u32>(buildInputPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, formulaPointXPointer);
-    store<u32>(buildInputPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, formulaPointYPointer);
+    let candidateFormulaPointXPointer = formulaPointXPointer;
+    let candidateFormulaPointYPointer = formulaPointYPointer;
+    if (!hasInitialState) {
+      const pointByteLength = checkedByteLength(pointCount, sizeof<f64>());
+      candidateFormulaPointXPointer = reserveArena(pointByteLength, sizeof<f64>());
+      candidateFormulaPointYPointer = reserveArena(pointByteLength, sizeof<f64>());
+      const candidateObservedProtectionPointer = reserveArena(protectionByteLength, sizeof<u32>());
+      memory.copy(candidateObservedProtectionPointer, localProtectionPointer, protectionByteLength);
+      const isCandidateFormulaValid = resolveCandidateFormulaPoints(
+        buildInputPointer,
+        targetXPointer,
+        targetYPointer,
+        formulaPointXPointer,
+        formulaPointYPointer,
+        candidateFormulaPointXPointer,
+        candidateFormulaPointYPointer,
+        pathSteepness,
+        localProtectionPointer,
+        candidateObservedProtectionPointer,
+        launchContextPointer,
+      );
+      const hasFormulaProtectionChange = hasNewProtection(
+        candidateObservedProtectionPointer,
+        localProtectionPointer,
+        segmentCount,
+      );
+      mergeProtectionValues(candidateObservedProtectionPointer, localProtectionPointer, segmentCount);
+      if (hasFormulaProtectionChange) {
+        canReuseInitialState = false;
+        resetArena(replayMark);
+        continue;
+      }
+      if (!isCandidateFormulaValid) {
+        replayStatus = CANDIDATE_REPLAY_INVALID;
+        resetArena(replayMark);
+        break;
+      }
+    }
+    store<u32>(buildInputPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, candidateFormulaPointXPointer);
+    store<u32>(buildInputPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, candidateFormulaPointYPointer);
     store<u32>(buildInputPointer + FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, localProtectionPointer);
     const materialResultPointer = runStepLaunchBatch(buildInputPointer);
+    const candidateBaseY = load<f64>(candidateFormulaPointYPointer);
     const isLaunchValid = initializeLaunchState(
       materialResultPointer,
       equation,
-      baseY,
+      candidateBaseY,
       localProtectionPointer,
       outputStatePointer,
       candidateLaunchAnglePointer,
       forcedLaunchAngle,
       launchContextPointer,
     );
+    recordTrajectoryDebugReplayStart();
     if (isLaunchValid && canReuseInitialState) {
       memory.copy(outputStatePointer, initialStatePointer, TRAJECTORY_SCALAR_STATE_BYTE_LENGTH);
     }
@@ -973,7 +1104,7 @@ function replayCurrentCandidate(
         replayFormulaTrajectoryScalarToStopXWithMaskAndJumpWindow(
           materialResultPointer,
           equation,
-          baseY,
+          candidateBaseY,
           0,
           boundsMinX,
           boundsMaxX,
@@ -992,7 +1123,7 @@ function replayCurrentCandidate(
         replayFormulaTrajectoryScalarToStopX(
           materialResultPointer,
           equation,
-          baseY,
+          candidateBaseY,
           0,
           boundsMinX,
           boundsMaxX,
@@ -1008,7 +1139,7 @@ function replayCurrentCandidate(
         replayFormulaTrajectoryScalarToStopXWithMask(
           materialResultPointer,
           equation,
-          baseY,
+          candidateBaseY,
           0,
           boundsMinX,
           boundsMaxX,
@@ -1022,6 +1153,7 @@ function replayCurrentCandidate(
           maskPointer,
         );
       }
+      recordTrajectoryDebugScalarResult(resultPointer);
       replayStatus =
         load<i32>(resultPointer + TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET) == TRAJECTORY_SCALAR_STOP_REASON_STOP_X
           ? CANDIDATE_REPLAY_SUCCESS
@@ -1032,6 +1164,9 @@ function replayCurrentCandidate(
     const observedPointer = load<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET);
     const hasRoundProtectionChange = hasNewProtection(observedPointer, localProtectionPointer, segmentCount);
     mergeObservedProtection(materialResultPointer, localProtectionPointer, segmentCount);
+    if (!hasRoundProtectionChange && replayStatus == CANDIDATE_REPLAY_SUCCESS) {
+      captureStepBoundaryMaterialIdentity(materialResultPointer, candidateMaterialIdentityPointer);
+    }
     resetArena(replayMark);
     if (!hasRoundProtectionChange) {
       break;
@@ -1039,6 +1174,8 @@ function replayCurrentCandidate(
     canReuseInitialState = false;
   }
   memory.copy(candidateProtectionPointer, localProtectionPointer, protectionByteLength);
+  store<u32>(buildInputPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, formulaPointXPointer);
+  store<u32>(buildInputPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, formulaPointYPointer);
   store<u32>(buildInputPointer + FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, protectionPointer);
   resetArena(candidateMark);
   return replayStatus;

@@ -29,6 +29,8 @@ import {
 import { markArena, reserveArena, resetArena } from "./memory";
 import {
   initializeTrajectoryScalarState,
+  recordTrajectoryDebugScalarReplay,
+  recordTrajectoryDebugScalarReplayPart,
   replayFormulaTrajectoryScalarToStopX,
   TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH,
   TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET,
@@ -494,6 +496,7 @@ function writeAbsSecondDerivativePrefixState(
     resultPointer,
     false,
   );
+  recordTrajectoryDebugScalarReplay(resultPointer);
   const isStopped =
     load<i32>(resultPointer + TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET) ==
     TRAJECTORY_SCALAR_STOP_REASON_STOP_X;
@@ -574,6 +577,7 @@ function writeAbsSecondDerivativeTargetStates(
       resultPointer,
       false,
     );
+    recordTrajectoryDebugScalarReplayPart(resultPointer, targetIndex == 0);
     if (
       load<i32>(resultPointer + TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET) !=
       TRAJECTORY_SCALAR_STOP_REASON_STOP_X

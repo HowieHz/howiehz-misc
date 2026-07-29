@@ -17,6 +17,7 @@ import {
 } from "./formula-layout";
 import { markArena, reserveArena, resetArena } from "./memory";
 import {
+  recordTrajectoryDebugScalarReplay,
   replayFormulaTrajectoryScalarToStopX,
   TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH,
   TRAJECTORY_SCALAR_RESULT_STOP_REASON_OFFSET,
@@ -83,7 +84,6 @@ export function collectAbsFirstOrderSegmentStartsCold(
   store<u32>(buildInputPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, formulaPointYPointer);
 
   const baseY = load<f64>(formulaPointYPointer);
-  const startStatePointer = reserveArena(TRAJECTORY_SCALAR_STATE_BYTE_LENGTH, sizeof<f64>());
   const boundaryStatePointer = reserveArena(TRAJECTORY_SCALAR_STATE_BYTE_LENGTH, sizeof<f64>());
   const resultPointer = reserveArena(TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH, sizeof<f64>());
   let hasBoundaryState = false;
@@ -91,30 +91,15 @@ export function collectAbsFirstOrderSegmentStartsCold(
   let segmentIndex: u32 = 0;
   while (segmentIndex < segmentCount) {
     const segmentMark = markArena();
-    const prefixMaterialPointer = runCurveBatch(buildInputPointer);
-    if (segmentIndex == 0) {
-      const isPrefixLaunchValid = initializeLaunchState(
-        prefixMaterialPointer,
-        FORMULA_EQUATION_DY,
-        baseY,
-        protectionPointer,
-        startStatePointer,
-        launchContextPointer,
-      );
-      mergeObservedProtection(prefixMaterialPointer, combinedProtectionPointer, segmentCount);
-      if (hasNewProtection(combinedProtectionPointer, protectionPointer, segmentCount)) {
-        hasProtectionChanged = true;
-      }
-      if (!isPrefixLaunchValid) {
+    if (segmentIndex > 0) {
+      if (!hasBoundaryState) {
         resetArena(segmentMark);
         return hasProtectionChanged
           ? ABS_FIRST_ORDER_COLD_REFINEMENT_PROTECTION_CHANGED
           : ABS_FIRST_ORDER_COLD_REFINEMENT_INVALID;
       }
-    } else if (hasBoundaryState) {
-      memory.copy(startStatePointer, boundaryStatePointer, TRAJECTORY_SCALAR_STATE_BYTE_LENGTH);
-      const startX = load<f64>(startStatePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET);
-      const startY = load<f64>(startStatePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET);
+      const startX = load<f64>(boundaryStatePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET);
+      const startY = load<f64>(boundaryStatePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET);
       if (!isFiniteValue(startX) || !isFiniteValue(startY)) {
         resetArena(segmentMark);
         return hasProtectionChanged
@@ -123,14 +108,16 @@ export function collectAbsFirstOrderSegmentStartsCold(
       }
       store<f64>(segmentStartXPointer + segmentIndex * sizeof<f64>(), startX);
       store<f64>(segmentStartYPointer + segmentIndex * sizeof<f64>(), startY);
-    } else {
-      resetArena(segmentMark);
-      return hasProtectionChanged
-        ? ABS_FIRST_ORDER_COLD_REFINEMENT_PROTECTION_CHANGED
-        : ABS_FIRST_ORDER_COLD_REFINEMENT_INVALID;
     }
 
     store<u8>(disabledPointer + segmentIndex, 0);
+    if (segmentIndex + 1 == segmentCount) {
+      // TS only samples connector boundaries needed by a following segment. The final segment is enabled here and
+      // is evaluated by the post-refinement identity solve and final trajectory instead of an extra prefix replay.
+      resetArena(segmentMark);
+      segmentIndex += 1;
+      continue;
+    }
     const candidateMaterialPointer = runCurveBatch(buildInputPointer);
     const isCandidateLaunchValid = initializeLaunchState(
       candidateMaterialPointer,
@@ -165,6 +152,7 @@ export function collectAbsFirstOrderSegmentStartsCold(
       resultPointer,
       false,
     );
+    recordTrajectoryDebugScalarReplay(resultPointer);
     mergeObservedProtection(candidateMaterialPointer, combinedProtectionPointer, segmentCount);
     if (hasNewProtection(combinedProtectionPointer, protectionPointer, segmentCount)) {
       hasProtectionChanged = true;

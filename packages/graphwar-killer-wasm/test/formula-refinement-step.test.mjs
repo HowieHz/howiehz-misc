@@ -222,7 +222,7 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
       const scalarInputPointer = writeScalarStepInput(exports, segmentPointer);
       const scalarMaterialPointer = exports.runStepBatch(scalarInputPointer);
       const scalarStatePointer = exports.reserveArena(64, 8);
-      const scalarResultPointer = exports.reserveArena(48, 8);
+      const scalarResultPointer = exports.reserveArena(56, 8);
       exports.initializeTrajectoryScalarState(scalarStatePointer, 2, 0.1 - step / 2, 0, 0, 0, 0, 0, 0, 0);
       exports.replayFormulaTrajectoryScalarToStopX(
         scalarMaterialPointer,
@@ -290,7 +290,7 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
     const endProtectedInputPointer = writeScalarStepInput(exports, rejectedGlitchPointer, 2);
     const endProtectedMaterialPointer = exports.runStepBatch(endProtectedInputPointer);
     const rejectedStatePointer = exports.reserveArena(64, 8);
-    const rejectedResultPointer = exports.reserveArena(48, 8);
+    const rejectedResultPointer = exports.reserveArena(56, 8);
     exports.initializeTrajectoryScalarState(rejectedStatePointer, 2, 0.095, 0, 0, 0, 0, 0, 0, 0);
     exports.replayFormulaTrajectoryScalarToStopX(
       endProtectedMaterialPointer,
@@ -315,7 +315,7 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
     const gateProtectedInputPointer = writeScalarStepInput(exports, rejectedGlitchPointer, 3);
     const gateProtectedMaterialPointer = exports.runStepBatch(gateProtectedInputPointer);
     const acceptedStatePointer = exports.reserveArena(64, 8);
-    const acceptedResultPointer = exports.reserveArena(48, 8);
+    const acceptedResultPointer = exports.reserveArena(56, 8);
     exports.initializeTrajectoryScalarState(acceptedStatePointer, 2, 0.095, 0, 0, 0, 0, 0, 0, 0);
     exports.replayFormulaTrajectoryScalarToStopX(
       gateProtectedMaterialPointer,
@@ -349,7 +349,7 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
     const collisionInputPointer = writeScalarStepInput(exports, zeroGlitchPointer);
     const collisionMaterialPointer = exports.runStepBatch(collisionInputPointer);
     const collisionStatePointer = exports.reserveArena(64, 8);
-    const collisionResultPointer = exports.reserveArena(48, 8);
+    const collisionResultPointer = exports.reserveArena(56, 8);
     new Uint8Array(exports.memory.buffer, maskPointer, 770 * 450).fill(0);
     exports.initializeTrajectoryScalarState(collisionStatePointer, 2, 0, 0, 0, 0, 0, 0, 0, 0);
     exports.replayFormulaTrajectoryScalarToStopXWithMask(
@@ -411,22 +411,22 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
     assert.equal(view.getUint32(failedAbsInput.combinedProtectionPointer, true) & 16, 16);
     assert.equal(exports.getHarnessLaunchInitializationCount(), 1);
 
-    const successfulPrefixAbsInput = writeAbsFirstOrderColdInput(exports, 0);
+    const successfulCandidateAbsInput = writeAbsFirstOrderColdInput(exports, 0);
     exports.resetHarnessLaunchInitializationCount();
     exports.configureHarnessAbsLaunchInitialization(16, 0);
     assert.equal(
       exports.collectAbsFirstOrderSegmentStartsColdHarness(
-        successfulPrefixAbsInput.inputPointer,
-        successfulPrefixAbsInput.buildInputPointer,
-        successfulPrefixAbsInput.formulaPointXPointer,
-        successfulPrefixAbsInput.formulaPointYPointer,
-        successfulPrefixAbsInput.combinedProtectionPointer,
+        successfulCandidateAbsInput.inputPointer,
+        successfulCandidateAbsInput.buildInputPointer,
+        successfulCandidateAbsInput.formulaPointXPointer,
+        successfulCandidateAbsInput.formulaPointYPointer,
+        successfulCandidateAbsInput.combinedProtectionPointer,
       ),
       2,
     );
     view = new DataView(exports.memory.buffer);
-    assert.equal(view.getUint32(successfulPrefixAbsInput.combinedProtectionPointer, true) & 16, 16);
-    assert.equal(exports.getHarnessLaunchInitializationCount() > 1, true);
+    assert.equal(view.getUint32(successfulCandidateAbsInput.combinedProtectionPointer, true) & 16, 16);
+    assert.equal(exports.getHarnessLaunchInitializationCount(), 1);
 
     exports.configureHarnessAbsLaunchInitialization(0, 0);
     const absInput = writeAbsFirstOrderColdInput(exports);
@@ -479,7 +479,8 @@ test("ports Step cold hard-glitch candidate math and stable ordering", async () 
     assert.equal(Number.isFinite(view.getFloat64(stepSegmentStartYPointer + 8, true)), true);
     assert.equal(Number.isFinite(view.getFloat64(stepDeltaYPointer, true)), true);
     assert.equal(Number.isFinite(view.getFloat64(stepDeltaYPointer + 8, true)), true);
-    assert.equal(exports.getHarnessLaunchInitializationCount(), 2);
+    // The second segment prepares launch once for its boundary replay and again before applying the resume state.
+    assert.equal(exports.getHarnessLaunchInitializationCount(), 3);
     exports.resetArena(mark);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -677,7 +678,7 @@ async function compileHarness() {
     [
       'import { refineStepFormulaCold } from "../assembly/formula-refinement-step-cold";',
       'import { collectAbsFirstOrderSegmentStartsCold } from "../assembly/formula-refinement-abs-first-order-cold";',
-      'import { FORMULA_RESULT_PROTECTION_POINTER_OFFSET } from "../assembly/formula-layout";',
+      'import { FORMULA_INPUT_POINT_COUNT_OFFSET, FORMULA_RESULT_PROTECTION_POINTER_OFFSET } from "../assembly/formula-layout";',
       'import { initializeTrajectoryScalarState as initializeHarnessTrajectoryState } from "../assembly/trajectory-scalar";',
       "let launchInitializationCount: u32 = 0;",
       "let absLaunchProtectionRole: u32 = 0;",
@@ -703,6 +704,16 @@ async function compileHarness() {
       "    materialResultPointer, equation, baseY, protectionPointer, statePointer, 0, f64.NaN, contextPointer",
       "  );",
       "}",
+      "function resolveHarnessCandidateFormulaPoints(",
+      "  buildInputPointer: u32, _targetXPointer: u32, _targetYPointer: u32, sourceXPointer: u32, sourceYPointer: u32,",
+      "  outputXPointer: u32, outputYPointer: u32, _pathSteepness: f64, _protectionPointer: u32,",
+      "  _observedProtectionPointer: u32, _contextPointer: u32",
+      "): bool {",
+      "  const byteLength = load<u32>(buildInputPointer + FORMULA_INPUT_POINT_COUNT_OFFSET) * sizeof<f64>();",
+      "  memory.copy(outputXPointer, sourceXPointer, byteLength);",
+      "  memory.copy(outputYPointer, sourceYPointer, byteLength);",
+      "  return true;",
+      "}",
       "export function configureHarnessAbsLaunchInitialization(role: u32, shouldFail: bool): void {",
       "  absLaunchProtectionRole = role; shouldFailAbsLaunchInitialization = shouldFail;",
       "}",
@@ -723,7 +734,7 @@ async function compileHarness() {
       "): i32 {",
       "  return refineStepFormulaCold(",
       "    inputPointer, buildInputPointer, formulaPointXPointer, formulaPointYPointer, initialFormulaPointXPointer,",
-      "    combinedProtectionPointer, 0, 0, initializeHarnessLaunchState",
+      "    combinedProtectionPointer, 0, 0, initializeHarnessLaunchState, resolveHarnessCandidateFormulaPoints",
       "  );",
       "}",
       'export { initializeGraphwarGameConstants } from "../assembly/game-constants";',

@@ -390,6 +390,7 @@ function floodRestoreComponent(targetPointer: u32, sourcePointer: u32, queuePoin
 /** Filters the retained source mask and writes the exact final mask into caller-owned long-lived storage. */
 export function filterDetectionObstacleComponents(commandPointer: u32, sourcePointer: u32, outputPointer: u32): u32 {
   const length = maskLength();
+  const width = planeWidth();
   const detectionPointer = reserveArena(length, 1);
   const restorePointer = reserveArena(length, 1);
   const bridgePointer = reserveArena(length, 1);
@@ -416,15 +417,31 @@ export function filterDetectionObstacleComponents(commandPointer: u32, sourcePoi
     if (load<u8>(componentPointer + start) == 0 || load<u8>(visitedPointer + start) != 0) continue;
     const area = collectComponent(componentPointer, visitedPointer, componentQueuePointer, start);
     if (<f64>area < minimumArea) continue;
-    let hasAddedPixels = false;
+    let minX = width;
+    let minY = planeHeight();
+    let maxX: u32 = 0;
+    let maxY: u32 = 0;
     for (let index: u32 = 0; index < area; index += 1) {
-      const seed = load<u32>(componentQueuePointer + index * sizeof<u32>());
-      if (
-        load<u8>(componentPointer + seed) != 0 &&
-        load<u8>(restorePointer + seed) != 0 &&
-        load<u8>(outputPointer + seed) == 0
-      ) {
-        hasAddedPixels = floodRestoreComponent(outputPointer, restorePointer, floodQueuePointer, seed) || hasAddedPixels;
+      const pixel = load<u32>(componentQueuePointer + index * sizeof<u32>());
+      const x = pixel % width;
+      const y = pixel / width;
+      minX = min(minX, x);
+      minY = min(minY, y);
+      maxX = max(maxX, x);
+      maxY = max(maxY, y);
+    }
+    let hasAddedPixels = false;
+    // TypeScript intentionally scans the component box, so enclosed seed components share this count bucket.
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const seed = y * width + x;
+        if (
+          load<u8>(componentPointer + seed) != 0 &&
+          load<u8>(restorePointer + seed) != 0 &&
+          load<u8>(outputPointer + seed) == 0
+        ) {
+          hasAddedPixels = floodRestoreComponent(outputPointer, restorePointer, floodQueuePointer, seed) || hasAddedPixels;
+        }
       }
     }
     if (hasAddedPixels) count += 1;

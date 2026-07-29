@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   collectSoldierTemplateCenterCandidatesForMatching,
+  countObstacleMaskComponents,
   createSoldierDetectionBoxes,
   detectGraphwarObstaclesInBounds,
   detectGraphwarPlayArea,
@@ -11,7 +12,11 @@ import {
 } from "../../detection/objects";
 import type { GraphwarDetectionWorkerTask } from "../../detection/runtime/protocol";
 import { GraphwarWasmFault } from "../algorithm-backend";
-import { GraphwarWasmAdapterError, type GraphwarWasmAdapterErrorCode } from "./abi";
+import {
+  GraphwarWasmAdapterError,
+  type GraphwarWasmAdapterErrorCode,
+  type GraphwarWasmAdapterFaultDomain,
+} from "./abi";
 import {
   copyGraphwarWasmDetectionResult,
   createGraphwarWasmDetectionController,
@@ -389,6 +394,21 @@ describe("Graphwar WASM detection bounds", () => {
       state: 1,
     });
 
+    resultView.setUint32(0, 99, true);
+    expectAdapterErrorCode(
+      () => copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
+      "invalid-enum",
+      "output",
+    );
+    resultView.setUint32(0, 1, true);
+    resultView.setFloat64(32, Number.NaN, true);
+    expectAdapterErrorCode(
+      () => copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
+      "invalid-finite-number",
+      "output",
+    );
+    resultView.setFloat64(32, 1, true);
+
     stages.set([2, 1]);
     expectDetectionResultError(() =>
       copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
@@ -452,6 +472,44 @@ describe("Graphwar WASM detection bounds", () => {
     expect(completed.result.obstacleMask).toEqual(expected.mask);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
     expect(runtime.getArenaDiagnostics()).toMatchObject({ allocatorCallCount: 1, isCanaryIntact: true });
+  });
+
+  it("preserves bounding-box restoration count when one seed component encloses another", async () => {
+    const imageData = createWhiteImage(780, 460);
+    const edgeRect = { height: 450, width: 770, x: 5, y: 4 };
+    for (let y = 100; y <= 250; y += 1) {
+      for (let x = 100; x <= 110; x += 1) {
+        setPixel(imageData, edgeRect.x + x, edgeRect.y + y, 64);
+      }
+    }
+    for (const startY of [100, 240]) {
+      for (let y = startY; y <= startY + 10; y += 1) {
+        for (let x = 100; x <= 300; x += 1) {
+          setPixel(imageData, edgeRect.x + x, edgeRect.y + y, 64);
+        }
+      }
+    }
+    for (let y = 160; y <= 180; y += 1) {
+      for (let x = 200; x <= 220; x += 1) {
+        setPixel(imageData, edgeRect.x + x, edgeRect.y + y, 64);
+      }
+    }
+    const task = {
+      edgeRect,
+      imageData,
+      soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 1 },
+      thresholds: { minArea: 3 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const expected = detectGraphwarObstaclesInBounds(imageData, edgeRect, task.thresholds, []);
+    expect(expected.count).toBe(1);
+    expect(countObstacleMaskComponents(expected.mask)).toBe(2);
+
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const completed = runCompleteObstacleTask(controller, task, 43);
+    expect(completed.result.obstacleMask).toEqual(expected.mask);
+    expect(completed.result.obstacleCount).toBe(expected.count);
   });
 
   it("removes accepted soldier visual regions before restoring obstacle details", async () => {
@@ -756,10 +814,14 @@ function createTemplateCandidateFixture() {
 }
 
 function expectDetectionResultError(task: () => unknown): void {
-  expectAdapterErrorCode(task, "invalid-detection-result");
+  expectAdapterErrorCode(task, "invalid-detection-result", "output");
 }
 
-function expectAdapterErrorCode(task: () => unknown, code: GraphwarWasmAdapterErrorCode): void {
+function expectAdapterErrorCode(
+  task: () => unknown,
+  code: GraphwarWasmAdapterErrorCode,
+  faultDomain?: GraphwarWasmAdapterFaultDomain,
+): void {
   let error: unknown;
   try {
     task();
@@ -767,7 +829,7 @@ function expectAdapterErrorCode(task: () => unknown, code: GraphwarWasmAdapterEr
     error = caught;
   }
   expect(error).toBeInstanceOf(GraphwarWasmAdapterError);
-  expect(error).toMatchObject({ code });
+  expect(error).toMatchObject({ code, ...(faultDomain === undefined ? {} : { faultDomain }) });
 }
 
 function setPixel(image: ImageData, x: number, y: number, red: number, green = red, blue = red): void {

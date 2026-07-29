@@ -8,6 +8,7 @@ import {
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
 } from "./algorithm-backend";
+import { GraphwarWasmAdapterError } from "./wasm/abi";
 import {
   createGraphwarWorkerBackendRuntime,
   createGraphwarWorkerBackendSlot,
@@ -257,6 +258,64 @@ describe("Graphwar Worker backend control", () => {
         type: "wasm-fault",
       },
     ]);
+  });
+
+  it.each([
+    ["invalid-point-data", "input"],
+    ["invalid-point-data", "output"],
+    ["invalid-session-state", "abi"],
+  ] as const)("preserves the %s WASM Adapter failure's %s fault domain", async (adapterCode, faultCode) => {
+    const outbound: GraphwarBackendControlMessage[] = [];
+    const module = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    const runtime = createGraphwarWorkerBackendRuntime({
+      instantiateRuntime: async () => new TestValidatedRuntime("detection"),
+      postControlMessage: (message) => outbound.push(message),
+      role: "detection-main",
+    });
+    runtime.handleMessage({
+      backend: { module, type: "wasm" },
+      generation: 4,
+      role: "detection-main",
+      type: "backend-init",
+    });
+
+    await expect(
+      executeGraphwarWorkerTask(runtime, attempt, { attempt, type: "task" }, () => {
+        throw new GraphwarWasmAdapterError(adapterCode, "WASM Adapter task failed", faultCode);
+      }),
+    ).resolves.toEqual({ type: "wasm-fault" });
+    expect(outbound).toEqual([
+      { backend: "wasm", generation: 4, role: "detection-main", type: "backend-ready" },
+      {
+        context: { attempt, type: "task" },
+        fault: { code: faultCode, message: "WASM Adapter task failed" },
+        generation: 4,
+        role: "detection-main",
+        type: "wasm-fault",
+      },
+    ]);
+  });
+
+  it("does not classify an Adapter-shaped TypeScript task failure as a WASM fault", async () => {
+    const outbound: GraphwarBackendControlMessage[] = [];
+    const runtime = createGraphwarWorkerBackendRuntime({
+      postControlMessage: (message) => outbound.push(message),
+      role: "detection-main",
+    });
+    runtime.handleMessage({
+      backend: { type: "typescript" },
+      generation: 4,
+      role: "detection-main",
+      type: "backend-init",
+    });
+    const error = new GraphwarWasmAdapterError("invalid-detection-result", "ordinary TypeScript failure", "output");
+
+    await expect(
+      executeGraphwarWorkerTask(runtime, attempt, { attempt, type: "task" }, () => {
+        throw error;
+      }),
+    ).rejects.toBe(error);
+    expect(outbound).toEqual([{ backend: "typescript", generation: 4, role: "detection-main", type: "backend-ready" }]);
   });
 
   it("drops stale generation control messages without failing the current slot", () => {

@@ -120,9 +120,9 @@ export function createGraphwarWasmSessionController(memory: GraphwarWasmMemorySo
 
   /** 开始 running session，并把全部 provenance 原子绑定到新 nonce。 */
   function beginSession(start: GraphwarWasmSessionStart): Extract<GraphwarWasmSessionState, { type: "running" }> {
-    const backendGeneration = validateGraphwarWasmU32(start.backendGeneration, "backendGeneration");
-    const requestId = validateGraphwarWasmU32(start.requestId, "requestId");
-    const pointer = validateGraphwarWasmU32(start.pointer, "sessionPointer");
+    const backendGeneration = validateGraphwarWasmU32(start.backendGeneration, "backendGeneration", "abi");
+    const requestId = validateGraphwarWasmU32(start.requestId, "requestId", "abi");
+    const pointer = validateGraphwarWasmU32(start.pointer, "sessionPointer", "abi");
     if (pointer === 0) {
       throw new GraphwarWasmAdapterError("invalid-session-pointer", "session pointer must be non-zero");
     }
@@ -324,7 +324,7 @@ function normalizeExpectedWorkIds(ids: readonly number[], fieldName: string): re
   }
   const seenIds = new Set<number>();
   const normalized = ids.map((id) => {
-    const validatedId = validateGraphwarWasmU32(id, fieldName);
+    const validatedId = validateGraphwarWasmU32(id, fieldName, "abi");
     if (seenIds.has(validatedId)) {
       throw new GraphwarWasmAdapterError("duplicate-work-id", `${fieldName} contains duplicate id ${validatedId}`);
     }
@@ -349,7 +349,7 @@ function validateAndOrderWorkResults<TResult>(
   const expectedIdSet = new Set(expectedWorkIds);
   const resultsById = new Map<number, TResult>();
   for (const result of results) {
-    const id = validateGraphwarWasmU32(getId(result), fieldName);
+    const id = validateGraphwarWasmU32(getId(result), fieldName, "abi");
     if (resultsById.has(id)) {
       throw new GraphwarWasmAdapterError("duplicate-work-id", `session results contain duplicate id ${id}`);
     }

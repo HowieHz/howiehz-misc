@@ -578,7 +578,11 @@ export function runGraphwarWasmTrajectory(
       commandView.setUint32(
         220,
         packedCollision.type === "mask"
-          ? validateGraphwarWasmU32(Math.floor(packedCollision.boundaryExpansion), "collision.boundaryExpansion")
+          ? validateGraphwarWasmU32(
+              Math.floor(packedCollision.boundaryExpansion),
+              "collision.boundaryExpansion",
+              "input",
+            )
           : 0,
         true,
       );
@@ -1419,7 +1423,11 @@ function packGraphwarWasmTrajectoryEvidence(
   segmentCount: number,
 ) {
   if (!isRecord(evidence) || !isRecord(evidence.state)) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Trajectory continuation evidence is malformed");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Trajectory continuation evidence is malformed",
+      "input",
+    );
   }
   const dependencyHash = validateGraphwarWasmIdentityHash(evidence.dependencyHash, "evidence.dependencyHash");
   const proofHash = validateGraphwarWasmIdentityHash(evidence.proofHash, "evidence.proofHash");
@@ -1427,32 +1435,40 @@ function packGraphwarWasmTrajectoryEvidence(
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Trajectory continuation protection must match the formula segments",
+      "input",
     );
   }
   const protection = Uint32Array.from(evidence.observedSignProtection, (value, index) =>
-    validateGraphwarWasmProtectionBits(value, ALLOWED_SIGN_PROTECTION_BITS, `evidence.protection[${index}]`),
+    validateGraphwarWasmProtectionBits(value, ALLOWED_SIGN_PROTECTION_BITS, `evidence.protection[${index}]`, "input"),
   );
   if (typeof evidence.canContinueToLaterFrontier !== "boolean" || typeof evidence.shouldSkipInitialStop !== "boolean") {
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Trajectory continuation capability flags must be boolean",
+      "input",
     );
   }
-  const reachedTargetCount = validateGraphwarWasmU32(evidence.reachedTargetCount, "evidence.reachedTargetCount");
+  const reachedTargetCount = validateGraphwarWasmU32(
+    evidence.reachedTargetCount,
+    "evidence.reachedTargetCount",
+    "input",
+  );
   const reachedRequiredTargetCount = validateGraphwarWasmU32(
     evidence.reachedRequiredTargetCount,
     "evidence.reachedRequiredTargetCount",
+    "input",
   );
   const state = evidence.state;
   if (state.equation !== equation) {
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Trajectory continuation equation does not match the descriptor",
+      "input",
     );
   }
-  const sampleIndex = validateGraphwarWasmU32(state.sampleIndex, "evidence.state.sampleIndex");
-  const currentX = validateGraphwarWasmFiniteNumber(state.currentPoint.x, "evidence.state.currentPoint.x");
-  const currentY = validateGraphwarWasmFiniteNumber(state.currentPoint.y, "evidence.state.currentPoint.y");
+  const sampleIndex = validateGraphwarWasmU32(state.sampleIndex, "evidence.state.sampleIndex", "input");
+  const currentX = validateGraphwarWasmFiniteNumber(state.currentPoint.x, "evidence.state.currentPoint.x", "input");
+  const currentY = validateGraphwarWasmFiniteNumber(state.currentPoint.y, "evidence.state.currentPoint.y", "input");
   let currentDy = 0;
   let previousX = 0;
   let previousY = 0;
@@ -1461,17 +1477,17 @@ function packGraphwarWasmTrajectoryEvidence(
     (evidence.shouldSkipInitialStop ? TRAJECTORY_EVIDENCE_FLAG_SKIP_INITIAL_STOP : 0) |
     (evidence.canContinueToLaterFrontier ? TRAJECTORY_EVIDENCE_FLAG_CAN_CONTINUE_TO_LATER_FRONTIER : 0);
   if (state.equation === "ddy") {
-    currentDy = validateGraphwarWasmFiniteNumber(state.currentDy, "evidence.state.currentDy");
+    currentDy = validateGraphwarWasmFiniteNumber(state.currentDy, "evidence.state.currentDy", "input");
     evidenceFlags |= TRAJECTORY_EVIDENCE_FLAG_HAS_DY;
     if (state.previous !== undefined) {
-      previousX = validateGraphwarWasmFiniteNumber(state.previous.point.x, "evidence.state.previous.point.x");
-      previousY = validateGraphwarWasmFiniteNumber(state.previous.point.y, "evidence.state.previous.point.y");
-      previousDy = validateGraphwarWasmFiniteNumber(state.previous.dy, "evidence.state.previous.dy");
+      previousX = validateGraphwarWasmFiniteNumber(state.previous.point.x, "evidence.state.previous.point.x", "input");
+      previousY = validateGraphwarWasmFiniteNumber(state.previous.point.y, "evidence.state.previous.point.y", "input");
+      previousDy = validateGraphwarWasmFiniteNumber(state.previous.dy, "evidence.state.previous.dy", "input");
       evidenceFlags |= TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT | TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY;
     }
   } else if (state.previousPoint !== undefined) {
-    previousX = validateGraphwarWasmFiniteNumber(state.previousPoint.x, "evidence.state.previousPoint.x");
-    previousY = validateGraphwarWasmFiniteNumber(state.previousPoint.y, "evidence.state.previousPoint.y");
+    previousX = validateGraphwarWasmFiniteNumber(state.previousPoint.x, "evidence.state.previousPoint.x", "input");
+    previousY = validateGraphwarWasmFiniteNumber(state.previousPoint.y, "evidence.state.previousPoint.y", "input");
     evidenceFlags |= TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT;
   }
   const hasPreviousPoint = (evidenceFlags & TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT) !== 0;
@@ -1479,6 +1495,7 @@ function packGraphwarWasmTrajectoryEvidence(
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Trajectory continuation previous state does not match its sample index",
+      "input",
     );
   }
   const protectionSlice = writeGraphwarWasmUint32Values(runtime, protection);
@@ -1506,28 +1523,28 @@ function packGraphwarWasmTrajectoryEvidence(
 
 function validateGraphwarWasmIdentityHash(value: unknown, fieldName: string): GraphwarWasmIdentityHash {
   if (!Array.isArray(value) || value.length !== 4) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} must contain four u32 limbs`);
+    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} must contain four u32 limbs`, "input");
   }
   return [
-    validateGraphwarWasmU32(value[0], `${fieldName}[0]`),
-    validateGraphwarWasmU32(value[1], `${fieldName}[1]`),
-    validateGraphwarWasmU32(value[2], `${fieldName}[2]`),
-    validateGraphwarWasmU32(value[3], `${fieldName}[3]`),
+    validateGraphwarWasmU32(value[0], `${fieldName}[0]`, "input"),
+    validateGraphwarWasmU32(value[1], `${fieldName}[1]`, "input"),
+    validateGraphwarWasmU32(value[2], `${fieldName}[2]`, "input"),
+    validateGraphwarWasmU32(value[3], `${fieldName}[3]`, "input"),
   ];
 }
 
 function packFormulaValues(runtime: GraphwarWasmKernelRuntime, values: readonly GraphwarWasmFormulaValue[]) {
   if (!Array.isArray(values)) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula values must be an array");
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula values must be an array", "input");
   }
-  const length = validateGraphwarWasmU32(values.length, "values.length");
+  const length = validateGraphwarWasmU32(values.length, "values.length", "input");
   const x = new Float64Array(length);
   const y = new Float64Array(length);
   const dy = new Float64Array(length);
   for (let index = 0; index < length; index += 1) {
     const value = values[index];
     if (typeof value !== "object" || value === null) {
-      throw new GraphwarWasmAdapterError("invalid-formula-input", `values[${index}] must be an object`);
+      throw new GraphwarWasmAdapterError("invalid-formula-input", `values[${index}] must be an object`, "input");
     }
     x[index] = validateFormulaNumber(value.x, `values[${index}].x`);
     y[index] = validateFormulaNumber(value.y, `values[${index}].y`);
@@ -1637,19 +1654,23 @@ function packFormulaInput(
 
 function validateFormulaDescriptor(descriptor: GraphwarWasmFormulaInputDescriptor): void {
   if (typeof descriptor !== "object" || descriptor === null) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula descriptor must be an object");
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula descriptor must be an object", "input");
   }
   if (!isGraphwarFormulaBounds(descriptor.bounds)) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula bounds are invalid");
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula bounds are invalid", "input");
   }
   if (!isGraphwarTrajectoryFormulaSettings(descriptor.settings)) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula settings are invalid");
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula settings are invalid", "input");
   }
   if (!Array.isArray(descriptor.points) || descriptor.points.length < 2) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula descriptor requires at least two points");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Formula descriptor requires at least two points",
+      "input",
+    );
   }
   if (!isGraphwarTrajectoryPoint(descriptor.soldierCenter)) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula soldier center is invalid");
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula soldier center is invalid", "input");
   }
   validateGraphwarWasmSecondOrderLaunchAngle(descriptor.settings.equation, descriptor.secondOrderLaunchAngle);
 }
@@ -1683,27 +1704,47 @@ function validateFormulaEvaluation(
     return;
   }
   if (typeof formulaEvaluation !== "object" || formulaEvaluation === null) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula evaluation options must be an object");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Formula evaluation options must be an object",
+      "input",
+    );
   }
   const { algorithm, decimalPlaces, equation, isStepOverflowProtectionEnabled } = descriptor.settings;
   const segmentCount = descriptor.points.length - 1;
   if (formulaEvaluation.equation !== undefined && formulaEvaluation.equation !== equation) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula evaluation equation does not match settings");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Formula evaluation equation does not match settings",
+      "input",
+    );
   }
   if (
     formulaEvaluation.formulaDecimalPlaces !== undefined &&
     formulaEvaluation.formulaDecimalPlaces !== decimalPlaces
   ) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula evaluation precision does not match settings");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Formula evaluation precision does not match settings",
+      "input",
+    );
   }
   if (
     formulaEvaluation.isStepOverflowProtectionEnabled !== undefined &&
     formulaEvaluation.isStepOverflowProtectionEnabled !== isStepOverflowProtectionEnabled
   ) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula overflow protection does not match settings");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Formula overflow protection does not match settings",
+      "input",
+    );
   }
   if (formulaEvaluation.onZeroSignArgument !== undefined) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula callbacks cannot cross the WASM boundary");
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Formula callbacks cannot cross the WASM boundary",
+      "input",
+    );
   }
   const stepOverflowProtectionRange = formulaEvaluation.stepOverflowProtectionRange;
   if (stepOverflowProtectionRange !== undefined) {
@@ -1713,7 +1754,7 @@ function validateFormulaEvaluation(
       !isFiniteFormulaBound(stepOverflowProtectionRange.minX) ||
       !isFiniteFormulaBound(stepOverflowProtectionRange.maxX)
     ) {
-      throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula Step overflow range is invalid");
+      throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula Step overflow range is invalid", "input");
     }
   }
   validateOptionalFormulaArray(
@@ -1748,7 +1789,7 @@ function validateFormulaEvaluation(
   );
   validateOptionalFormulaArray(formulaEvaluation.signProtection, segmentCount, "signProtection", (value) => {
     try {
-      validateGraphwarWasmProtectionBits(value, ALLOWED_SIGN_PROTECTION_BITS);
+      validateGraphwarWasmProtectionBits(value, ALLOWED_SIGN_PROTECTION_BITS, "protectionBits", "input");
       return true;
     } catch {
       return false;
@@ -1761,6 +1802,7 @@ function validateFormulaEvaluation(
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Formula sign protection must be empty or match the segment count",
+      "input",
     );
   }
   validateOptionalFormulaArray(formulaEvaluation.stepGlitchSegments, segmentCount, "stepGlitchSegments", (segment) => {
@@ -1781,7 +1823,7 @@ function validateOptionalFormulaArray<TValue>(
     return;
   }
   if (!Array.isArray(values) || values.length > maximumLength || !values.every(validateValue)) {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} is invalid`);
+    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} is invalid`, "input");
   }
 }
 
@@ -2316,11 +2358,11 @@ function uint32ArraysEqual(left: readonly number[], right: readonly number[]) {
 
 function validateFormulaNumber(value: unknown, fieldName: string) {
   if (typeof value !== "number") {
-    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} must be a number`);
+    throw new GraphwarWasmAdapterError("invalid-formula-input", `${fieldName} must be a number`, "input");
   }
   return value;
 }
 
 function throwFormulaResultError(message: string): never {
-  throw new GraphwarWasmAdapterError("invalid-formula-result", message);
+  throw new GraphwarWasmAdapterError("invalid-formula-result", message, "output");
 }

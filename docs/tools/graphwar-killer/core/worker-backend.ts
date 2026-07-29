@@ -13,6 +13,7 @@ import {
   type GraphwarWorkerBackendConfiguration,
   type GraphwarWorkerRole,
 } from "./algorithm-backend";
+import { GraphwarWasmAdapterError } from "./wasm/abi";
 import { instantiateGraphwarWasmRuntime } from "./wasm/runtime";
 
 /** 主线程或 parent Worker 对一个实际 Worker slot 的原子初始化状态。 */
@@ -302,12 +303,13 @@ export async function executeGraphwarWorkerTask<TResult>(
     try {
       return { result: await task(context), type: "complete" };
     } catch (error) {
-      if (!isGraphwarWasmFault(error)) {
+      const fault = normalizeGraphwarWasmTaskFault(context, error);
+      if (!fault) {
         throw error;
       }
-      if (!error.hasBeenReported) {
-        runtime.reportWasmFault(faultContext, error);
-        error.markReported();
+      if (!fault.hasBeenReported) {
+        runtime.reportWasmFault(faultContext, fault);
+        fault.markReported();
       }
       return { type: "wasm-fault" };
     }
@@ -317,6 +319,20 @@ export async function executeGraphwarWorkerTask<TResult>(
     }
     throw error;
   }
+}
+
+/** Adapter failures become typed faults only at the Worker boundary that owns an effective WASM task. */
+function normalizeGraphwarWasmTaskFault(
+  context: GraphwarAlgorithmBackendContext,
+  error: unknown,
+): GraphwarWasmFault | undefined {
+  if (isGraphwarWasmFault(error)) {
+    return error;
+  }
+  if (context.type !== "wasm" || !(error instanceof GraphwarWasmAdapterError)) {
+    return undefined;
+  }
+  return new GraphwarWasmFault(error.faultDomain, error.message);
 }
 
 function normalizeError(error: unknown, fallbackMessage: string) {

@@ -8,6 +8,7 @@ import {
   GraphwarWasmAdapterError,
   writeGraphwarWasmUint32Values,
   type GraphwarWasmAdapterErrorCode,
+  type GraphwarWasmAdapterFaultDomain,
 } from "./abi";
 import {
   copyGraphwarWasmPointSoA,
@@ -180,8 +181,16 @@ describe("Graphwar WASM task Adapter", () => {
       { x: -1, y: 2 },
       { x: 3, y: -4 },
     ]);
-    expectAdapterError(() => copyGraphwarWasmPointSoA(arena, { ...points, length: 1 }, 8), "invalid-point-data");
-    expectAdapterError(() => packGraphwarWasmPointSoA(arena, [{ x: Number.NaN, y: 0 }], 8), "invalid-finite-number");
+    expectAdapterError(
+      () => copyGraphwarWasmPointSoA(arena, { ...points, length: 1 }, 8),
+      "invalid-point-data",
+      "output",
+    );
+    expectAdapterError(
+      () => packGraphwarWasmPointSoA(arena, [{ x: Number.NaN, y: 0 }], 8),
+      "invalid-finite-number",
+      "input",
+    );
     expect(GRAPHWAR_PLANE_HEIGHT).toBe(450);
   });
 
@@ -320,7 +329,11 @@ describe("Graphwar WASM task Adapter", () => {
 });
 
 /** 断言 Adapter 分类，不让测试耦合人类可读文案。 */
-function expectAdapterError(task: () => unknown, code: GraphwarWasmAdapterErrorCode) {
+function expectAdapterError(
+  task: () => unknown,
+  code: GraphwarWasmAdapterErrorCode,
+  faultDomain?: GraphwarWasmAdapterFaultDomain,
+) {
   let error: unknown;
   try {
     task();
@@ -328,5 +341,5 @@ function expectAdapterError(task: () => unknown, code: GraphwarWasmAdapterErrorC
     error = caught;
   }
   expect(error).toBeInstanceOf(GraphwarWasmAdapterError);
-  expect(error).toMatchObject({ code });
+  expect(error).toMatchObject({ code, ...(faultDomain === undefined ? {} : { faultDomain }) });
 }

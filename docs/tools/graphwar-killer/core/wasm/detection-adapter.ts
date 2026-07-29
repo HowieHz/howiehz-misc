@@ -562,13 +562,17 @@ export function runGraphwarWasmDetectionTemplateShard(
       const offset = index * DETECTION_CANDIDATE_BYTE_LENGTH;
       candidateView.setFloat64(offset, validateGraphwarWasmFiniteNumber(candidate.x, "candidate.x"), true);
       candidateView.setFloat64(offset + 8, validateGraphwarWasmFiniteNumber(candidate.y, "candidate.y"), true);
-      const votes = validateGraphwarWasmU32(candidate.votes, "candidate.votes");
+      const votes = validateGraphwarWasmU32(candidate.votes, "candidate.votes", "output");
       if (votes === 0) {
         throw new GraphwarWasmAdapterError("invalid-work-batch", "Detection template candidate votes must be positive");
       }
       candidateView.setUint32(offset + 16, votes, true);
       candidateView.setUint32(offset + 20, candidate.isMirrored ? 1 : 0, true);
-      candidateView.setUint32(offset + 24, validateGraphwarWasmU32(candidate.candidateIndex, "candidate.index"), true);
+      candidateView.setUint32(
+        offset + 24,
+        validateGraphwarWasmU32(candidate.candidateIndex, "candidate.index", "output"),
+        true,
+      );
       candidateView.setUint32(offset + 28, 0, true);
     }
     const commandPointer = runtime.reserveArena(DETECTION_INPUT_BYTE_LENGTH, 8);
@@ -646,7 +650,7 @@ export function runGraphwarWasmDetectionTemplateShard(
       return matches;
     } catch (error) {
       if (error instanceof GraphwarWasmAdapterError) {
-        throw new GraphwarWasmFault("output", error.message);
+        throw new GraphwarWasmFault(error.faultDomain, error.message);
       }
       throw error;
     }
@@ -734,7 +738,7 @@ function packTemplateMatches(
     view.setFloat64(offset + 32, validateDetectionScore(match.foregroundScore, "foregroundScore"), true);
     view.setFloat64(offset + 40, validateDetectionScore(match.playerScore, "playerScore"), true);
     view.setFloat64(offset + 48, validateDetectionScore(match.signatureScore, "signatureScore"), true);
-    view.setUint32(offset + 56, validateGraphwarWasmU32(match.votes, "match.votes"), true);
+    view.setUint32(offset + 56, validateGraphwarWasmU32(match.votes, "match.votes", "output"), true);
     view.setUint32(offset + 60, match.isMirrored ? 1 : 0, true);
     view.setUint32(offset + 64, templateNameIndex, true);
     view.setUint32(offset + 68, match.candidateIndex, true);
@@ -767,7 +771,7 @@ export function copyGraphwarWasmDetectionResult(
   if (taskTag !== detectionTaskTags[expectedTaskType]) {
     throwDetectionResultError("Detection result task does not match its command");
   }
-  const flags = validateGraphwarWasmU32(view.getUint32(8, true), "detection.flags");
+  const flags = validateGraphwarWasmU32(view.getUint32(8, true), "detection.flags", "output");
   if ((flags & ~DETECTION_RESULT_FLAG_HAS_EDGE_RECT) !== 0) {
     throwDetectionResultError("Detection result contains unsupported flags");
   }
@@ -878,7 +882,7 @@ export function copyGraphwarWasmDetectionResult(
     }
     solidPixelCount += value;
   }
-  const obstacleCount = validateGraphwarWasmU32(view.getUint32(88, true), "detection.obstacleCount");
+  const obstacleCount = validateGraphwarWasmU32(view.getUint32(88, true), "detection.obstacleCount", "output");
   if (
     (obstacleMask.length !== 0 && obstacleMask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT) ||
     (obstacleMask.length === 0 && obstacleCount !== 0) ||
@@ -928,7 +932,7 @@ export function copyGraphwarWasmDetectionResult(
     matches,
     obstacleCount,
     ...(obstacleMask.length ? { obstacleMask } : {}),
-    sessionPointer: validateGraphwarWasmU32(view.getUint32(20, true), "detection.sessionPointer"),
+    sessionPointer: validateGraphwarWasmU32(view.getUint32(20, true), "detection.sessionPointer", "output"),
     stageEvents,
     state,
     shards,
@@ -973,13 +977,13 @@ function copyDetectionCandidates(
       range.byteOffset + index * DETECTION_CANDIDATE_BYTE_LENGTH,
       DETECTION_CANDIDATE_BYTE_LENGTH,
     );
-    const candidateIndex = validateGraphwarWasmU32(view.getUint32(24, true), "detection.candidateIndex");
-    const reserved = validateGraphwarWasmU32(view.getUint32(28, true), "detection.candidateReserved");
+    const candidateIndex = validateGraphwarWasmU32(view.getUint32(24, true), "detection.candidateIndex", "output");
+    const reserved = validateGraphwarWasmU32(view.getUint32(28, true), "detection.candidateReserved", "output");
     if (candidateIndex !== index || reserved !== 0) {
       throwDetectionResultError("Detection candidates are not in canonical stable order");
     }
     const mirrored = validateGraphwarWasmEnumValue(view.getUint32(20, true), [0, 1], "detection.candidateMirrored");
-    const votes = validateGraphwarWasmU32(view.getUint32(16, true), "detection.candidateVotes");
+    const votes = validateGraphwarWasmU32(view.getUint32(16, true), "detection.candidateVotes", "output");
     if (votes === 0) {
       throwDetectionResultError("Detection candidate votes must be positive");
     }
@@ -1018,9 +1022,13 @@ function copyDetectionShards(
       range.byteOffset + index * DETECTION_SHARD_BYTE_LENGTH,
       DETECTION_SHARD_BYTE_LENGTH,
     );
-    const id = validateGraphwarWasmU32(view.getUint32(0, true), "detection.shardId");
-    const candidateStart = validateGraphwarWasmU32(view.getUint32(4, true), "detection.shardCandidateStart");
-    const shardCandidateCount = validateGraphwarWasmU32(view.getUint32(8, true), "detection.shardCandidateCount");
+    const id = validateGraphwarWasmU32(view.getUint32(0, true), "detection.shardId", "output");
+    const candidateStart = validateGraphwarWasmU32(view.getUint32(4, true), "detection.shardCandidateStart", "output");
+    const shardCandidateCount = validateGraphwarWasmU32(
+      view.getUint32(8, true),
+      "detection.shardCandidateCount",
+      "output",
+    );
     if (
       id !== index + 1 ||
       candidateStart !== nextCandidateStart ||
@@ -1064,13 +1072,13 @@ function copyDetectionMatches(
       range.byteOffset + index * DETECTION_MATCH_BYTE_LENGTH,
       DETECTION_MATCH_BYTE_LENGTH,
     );
-    const nameIndex = validateGraphwarWasmU32(view.getUint32(64, true), "detection.matchNameIndex");
+    const nameIndex = validateGraphwarWasmU32(view.getUint32(64, true), "detection.matchNameIndex", "output");
     const templateName = templateNames[nameIndex];
     if (templateName === undefined) {
       throwDetectionResultError("Detection match references an unknown template name");
     }
     const match = {
-      candidateIndex: validateGraphwarWasmU32(view.getUint32(68, true), "detection.matchCandidateIndex"),
+      candidateIndex: validateGraphwarWasmU32(view.getUint32(68, true), "detection.matchCandidateIndex", "output"),
       fixedScore: validateDetectionScore(view.getFloat64(24, true), "fixedScore"),
       foregroundScore: validateDetectionScore(view.getFloat64(32, true), "foregroundScore"),
       isMirrored: validateGraphwarWasmEnumValue(view.getUint32(60, true), [0, 1], "detection.matchMirrored") === 1,
@@ -1080,7 +1088,7 @@ function copyDetectionMatches(
       sourceCenterX: validateGraphwarWasmFiniteNumber(view.getFloat64(0, true), "detection.matchX"),
       sourceCenterY: validateGraphwarWasmFiniteNumber(view.getFloat64(8, true), "detection.matchY"),
       templateName,
-      votes: validateGraphwarWasmU32(view.getUint32(56, true), "detection.matchVotes"),
+      votes: validateGraphwarWasmU32(view.getUint32(56, true), "detection.matchVotes", "output"),
     } satisfies GraphwarWasmDetectionTemplateMatch;
     if (match.votes === 0) {
       throwDetectionResultError("Detection match votes must be positive");
@@ -1142,7 +1150,7 @@ function validateDetectionEdgeRect(rect: BoundsRect): BoundsRect {
 }
 
 function throwDetectionResultError(message: string): never {
-  throw new GraphwarWasmAdapterError("invalid-detection-result", message);
+  throw new GraphwarWasmAdapterError("invalid-detection-result", message, "output");
 }
 
 /** The original command fault stays authoritative; a failed cleanup only confirms that this instance must be discarded. */

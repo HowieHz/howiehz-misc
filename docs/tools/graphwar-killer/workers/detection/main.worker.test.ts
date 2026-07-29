@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  GraphwarWasmFault,
   isGraphwarBackendControlMessage,
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
 } from "../../core/algorithm-backend";
+import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import type { GraphwarDetectionWorkerRequest, GraphwarDetectionWorkerResponse } from "../../detection/runtime/protocol";
 import type {
   GraphwarSoldierTemplateWorkerRequest,
@@ -91,7 +93,19 @@ vi.mock("../../core/worker-backend", async (importOriginal) => {
           );
           return true;
         },
-        reportWasmFault: objectMocks.reportWasmFault,
+        reportWasmFault: (context: Parameters<typeof objectMocks.reportWasmFault>[0], error: GraphwarWasmFault) => {
+          objectMocks.reportWasmFault(context, error);
+          if (!configuration) {
+            throw new Error("Backend was not initialized");
+          }
+          options.postControlMessage({
+            context,
+            fault: error.toDescriptor(),
+            generation: configuration.generation,
+            role: options.role,
+            type: "wasm-fault",
+          });
+        },
         waitForBackend: async () => ({
           generation: 1,
           runtime: Object.create(GraphwarWasmKernelRuntime.prototype),
@@ -310,6 +324,31 @@ describe("Detection template Worker failure handling", () => {
     expect(postMessage.mock.calls.some(([message]) => message.type === "success" || message.type === "error")).toBe(
       false,
     );
+  });
+
+  it("publishes malformed main-controller output as a typed WASM fault", async () => {
+    objectMocks.controller.resumeObstacleComponents.mockImplementation(() => {
+      throw new GraphwarWasmAdapterError("invalid-detection-result", "detection mask length is malformed", "output");
+    });
+    dispatchDetectionRequest();
+
+    await vi.waitFor(() =>
+      expect(postMessage.mock.calls.some(([message]) => message.type === "wasm-fault")).toBe(true),
+    );
+    expect(postMessage.mock.calls.some(([message]) => message.type === "success" || message.type === "error")).toBe(
+      false,
+    );
+    expect(
+      postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "wasm-fault"),
+    ).toEqual([
+      {
+        context: { attempt, type: "task" },
+        fault: { code: "output", message: "detection mask length is malformed" },
+        generation: 1,
+        role: "detection-main",
+        type: "wasm-fault",
+      },
+    ]);
   });
 
   it("keeps nested Module clone failure on the main-WASM fallback path", async () => {

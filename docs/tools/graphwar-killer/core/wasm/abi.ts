@@ -32,15 +32,25 @@ export type GraphwarWasmAdapterErrorCode =
   | "session-pointer-in-use"
   | "unexpected-work-id";
 
+/** Adapter failure 在 Worker task boundary 对外发布时使用的稳定诊断域。 */
+export type GraphwarWasmAdapterFaultDomain = "abi" | "input" | "output";
+
 /** 本地 Adapter error；后续 runtime 层负责把它序列化为 Graphwar WASM fault。 */
 export class GraphwarWasmAdapterError extends Error {
   /** 稳定且机器可读的 failure 分类。 */
   readonly code: GraphwarWasmAdapterErrorCode;
+  /** 由实际 pack/copy/protocol 边界提供，不能再从可双向复用的 code 推断。 */
+  readonly faultDomain: GraphwarWasmAdapterFaultDomain;
 
-  constructor(code: GraphwarWasmAdapterErrorCode, message: string) {
+  constructor(
+    code: GraphwarWasmAdapterErrorCode,
+    message: string,
+    faultDomain: GraphwarWasmAdapterFaultDomain = "abi",
+  ) {
     super(message);
     this.name = "GraphwarWasmAdapterError";
     this.code = code;
+    this.faultDomain = faultDomain;
   }
 }
 
@@ -91,9 +101,13 @@ export interface GraphwarWasmValidatedMemoryRange {
 }
 
 /** 把一个 JavaScript number 验证为 memory32 无符号整数。 */
-export function validateGraphwarWasmU32(value: unknown, fieldName: string): number {
+export function validateGraphwarWasmU32(
+  value: unknown,
+  fieldName: string,
+  faultDomain: GraphwarWasmAdapterFaultDomain = "output",
+): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > UINT32_MAX) {
-    throw new GraphwarWasmAdapterError("invalid-u32", `${fieldName} must be a uint32`);
+    throw new GraphwarWasmAdapterError("invalid-u32", `${fieldName} must be a uint32`, faultDomain);
   }
   return value;
 }
@@ -108,13 +122,17 @@ export function validateGraphwarWasmMemoryRange(
   slice: GraphwarWasmMemorySlice,
   layout: GraphwarWasmMemoryLayout,
 ): GraphwarWasmValidatedMemoryRange {
-  const pointer = validateGraphwarWasmU32(slice.pointer, "pointer");
-  const length = validateGraphwarWasmU32(slice.length, "length");
+  const pointer = validateGraphwarWasmU32(slice.pointer, "pointer", "abi");
+  const length = validateGraphwarWasmU32(slice.length, "length", "abi");
   const alignment = validatePositiveGraphwarWasmU32(layout.alignment, "alignment");
   const elementByteLength = validatePositiveGraphwarWasmU32(layout.elementByteLength, "elementByteLength");
-  const sourceArenaBase = validateGraphwarWasmU32(memory.arenaBase, "arenaBase");
-  const sourceArenaCursor = validateGraphwarWasmU32(memory.arenaCursor, "arenaCursor");
-  const requestedMinimumPointer = validateGraphwarWasmU32(layout.minimumPointer ?? sourceArenaBase, "minimumPointer");
+  const sourceArenaBase = validateGraphwarWasmU32(memory.arenaBase, "arenaBase", "abi");
+  const sourceArenaCursor = validateGraphwarWasmU32(memory.arenaCursor, "arenaCursor", "abi");
+  const requestedMinimumPointer = validateGraphwarWasmU32(
+    layout.minimumPointer ?? sourceArenaBase,
+    "minimumPointer",
+    "abi",
+  );
   const minimumPointer = Math.max(sourceArenaBase, requestedMinimumPointer);
   if (!Number.isInteger(Math.log2(alignment))) {
     throw new GraphwarWasmAdapterError("invalid-alignment", "alignment must be a positive power of two");
@@ -253,15 +271,23 @@ export function writeGraphwarWasmUint32Values(
 }
 
 /** 要求输出字段为有限数，包括可恢复轨迹状态坐标。 */
-export function validateGraphwarWasmFiniteNumber(value: unknown, fieldName: string): number {
+export function validateGraphwarWasmFiniteNumber(
+  value: unknown,
+  fieldName: string,
+  faultDomain: GraphwarWasmAdapterFaultDomain = "output",
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} must be finite`);
+    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} must be finite`, faultDomain);
   }
   return value;
 }
 
 /** 只接受精确的 path-error 域：省略、非负有限数或正无穷。 */
-export function validateGraphwarWasmPathError(value: unknown, fieldName = "pathError"): number | undefined {
+export function validateGraphwarWasmPathError(
+  value: unknown,
+  fieldName = "pathError",
+  faultDomain: GraphwarWasmAdapterFaultDomain = "output",
+): number | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -269,6 +295,7 @@ export function validateGraphwarWasmPathError(value: unknown, fieldName = "pathE
     throw new GraphwarWasmAdapterError(
       "invalid-path-error",
       `${fieldName} must be non-negative, positive infinity, or omitted`,
+      faultDomain,
     );
   }
   return value;
@@ -279,9 +306,10 @@ export function validateGraphwarWasmEnumValue<const TValue extends number>(
   value: unknown,
   allowedValues: readonly TValue[],
   fieldName: string,
+  faultDomain: GraphwarWasmAdapterFaultDomain = "output",
 ): TValue {
   if (typeof value !== "number" || !allowedValues.some((allowedValue) => value === allowedValue)) {
-    throw new GraphwarWasmAdapterError("invalid-enum", `${fieldName} contains an unsupported enum value`);
+    throw new GraphwarWasmAdapterError("invalid-enum", `${fieldName} contains an unsupported enum value`, faultDomain);
   }
   return value as TValue;
 }
@@ -291,13 +319,15 @@ export function validateGraphwarWasmProtectionBits(
   value: unknown,
   allowedBits: number,
   fieldName = "protectionBits",
+  faultDomain: GraphwarWasmAdapterFaultDomain = "output",
 ): number {
-  const bits = validateGraphwarWasmU32(value, fieldName);
-  const allowed = validateGraphwarWasmU32(allowedBits, "allowedProtectionBits");
+  const bits = validateGraphwarWasmU32(value, fieldName, faultDomain);
+  const allowed = validateGraphwarWasmU32(allowedBits, "allowedProtectionBits", faultDomain);
   if ((bits & allowed) >>> 0 !== bits) {
     throw new GraphwarWasmAdapterError(
       "invalid-protection-bits",
       `${fieldName} contains unsupported protection-role bits`,
+      faultDomain,
     );
   }
   return bits;
@@ -305,7 +335,7 @@ export function validateGraphwarWasmProtectionBits(
 
 /** 验证严格为正的 u32 layout 字段。 */
 function validatePositiveGraphwarWasmU32(value: unknown, fieldName: string) {
-  const validated = validateGraphwarWasmU32(value, fieldName);
+  const validated = validateGraphwarWasmU32(value, fieldName, "abi");
   if (validated === 0) {
     throw new GraphwarWasmAdapterError("invalid-u32", `${fieldName} must be greater than zero`);
   }
@@ -320,9 +350,9 @@ function reserveGraphwarWasmMemoryRange(
   alignment: number,
   minimumPointer: number,
 ) {
-  const length = validateGraphwarWasmU32(elementLength, "length");
+  const length = validateGraphwarWasmU32(elementLength, "length", "input");
   if (length > Math.floor(UINT32_ADDRESS_SPACE_SIZE / elementByteLength)) {
-    throw new GraphwarWasmAdapterError("range-overflow", "WASM input byte length exceeds memory32");
+    throw new GraphwarWasmAdapterError("range-overflow", "WASM input byte length exceeds memory32", "input");
   }
   const pointer = arena.reserveArena(length * elementByteLength, alignment);
   return validateGraphwarWasmMemoryRange(arena, { length, pointer }, { alignment, elementByteLength, minimumPointer });

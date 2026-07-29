@@ -598,6 +598,7 @@ function runRouteSearch(
   isMirrored: boolean,
   previewExpansionInterval: number,
 ): GraphwarWasmRouteSearchResult {
+  const commandMinimumPointer = runtime.arenaCursor;
   const mark = runtime.markArena();
   try {
     const inputPointer = runtime.reserveArena(routeSearchInputByteLength, 8);
@@ -612,7 +613,7 @@ function runRouteSearch(
     const resultRange = validateGraphwarWasmMemoryRange(
       runtime,
       { length: routeSearchResultByteLength, pointer: resultPointer },
-      { alignment: 4, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+      { alignment: 4, elementByteLength: 1, minimumPointer: commandMinimumPointer },
     );
     const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
     if (resultView.getUint32(0, true) !== routeSearchResultMagic) {
@@ -640,7 +641,7 @@ function runRouteSearch(
     const previewRange = validateGraphwarWasmMemoryRange(
       runtime,
       { length: previewCount, pointer: previewPointer },
-      { alignment: 4, elementByteLength: routePreviewByteLength, minimumPointer: runtime.arenaBase },
+      { alignment: 4, elementByteLength: routePreviewByteLength, minimumPointer: commandMinimumPointer },
     );
     const previews = Array.from({ length: previewCount }, (_, index) => {
       const view = new DataView(
@@ -662,7 +663,7 @@ function runRouteSearch(
             y: { length: view.getUint32(8, true), pointer: view.getUint32(4, true) },
           },
         },
-        runtime.arenaBase,
+        commandMinimumPointer,
       );
       if (preview.isMirrored !== isMirrored) {
         throw new GraphwarWasmAdapterError(
@@ -691,6 +692,13 @@ function runRouteSearch(
       }
       return { expansionCount, previews, type: "no-route" };
     }
+    if (command === routeCommand.visibilityGraph && target.x <= start.x) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM visibility path success requires forward progress",
+        "output",
+      );
+    }
     if (pathLength === 0 || pathLength > GRAPHWAR_PLANE_LENGTH) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
@@ -701,12 +709,12 @@ function runRouteSearch(
     const xValues = copyGraphwarWasmFloat64Values(
       runtime,
       { length: pathLength, pointer: resultView.getUint32(8, true) },
-      runtime.arenaBase,
+      commandMinimumPointer,
     );
     const yValues = copyGraphwarWasmFloat64Values(
       runtime,
       { length: pathLength, pointer: resultView.getUint32(12, true) },
-      runtime.arenaBase,
+      commandMinimumPointer,
     );
     const path = Array.from(xValues, (x, index) => ({ x, y: yValues[index] ?? Number.NaN }));
     for (let index = 0; index < path.length; index += 1) {
@@ -753,6 +761,7 @@ function runRouteQuery(
   inputByteLength: number,
   values: readonly number[],
 ) {
+  const commandMinimumPointer = runtime.arenaCursor;
   const mark = runtime.markArena();
   try {
     const inputPointer = runtime.reserveArena(inputByteLength, 8);
@@ -765,7 +774,7 @@ function runRouteQuery(
     const resultRange = validateGraphwarWasmMemoryRange(
       runtime,
       { length: routeQueryResultByteLength, pointer: resultPointer },
-      { alignment: 4, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+      { alignment: 4, elementByteLength: 1, minimumPointer: commandMinimumPointer },
     );
     const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
     if (resultView.getUint32(0, true) !== routeQueryResultMagic) {

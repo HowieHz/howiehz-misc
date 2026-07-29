@@ -595,6 +595,14 @@ describe("Graphwar WASM route context", () => {
       name: "non-advancing result path",
     },
     {
+      corrupt(runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
+        resultView.setUint32(8, runtime.arenaBase, true);
+      },
+      faultDomain: "abi" as const,
+      expectedMessage: /outside the raw arena/u,
+      name: "result path pointing into retained context memory",
+    },
+    {
       corrupt(_runtime: Awaited<ReturnType<typeof createRuntime>>, resultView: DataView) {
         resultView.setUint32(4, 0, true);
         resultView.setUint32(8, 0, true);
@@ -612,7 +620,7 @@ describe("Graphwar WASM route context", () => {
       expectedMessage: /preview range/u,
       name: "success result without a terminal preview",
     },
-  ])("rejects malformed Theta* $name as output", async ({ corrupt, expectedMessage }) => {
+  ])("rejects malformed Theta* $name as output", async ({ corrupt, expectedMessage, faultDomain = "output" }) => {
     const runtime = await createRuntime();
     const context = createGraphwarWasmRouteContext(runtime, {
       boundaryExpansion: 0,
@@ -638,8 +646,44 @@ describe("Graphwar WASM route context", () => {
     } catch (error) {
       caught = error;
     }
-    expect(caught).toMatchObject({ faultDomain: "output" });
+    expect(caught).toMatchObject({ faultDomain });
     expect(caught).toEqual(expect.objectContaining({ message: expect.stringMatching(expectedMessage) }));
+    context.dispose();
+  });
+
+  it("rejects a stationary visibility success while preserving Theta single-point success", async () => {
+    const runtime = await createRuntime();
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+    });
+    const point = { x: 100, y: 225 };
+    expect(context.findThetaStarPath(point, point)).toMatchObject({ path: [point], type: "success" });
+    const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
+      if (command !== 7) return resultPointer;
+      const pathXPointer = runtime.reserveArena(Float64Array.BYTES_PER_ELEMENT, Float64Array.BYTES_PER_ELEMENT);
+      const pathYPointer = runtime.reserveArena(Float64Array.BYTES_PER_ELEMENT, Float64Array.BYTES_PER_ELEMENT);
+      const memoryView = new DataView(runtime.buffer);
+      memoryView.setFloat64(pathXPointer, point.x, true);
+      memoryView.setFloat64(pathYPointer, point.y, true);
+      const resultView = new DataView(runtime.buffer, resultPointer, 32);
+      resultView.setUint32(4, 1, true);
+      resultView.setUint32(8, pathXPointer, true);
+      resultView.setUint32(12, pathYPointer, true);
+      resultView.setUint32(16, 1, true);
+      return resultPointer;
+    });
+
+    expect(() => context.findVisibilityGraphPath(point, point)).toThrow(/requires forward progress/u);
     context.dispose();
   });
 

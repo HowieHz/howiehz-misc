@@ -18,6 +18,7 @@ import {
   lineHitsPlaneMask,
   pointHitsPlaneMask,
   type GraphwarPathfindingEdgeEvaluator,
+  type GraphwarPathfindingPreview,
 } from "../../pathfinding/routing/visibility-graph";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { imageToGraphPoint } from "../geometry";
@@ -318,59 +319,76 @@ describe("Graphwar WASM route context", () => {
     context.dispose();
   });
 
-  it.each([
-    {
-      equation: "y" as const,
-      isMirrored: false,
-      name: "direct",
-      obstacle: "none" as const,
-      routeState: 0n,
-      routeTolerance: 0,
-      shouldFindPath: true,
-    },
-    {
-      equation: "dy" as const,
-      isMirrored: false,
-      name: "routed multi-label",
-      obstacle: "two-wide-gaps" as const,
-      routeState: 0n,
-      routeTolerance: 0,
-      shouldFindPath: true,
-    },
-    {
-      equation: "y" as const,
-      isMirrored: false,
-      name: "no route",
-      obstacle: "wall" as const,
-      routeState: 0n,
-      routeTolerance: 0,
-      shouldFindPath: false,
-    },
-    {
-      equation: "y" as const,
-      isMirrored: true,
-      name: "mirrored oversized parent-key tie",
-      obstacle: "staggered-walls" as const,
-      routeState: -0x1_0000_0000_0000_0001n,
-      routeTolerance: 0,
-      shouldFindPath: true,
-    },
-    {
-      equation: "dy" as const,
-      isMirrored: false,
-      name: "negative tolerance",
-      obstacle: "wall" as const,
-      routeState: -0x1_0000_0000_0000_0001n,
-      routeTolerance: -2.25,
-      shouldFindPath: true,
-    },
-  ])(
-    "matches stateful Step Theta* for $name",
+  it.each(
+    [
+      {
+        equation: "y" as const,
+        isMirrored: false,
+        name: "direct",
+        obstacle: "none" as const,
+        routeState: 0n,
+        routeTolerance: 0,
+      },
+      {
+        equation: "dy" as const,
+        isMirrored: false,
+        name: "routed multi-label",
+        obstacle: "two-wide-gaps" as const,
+        routeState: 0n,
+        routeTolerance: 0,
+      },
+      {
+        equation: "y" as const,
+        isMirrored: false,
+        name: "no route",
+        obstacle: "wall" as const,
+        routeState: 0n,
+        routeTolerance: 0,
+      },
+      {
+        equation: "y" as const,
+        isMirrored: true,
+        name: "mirrored oversized parent-key tie",
+        obstacle: "staggered-walls" as const,
+        routeState: -0x1_0000_0000_0000_0001n,
+        routeTolerance: 0,
+      },
+      {
+        equation: "dy" as const,
+        isMirrored: false,
+        name: "negative tolerance",
+        obstacle: "wall" as const,
+        routeState: -0x1_0000_0000_0000_0001n,
+        routeTolerance: -2.25,
+      },
+      {
+        equation: "y" as const,
+        isMirrored: false,
+        name: "visibility routed rectangle",
+        obstacle: "rectangle" as const,
+        routeState: 0n,
+        routeTolerance: 0,
+      },
+      {
+        equation: "y" as const,
+        isMirrored: true,
+        name: "mirrored visibility routed rectangle",
+        obstacle: "rectangle" as const,
+        routeState: 0n,
+        routeTolerance: 0,
+      },
+    ].flatMap((fixture) =>
+      (["Theta*", "visibility"] as const).map((routeAlgorithm) => ({ ...fixture, routeAlgorithm })),
+    ),
+  )(
+    "matches stateful Step $routeAlgorithm for $name",
     { timeout: 120_000 },
-    async ({ equation, isMirrored, name, obstacle, routeState, routeTolerance, shouldFindPath }) => {
+    async ({ equation, isMirrored, name, obstacle, routeAlgorithm, routeState, routeTolerance }) => {
       const runtime = await createRuntime();
       const sourceMask = new Uint8Array(planeCellCount);
-      if (obstacle === "staggered-walls") {
+      if (obstacle === "rectangle") {
+        fillRectangle(sourceMask, 297, 303, 224, 226);
+      } else if (obstacle === "staggered-walls") {
         let seed = 10 * 0x9e37_79b1;
         for (const x of [180, 260, 340, 420, 500]) {
           seed = Math.imul(seed ^ (seed >>> 16), 0x45d9_f3b);
@@ -445,7 +463,7 @@ describe("Graphwar WASM route context", () => {
         summedArea: createGraphwarStepRouteSummedArea(context.routeMask),
       });
       const expectedPreviews: unknown[] = [];
-      const expected = await buildGraphwarThetaStarPathForMask({
+      const searchOptions = {
         boundaryExpansion: 0,
         bounds: routeBounds,
         boundsRect,
@@ -453,11 +471,17 @@ describe("Graphwar WASM route context", () => {
         evaluateEdge: evaluator.evaluateEdge,
         initialRouteState: evaluator.initialRouteState,
         initialRouteStateKey: evaluator.initialRouteStateKey,
-        onPreview: (preview) => expectedPreviews.push(structuredClone(preview)),
+        onPreview: (preview: GraphwarPathfindingPreview) => expectedPreviews.push(structuredClone(preview)),
         routeMask: context.routeMask,
         startPoint: exactStartPoint,
         targetPoint: exactTargetPoint,
-      });
+      };
+      const expected = await (routeAlgorithm === "Theta*"
+        ? buildGraphwarThetaStarPathForMask(searchOptions)
+        : buildGraphwarVisibilityGraphPathForMask(searchOptions));
+      if (name.includes("visibility routed") && routeAlgorithm === "visibility") {
+        expect(expected?.length).toBeGreaterThan(2);
+      }
       const request = {
         exactStart: imageToGraphPoint(exactStartPoint, routeBounds, boundsRect),
         exactTarget: imageToGraphPoint(exactTargetPoint, routeBounds, boundsRect),
@@ -467,9 +491,9 @@ describe("Graphwar WASM route context", () => {
         target,
       } as const;
       const contextCursor = runtime.arenaCursor;
-      const actual = stepRoute.findThetaStarPath(request);
+      const actual =
+        routeAlgorithm === "Theta*" ? stepRoute.findThetaStarPath(request) : stepRoute.findVisibilityGraphPath(request);
       expect(runtime.arenaCursor).toBe(contextCursor);
-      expect(expected !== undefined).toBe(shouldFindPath);
       if (!expected) {
         expect(actual).toEqual({ expansionCount: expect.any(Number), previews: expectedPreviews, type: "no-route" });
       } else {
@@ -485,11 +509,15 @@ describe("Graphwar WASM route context", () => {
         }
       }
       expect(actual.previews).toEqual(expectedPreviews);
-      if (name === "routed multi-label") {
+      if (name === "routed multi-label" || (name.includes("visibility routed") && routeAlgorithm === "visibility")) {
         const growMark = runtime.markArena();
         runtime.reserveArena(runtime.buffer.byteLength * 2, 16);
         runtime.resetArena(growMark);
-        expect(stepRoute.findThetaStarPath(request)).toEqual(actual);
+        expect(
+          routeAlgorithm === "Theta*"
+            ? stepRoute.findThetaStarPath(request)
+            : stepRoute.findVisibilityGraphPath(request),
+        ).toEqual(actual);
         expect(runtime.arenaCursor).toBe(contextCursor);
       }
       context.dispose();
@@ -540,6 +568,16 @@ describe("Graphwar WASM route context", () => {
       terminalState: { resolvedY: 0, routeStateKey: "0" },
       type: "success",
     });
+    expect(
+      stepRoute.findVisibilityGraphPath({
+        exactStart: exactPoint,
+        exactTarget: exactPoint,
+        initialState: { resolvedY: 0, routeStateKey: "0" },
+        shouldCollectPreviews: true,
+        start: point,
+        target: point,
+      }),
+    ).toEqual({ expansionCount: 1, previews: [], type: "no-route" });
     context.dispose();
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });

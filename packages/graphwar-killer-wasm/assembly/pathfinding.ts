@@ -5088,9 +5088,36 @@ function publishVisibilityPreview(
   currentIndex: u32,
   bestPathTargetIndex: u32,
 ): void {
+  publishVisibilityPreviewPath(
+    contextPointer,
+    statePointer,
+    candidatesXPointer,
+    candidatesYPointer,
+    candidateCount,
+    currentIndex,
+    createVisibilityPath(
+      candidatesXPointer,
+      candidatesYPointer,
+      previousPointer,
+      bestPathTargetIndex,
+      candidateCount,
+    ),
+  );
+}
+
+/** Serializes a visibility preview from an already reconstructed path, shared by stateless and Step labels. */
+function publishVisibilityPreviewPath(
+  contextPointer: u32,
+  statePointer: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  candidateCount: u32,
+  currentIndex: u32,
+  pathPointer: u32,
+): void {
   const acceptedPointer = load<u32>(statePointer + ROUTE_PREVIEW_ACCEPTED_POINTER_OFFSET);
   const acceptedCount = load<u32>(statePointer + ROUTE_PREVIEW_ACCEPTED_COUNT_OFFSET);
-  const bestPathLength = countVisibilityPath(bestPathTargetIndex, previousPointer, candidateCount);
+  const bestPathLength = load<u32>(pathPointer + 2 * sizeof<u32>());
   const candidateLimit = load<u32>(statePointer + ROUTE_PREVIEW_CANDIDATE_LIMIT_OFFSET);
   const candidateIndexesPointer = reserveArena(candidateLimit * sizeof<u32>(), sizeof<u32>());
   const previewCandidateCount = collectVisibilityPreviewCandidates(
@@ -5123,16 +5150,16 @@ function publishVisibilityPreview(
     }
     edgeIndex += 1;
   }
-  let pathWriteIndex = pointIndex + bestPathLength;
-  let pathCandidateIndex = <i32>bestPathTargetIndex;
-  while (pathWriteIndex > pointIndex) {
-    pathWriteIndex -= 1;
-    store<f64>(pointsXPointer + pathWriteIndex * sizeof<f64>(), <f64>load<u32>(candidatesXPointer + <u32>pathCandidateIndex * sizeof<u32>()));
-    store<f64>(pointsYPointer + pathWriteIndex * sizeof<f64>(), <f64>load<u32>(candidatesYPointer + <u32>pathCandidateIndex * sizeof<u32>()));
-    store<u32>(bestPathIndexesPointer + (pathWriteIndex - pointIndex) * sizeof<u32>(), pathWriteIndex);
-    pathCandidateIndex = load<i32>(previousPointer + <u32>pathCandidateIndex * sizeof<i32>());
+  const pathXPointer = load<u32>(pathPointer);
+  const pathYPointer = load<u32>(pathPointer + sizeof<u32>());
+  let pathIndex: u32 = 0;
+  while (pathIndex < bestPathLength) {
+    store<f64>(pointsXPointer + pointIndex * sizeof<f64>(), load<f64>(pathXPointer + pathIndex * sizeof<f64>()));
+    store<f64>(pointsYPointer + pointIndex * sizeof<f64>(), load<f64>(pathYPointer + pathIndex * sizeof<f64>()));
+    store<u32>(bestPathIndexesPointer + pathIndex * sizeof<u32>(), pointIndex);
+    pointIndex += 1;
+    pathIndex += 1;
   }
-  pointIndex += bestPathLength;
   let previewCandidateIndex: u32 = 0;
   while (previewCandidateIndex < previewCandidateCount) {
     const sourceIndex = load<u32>(candidateIndexesPointer + previewCandidateIndex * sizeof<u32>());
@@ -5332,6 +5359,511 @@ function runVisibilityGraphSearch(inputPointer: u32, inputByteLength: u32): u32 
   return createNoRouteSearchResult(expansions, previewStatePointer);
 }
 
+@inline
+function visibilityCandidateCellIndex(candidatesXPointer: u32, candidatesYPointer: u32, candidateIndex: u32): u32 {
+  return (
+    load<u32>(candidatesYPointer + candidateIndex * sizeof<u32>()) * getPlaneWidth() +
+    load<u32>(candidatesXPointer + candidateIndex * sizeof<u32>())
+  );
+}
+
+function createStepVisibilityStatePath(
+  tablePointer: u32,
+  targetStateIndex: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+): u32 {
+  const stateCount = load<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET);
+  let pathLength: u32 = 0;
+  let stateIndex = targetStateIndex;
+  while (pathLength <= stateCount) {
+    pathLength += 1;
+    const statePointer = stepStateRecordPointer(tablePointer, stateIndex);
+    const parentIndex = load<u32>(statePointer + STEP_STATE_PARENT_INDEX_OFFSET);
+    if (parentIndex == stateIndex) break;
+    stateIndex = parentIndex;
+  }
+  if (pathLength > stateCount) trap();
+  const pathXPointer = reserveArena(pathLength * sizeof<f64>(), sizeof<f64>());
+  const pathYPointer = reserveArena(pathLength * sizeof<f64>(), sizeof<f64>());
+  let pathIndex = pathLength;
+  stateIndex = targetStateIndex;
+  while (pathIndex > 0) {
+    pathIndex -= 1;
+    const statePointer = stepStateRecordPointer(tablePointer, stateIndex);
+    const candidateIndex = load<u32>(statePointer + STEP_STATE_CELL_INDEX_OFFSET);
+    store<f64>(
+      pathXPointer + pathIndex * sizeof<f64>(),
+      <f64>load<u32>(candidatesXPointer + candidateIndex * sizeof<u32>()),
+    );
+    store<f64>(
+      pathYPointer + pathIndex * sizeof<f64>(),
+      <f64>load<u32>(candidatesYPointer + candidateIndex * sizeof<u32>()),
+    );
+    const parentIndex = load<u32>(statePointer + STEP_STATE_PARENT_INDEX_OFFSET);
+    if (parentIndex == stateIndex) break;
+    stateIndex = parentIndex;
+  }
+  const pathPointer = reserveArena(3 * sizeof<u32>(), sizeof<u32>());
+  store<u32>(pathPointer, pathXPointer);
+  store<u32>(pathPointer + sizeof<u32>(), pathYPointer);
+  store<u32>(pathPointer + 2 * sizeof<u32>(), pathLength);
+  return pathPointer;
+}
+
+/** Matches the stateful TS visibility queue: estimated cost, paid cost, geometry, then exact state. */
+function compareStepVisibilityStates(
+  contextPointer: u32,
+  tablePointer: u32,
+  leftStateIndex: u32,
+  rightStateIndex: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  startCellIndex: u32,
+  targetCellIndex: u32,
+  exactStartY: f64,
+  exactTargetY: f64,
+): i32 {
+  const leftPointer = stepStateRecordPointer(tablePointer, leftStateIndex);
+  const rightPointer = stepStateRecordPointer(tablePointer, rightStateIndex);
+  const leftSegments = load<u32>(leftPointer + STEP_STATE_COST_SEGMENTS_OFFSET);
+  const rightSegments = load<u32>(rightPointer + STEP_STATE_COST_SEGMENTS_OFFSET);
+  if (leftSegments != rightSegments) return leftSegments < rightSegments ? -1 : 1;
+  const leftCandidate = load<u32>(leftPointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const rightCandidate = load<u32>(rightPointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const leftCell = visibilityCandidateCellIndex(candidatesXPointer, candidatesYPointer, leftCandidate);
+  const rightCell = visibilityCandidateCellIndex(candidatesXPointer, candidatesYPointer, rightCandidate);
+  const targetGraphY = stepGraphYForCell(
+    contextPointer,
+    targetCellIndex,
+    startCellIndex,
+    targetCellIndex,
+    exactStartY,
+    exactTargetY,
+  );
+  const leftEstimated =
+    load<f64>(leftPointer + STEP_STATE_COST_SECONDARY_OFFSET) +
+    NativeMath.abs(
+      targetGraphY -
+        stepGraphYForCell(
+          contextPointer,
+          leftCell,
+          startCellIndex,
+          targetCellIndex,
+          exactStartY,
+          exactTargetY,
+        ),
+    );
+  const rightEstimated =
+    load<f64>(rightPointer + STEP_STATE_COST_SECONDARY_OFFSET) +
+    NativeMath.abs(
+      targetGraphY -
+        stepGraphYForCell(
+          contextPointer,
+          rightCell,
+          startCellIndex,
+          targetCellIndex,
+          exactStartY,
+          exactTargetY,
+        ),
+    );
+  if (!stepSecondaryValuesAreNearlyEqual(leftEstimated, rightEstimated)) {
+    return leftEstimated < rightEstimated ? -1 : 1;
+  }
+  let comparison = compareStepCosts(
+    leftSegments,
+    load<f64>(leftPointer + STEP_STATE_COST_SECONDARY_OFFSET),
+    rightSegments,
+    load<f64>(rightPointer + STEP_STATE_COST_SECONDARY_OFFSET),
+  );
+  if (comparison != 0) return comparison;
+  const targetX = <i32>load<u32>(candidatesXPointer + sizeof<u32>());
+  const targetY = <i32>load<u32>(candidatesYPointer + sizeof<u32>());
+  const leftX = <i32>load<u32>(candidatesXPointer + leftCandidate * sizeof<u32>());
+  const leftY = <i32>load<u32>(candidatesYPointer + leftCandidate * sizeof<u32>());
+  const rightX = <i32>load<u32>(candidatesXPointer + rightCandidate * sizeof<u32>());
+  const rightY = <i32>load<u32>(candidatesYPointer + rightCandidate * sizeof<u32>());
+  const leftRemainingX = targetX >= leftX ? targetX - leftX : leftX - targetX;
+  const rightRemainingX = targetX >= rightX ? targetX - rightX : rightX - targetX;
+  if (leftRemainingX != rightRemainingX) return leftRemainingX < rightRemainingX ? -1 : 1;
+  const leftRemainingY = targetY >= leftY ? targetY - leftY : leftY - targetY;
+  const rightRemainingY = targetY >= rightY ? targetY - rightY : rightY - targetY;
+  if (leftRemainingY != rightRemainingY) return leftRemainingY < rightRemainingY ? -1 : 1;
+  if (leftCandidate != rightCandidate) return leftCandidate < rightCandidate ? -1 : 1;
+  const leftResolvedY = load<f64>(leftPointer + STEP_STATE_RESOLVED_Y_OFFSET);
+  const rightResolvedY = load<f64>(rightPointer + STEP_STATE_RESOLVED_Y_OFFSET);
+  if (leftResolvedY != rightResolvedY) return leftResolvedY < rightResolvedY ? -1 : 1;
+  return compareStepRouteKeys(leftPointer, rightPointer);
+}
+
+function selectBestOpenStepVisibilityState(
+  contextPointer: u32,
+  tablePointer: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  startCellIndex: u32,
+  targetCellIndex: u32,
+  exactStartY: f64,
+  exactTargetY: f64,
+): u32 {
+  const stateCount = load<u32>(tablePointer + STEP_STATE_TABLE_COUNT_OFFSET);
+  let bestIndex = STEP_STATE_MISSING_INDEX;
+  let stateIndex: u32 = 0;
+  while (stateIndex < stateCount) {
+    if (
+      load<u32>(stepStateRecordPointer(tablePointer, stateIndex) + STEP_STATE_IS_CLOSED_OFFSET) == 0 &&
+      (bestIndex == STEP_STATE_MISSING_INDEX ||
+        compareStepVisibilityStates(
+          contextPointer,
+          tablePointer,
+          stateIndex,
+          bestIndex,
+          candidatesXPointer,
+          candidatesYPointer,
+          startCellIndex,
+          targetCellIndex,
+          exactStartY,
+          exactTargetY,
+        ) < 0)
+    ) bestIndex = stateIndex;
+    stateIndex += 1;
+  }
+  return bestIndex;
+}
+
+function relaxStepVisibilityTransition(
+  contextPointer: u32,
+  tablePointer: u32,
+  previewStatePointer: u32,
+  currentStateIndex: u32,
+  nextCandidateIndex: u32,
+  candidatesXPointer: u32,
+  candidatesYPointer: u32,
+  startCellIndex: u32,
+  targetCellIndex: u32,
+  exactStartX: f64,
+  exactStartY: f64,
+  exactTargetX: f64,
+  exactTargetY: f64,
+): void {
+  const currentPointer = stepStateRecordPointer(tablePointer, currentStateIndex);
+  const currentCandidateIndex = load<u32>(currentPointer + STEP_STATE_CELL_INDEX_OFFSET);
+  const currentCellIndex = visibilityCandidateCellIndex(
+    candidatesXPointer,
+    candidatesYPointer,
+    currentCandidateIndex,
+  );
+  const nextCellIndex = visibilityCandidateCellIndex(candidatesXPointer, candidatesYPointer, nextCandidateIndex);
+  const edgeMark = markArena();
+  const resultPointer = runStepSearchEdgeTransition(
+    contextPointer,
+    currentCellIndex,
+    nextCellIndex,
+    startCellIndex,
+    targetCellIndex,
+    exactStartX,
+    exactStartY,
+    exactTargetX,
+    exactTargetY,
+    load<f64>(currentPointer + STEP_STATE_RESOLVED_Y_OFFSET),
+    load<i32>(currentPointer + STEP_STATE_SIGN_OFFSET),
+    load<u32>(currentPointer + STEP_STATE_LIMB_POINTER_OFFSET),
+    load<u32>(currentPointer + STEP_STATE_LIMB_COUNT_OFFSET),
+  );
+  if (
+    load<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET) !=
+    Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS
+  ) {
+    resetArena(edgeMark);
+    return;
+  }
+  const nextSign = load<i32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET);
+  const nextStatePointer = load<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET);
+  const nextStateCount = load<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET);
+  const nextResolvedY = load<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET);
+  const nextSegments = load<u32>(currentPointer + STEP_STATE_COST_SEGMENTS_OFFSET) + 1;
+  const nextSecondary =
+    load<f64>(currentPointer + STEP_STATE_COST_SECONDARY_OFFSET) +
+    load<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_SECONDARY_COST_OFFSET);
+  let nextStateIndex = findStepStateIndex(
+    tablePointer,
+    nextCandidateIndex,
+    nextSign,
+    nextStatePointer,
+    nextStateCount,
+  );
+  if (nextStateIndex != STEP_STATE_MISSING_INDEX) {
+    const previousPointer = stepStateRecordPointer(tablePointer, nextStateIndex);
+    if (
+      compareStepCosts(
+        load<u32>(previousPointer + STEP_STATE_COST_SEGMENTS_OFFSET),
+        load<f64>(previousPointer + STEP_STATE_COST_SECONDARY_OFFSET),
+        nextSegments,
+        nextSecondary,
+      ) <= 0
+    ) {
+      resetArena(edgeMark);
+    } else {
+      resetArena(edgeMark);
+      const refreshedPointer = stepStateRecordPointer(tablePointer, nextStateIndex);
+      store<f64>(refreshedPointer + STEP_STATE_RESOLVED_Y_OFFSET, nextResolvedY);
+      store<u32>(refreshedPointer + STEP_STATE_COST_SEGMENTS_OFFSET, nextSegments);
+      store<u32>(refreshedPointer + STEP_STATE_IS_CLOSED_OFFSET, 0);
+      store<f64>(refreshedPointer + STEP_STATE_COST_SECONDARY_OFFSET, nextSecondary);
+      store<u32>(refreshedPointer + STEP_STATE_PARENT_INDEX_OFFSET, currentStateIndex);
+    }
+  } else {
+    nextStateIndex = appendStepState(
+      tablePointer,
+      nextCandidateIndex,
+      nextSign,
+      nextStatePointer,
+      nextStateCount,
+      nextResolvedY,
+      nextSegments,
+      nextSecondary,
+      currentStateIndex,
+    );
+    commitArena(edgeMark);
+  }
+  if (previewStatePointer != 0) {
+    appendRoutePreviewAcceptedEdge(
+      previewStatePointer,
+      <i32>load<u32>(candidatesXPointer + currentCandidateIndex * sizeof<u32>()),
+      <i32>load<u32>(candidatesYPointer + currentCandidateIndex * sizeof<u32>()),
+      <i32>load<u32>(candidatesXPointer + nextCandidateIndex * sizeof<u32>()),
+      <i32>load<u32>(candidatesYPointer + nextCandidateIndex * sizeof<u32>()),
+    );
+  }
+}
+
+function runStepVisibilityGraphSearch(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ROUTE_STEP_SEARCH_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<f64>());
+  const contextPointer = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_CONTEXT_POINTER_OFFSET);
+  requireRouteContext(contextPointer);
+  if ((load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) == 0) {
+    trap();
+  }
+  const startX = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_START_X_OFFSET, getPlaneWidth());
+  const startY = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_START_Y_OFFSET, getPlaneHeight());
+  const targetX = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_TARGET_X_OFFSET, getPlaneWidth());
+  const targetY = readPlaneCoordinate(inputPointer, Layout.ROUTE_STEP_SEARCH_INPUT_TARGET_Y_OFFSET, getPlaneHeight());
+  const shouldCollectPreviews = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_COLLECT_PREVIEWS_OFFSET);
+  const initialResolvedY = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_RESOLVED_Y_OFFSET);
+  const initialSign = load<i32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_STATE_SIGN_OFFSET);
+  const initialStatePointer = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_STATE_POINTER_OFFSET);
+  const initialStateCount = load<u32>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_STATE_COUNT_OFFSET);
+  const exactStartX = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_START_X_OFFSET);
+  const exactStartY = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_START_Y_OFFSET);
+  const exactTargetX = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_TARGET_X_OFFSET);
+  const exactTargetY = load<f64>(inputPointer + Layout.ROUTE_STEP_SEARCH_INPUT_EXACT_TARGET_Y_OFFSET);
+  if (
+    shouldCollectPreviews > 1 ||
+    !isFiniteValue(initialResolvedY) ||
+    !isFiniteValue(exactStartX) ||
+    !isFiniteValue(exactStartY) ||
+    !isFiniteValue(exactTargetX) ||
+    !isFiniteValue(exactTargetY) ||
+    initialStateCount > u32.MAX_VALUE / sizeof<u32>()
+  ) trap();
+  requireArenaRange(
+    initialStateCount == 0 ? 0 : initialStatePointer,
+    initialStateCount * sizeof<u32>(),
+    sizeof<u32>(),
+  );
+  if (
+    (initialStateCount == 0 && initialSign != 0) ||
+    (initialStateCount != 0 && (initialSign != -1 && initialSign != 1)) ||
+    (initialStateCount != 0 && load<u32>(initialStatePointer + (initialStateCount - 1) * sizeof<u32>()) == 0)
+  ) trap();
+  const previewStatePointer =
+    shouldCollectPreviews == 0
+      ? 0
+      : createRoutePreviewState(
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EDGE_LIMIT_OFFSET),
+          load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_CANDIDATE_LIMIT_OFFSET),
+        );
+  if (
+    pointHitsRouteContext(contextPointer, startX, startY) ||
+    pointHitsRouteContext(contextPointer, targetX, targetY) ||
+    targetX < startX ||
+    (targetX == startX && targetY != startY)
+  ) return createNoStepSearchResult(0, previewStatePointer);
+  const width = getPlaneWidth();
+  const startCellIndex = <u32>startY * width + <u32>startX;
+  const targetCellIndex = <u32>targetY * width + <u32>targetX;
+  if (targetX > startX) {
+    const directMark = markArena();
+    const transitionPointer = runStepSearchEdgeTransition(
+      contextPointer,
+      startCellIndex,
+      targetCellIndex,
+      startCellIndex,
+      targetCellIndex,
+      exactStartX,
+      exactStartY,
+      exactTargetX,
+      exactTargetY,
+      initialResolvedY,
+      initialSign,
+      initialStatePointer,
+      initialStateCount,
+    );
+    if (
+      load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET) ==
+      Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS
+    ) {
+      const pathXPointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+      const pathYPointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+      store<f64>(pathXPointer, <f64>startX);
+      store<f64>(pathXPointer + sizeof<f64>(), <f64>targetX);
+      store<f64>(pathYPointer, <f64>startY);
+      store<f64>(pathYPointer + sizeof<f64>(), <f64>targetY);
+      const pathPointer = reserveArena(3 * sizeof<u32>(), sizeof<u32>());
+      store<u32>(pathPointer, pathXPointer);
+      store<u32>(pathPointer + sizeof<u32>(), pathYPointer);
+      store<u32>(pathPointer + 2 * sizeof<u32>(), 2);
+      if (previewStatePointer != 0) {
+        publishDirectThetaPreview(contextPointer, previewStatePointer, startX, startY, targetX, targetY);
+      }
+      commitArena(directMark);
+      return createStepSearchResult(
+        Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_SUCCESS,
+        pathPointer,
+        0,
+        previewStatePointer,
+        load<f64>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET),
+        load<i32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET),
+        load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET),
+        load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET),
+      );
+    }
+    resetArena(directMark);
+  }
+  const candidatesPointer = collectVisibilityCandidates(contextPointer, startX, startY, targetX, targetY);
+  const candidatesXPointer = load<u32>(candidatesPointer + VISIBILITY_CANDIDATE_X_POINTER_OFFSET);
+  const candidatesYPointer = load<u32>(candidatesPointer + VISIBILITY_CANDIDATE_Y_POINTER_OFFSET);
+  const candidateCount = load<u32>(candidatesPointer + VISIBILITY_CANDIDATE_COUNT_OFFSET);
+  const tablePointer = createStepStateTable();
+  const startStateIndex = appendStepState(
+    tablePointer,
+    0,
+    initialSign,
+    initialStatePointer,
+    initialStateCount,
+    initialResolvedY,
+    0,
+    0,
+    0,
+  );
+  store<u32>(stepStateRecordPointer(tablePointer, startStateIndex) + STEP_STATE_PARENT_INDEX_OFFSET, startStateIndex);
+  let expansions: u32 = 0;
+  while (true) {
+    const currentStateIndex = selectBestOpenStepVisibilityState(
+      contextPointer,
+      tablePointer,
+      candidatesXPointer,
+      candidatesYPointer,
+      startCellIndex,
+      targetCellIndex,
+      exactStartY,
+      exactTargetY,
+    );
+    if (currentStateIndex == STEP_STATE_MISSING_INDEX) break;
+    const currentStatePointer = stepStateRecordPointer(tablePointer, currentStateIndex);
+    const currentCandidateIndex = load<u32>(currentStatePointer + STEP_STATE_CELL_INDEX_OFFSET);
+    if (currentCandidateIndex == 1) {
+      const pathPointer = createStepVisibilityStatePath(
+        tablePointer,
+        currentStateIndex,
+        candidatesXPointer,
+        candidatesYPointer,
+      );
+      if (previewStatePointer != 0) {
+        publishVisibilityPreviewPath(
+          contextPointer,
+          previewStatePointer,
+          candidatesXPointer,
+          candidatesYPointer,
+          candidateCount,
+          currentCandidateIndex,
+          pathPointer,
+        );
+      }
+      return createStepSearchResult(
+        Layout.ROUTE_STEP_SEARCH_RESULT_STATUS_SUCCESS,
+        pathPointer,
+        expansions,
+        previewStatePointer,
+        load<f64>(currentStatePointer + STEP_STATE_RESOLVED_Y_OFFSET),
+        load<i32>(currentStatePointer + STEP_STATE_SIGN_OFFSET),
+        load<u32>(currentStatePointer + STEP_STATE_LIMB_POINTER_OFFSET),
+        load<u32>(currentStatePointer + STEP_STATE_LIMB_COUNT_OFFSET),
+      );
+    }
+    store<u32>(currentStatePointer + STEP_STATE_IS_CLOSED_OFFSET, 1);
+    const currentX = load<u32>(candidatesXPointer + currentCandidateIndex * sizeof<u32>());
+    let nextCandidateIndex: u32 = 0;
+    while (nextCandidateIndex < candidateCount) {
+      if (
+        nextCandidateIndex != currentCandidateIndex &&
+        load<u32>(candidatesXPointer + nextCandidateIndex * sizeof<u32>()) > currentX
+      ) {
+        relaxStepVisibilityTransition(
+          contextPointer,
+          tablePointer,
+          previewStatePointer,
+          currentStateIndex,
+          nextCandidateIndex,
+          candidatesXPointer,
+          candidatesYPointer,
+          startCellIndex,
+          targetCellIndex,
+          exactStartX,
+          exactStartY,
+          exactTargetX,
+          exactTargetY,
+        );
+      }
+      nextCandidateIndex += 1;
+    }
+    expansions += 1;
+    if (
+      previewStatePointer != 0 &&
+      expansions % load<u32>(contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EXPANSION_INTERVAL_OFFSET) == 0
+    ) {
+      const bestOpenStateIndex = selectBestOpenStepVisibilityState(
+        contextPointer,
+        tablePointer,
+        candidatesXPointer,
+        candidatesYPointer,
+        startCellIndex,
+        targetCellIndex,
+        exactStartY,
+        exactTargetY,
+      );
+      const bestPathStateIndex =
+        bestOpenStateIndex == STEP_STATE_MISSING_INDEX ? currentStateIndex : bestOpenStateIndex;
+      publishVisibilityPreviewPath(
+        contextPointer,
+        previewStatePointer,
+        candidatesXPointer,
+        candidatesYPointer,
+        candidateCount,
+        currentCandidateIndex,
+        createStepVisibilityStatePath(
+          tablePointer,
+          bestPathStateIndex,
+          candidatesXPointer,
+          candidatesYPointer,
+        ),
+      );
+    }
+  }
+  return createNoStepSearchResult(expansions, previewStatePointer);
+}
+
 /** Executes one coarse route-context or collision command without crossing the JS boundary inside a loop. */
 export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
@@ -5345,6 +5877,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_VISIBILITY_GRAPH) return runVisibilityGraphSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_THETA_STAR) return runStepThetaStarSearch(inputPointer, inputByteLength);
+  if (command == Layout.ROUTE_COMMAND_STEP_VISIBILITY_GRAPH) {
+    return runStepVisibilityGraphSearch(inputPointer, inputByteLength);
+  }
   trap();
   return 0;
 }

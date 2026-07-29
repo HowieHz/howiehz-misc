@@ -48,6 +48,7 @@ const routeCommand = {
   visibilityGraph: 7,
   stepTransition: 8,
   stepThetaStar: 9,
+  stepVisibilityGraph: 10,
 } as const;
 const routeCreateInputByteLength = 48;
 const routeContextByteLength = 264;
@@ -130,6 +131,7 @@ export interface GraphwarWasmStepRouteContext {
     state: GraphwarWasmStepRouteState,
   ) => GraphwarWasmStepRouteTransitionResult;
   findThetaStarPath: (input: GraphwarWasmStepRouteSearchInput) => GraphwarWasmStepRouteSearchResult;
+  findVisibilityGraphPath: (input: GraphwarWasmStepRouteSearchInput) => GraphwarWasmStepRouteSearchResult;
 }
 
 /** Exact endpoints and canonical state are one request because the intermediate grid centers depend on both. */
@@ -663,6 +665,20 @@ export function createGraphwarWasmRouteContext(
             assertActive();
             return runStepRouteSearch(
               runtime,
+              routeCommand.stepThetaStar,
+              contextPointer,
+              stepRouteModel,
+              searchInput,
+              routeBounds,
+              routeBoundsRect,
+              isMirrored,
+            );
+          },
+          findVisibilityGraphPath(searchInput) {
+            assertActive();
+            return runStepRouteSearch(
+              runtime,
+              routeCommand.stepVisibilityGraph,
               contextPointer,
               stepRouteModel,
               searchInput,
@@ -892,9 +908,10 @@ function runRouteSearch(
   }
 }
 
-/** Runs one complete stateful Step Theta* command and validates its path/state pair before releasing scratch. */
+/** Runs one complete stateful Step route command and validates its path/state pair before releasing scratch. */
 function runStepRouteSearch(
   runtime: GraphwarWasmKernelRuntime,
+  command: typeof routeCommand.stepThetaStar | typeof routeCommand.stepVisibilityGraph,
   contextPointer: number,
   model: GraphwarWasmStepRouteModelInput,
   input: GraphwarWasmStepRouteSearchInput,
@@ -931,11 +948,8 @@ function runStepRouteSearch(
     inputView.setFloat64(88, exactTargetX, true);
     inputView.setFloat64(96, exactTargetY, true);
 
-    const resultPointer = runtime.runRouteTask(
-      routeCommand.stepThetaStar,
-      inputPointer,
-      routeStepSearchInputByteLength,
-    );
+    const resultPointer = runtime.runRouteTask(command, inputPointer, routeStepSearchInputByteLength);
+    const searchName = command === routeCommand.stepThetaStar ? "Step Theta*" : "Step visibility graph";
     const resultRange = validateGraphwarWasmMemoryRange(
       runtime,
       { length: routeStepSearchResultByteLength, pointer: resultPointer },
@@ -945,27 +959,35 @@ function runStepRouteSearch(
     if (resultView.getUint32(0, true) !== routeStepSearchResultMagic) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
-        "Graphwar WASM Step Theta* result magic is invalid",
+        `Graphwar WASM ${searchName} result magic is invalid`,
         "output",
       );
     }
-    const status = validateGraphwarWasmEnumValue(resultView.getUint32(4, true), [0, 1] as const, "Step Theta* status");
+    const status = validateGraphwarWasmEnumValue(
+      resultView.getUint32(4, true),
+      [0, 1] as const,
+      `${searchName} status`,
+    );
     const pathLength = resultView.getUint32(16, true);
     const previewPointer = resultView.getUint32(20, true);
     const previewCount = resultView.getUint32(24, true);
     const expansionCount = validateGraphwarWasmU32(
       resultView.getUint32(28, true),
-      "Step Theta* expansion count",
+      `${searchName} expansion count`,
       "output",
     );
     const shouldCollectPreviews = input.shouldCollectPreviews === true;
+    const previewExpansionInterval =
+      command === routeCommand.stepThetaStar
+        ? graphwarThetaStarHeuristics.previewExpansionInterval
+        : graphwarVisibilityGraphHeuristics.previewExpansionInterval;
     const expectedPreviewCount = shouldCollectPreviews
-      ? Math.floor(expansionCount / graphwarThetaStarHeuristics.previewExpansionInterval) + status
+      ? Math.floor(expansionCount / previewExpansionInterval) + status
       : 0;
     if ((previewCount === 0) !== (previewPointer === 0) || previewCount !== expectedPreviewCount) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
-        "Graphwar WASM Step Theta* returned an invalid preview range",
+        `Graphwar WASM ${searchName} returned an invalid preview range`,
         "output",
       );
     }
@@ -999,11 +1021,11 @@ function runStepRouteSearch(
       if (preview.isMirrored !== isMirrored) {
         throw new GraphwarWasmAdapterError(
           "invalid-session-identity",
-          "Graphwar WASM Step Theta* preview mirror identity is invalid",
+          `Graphwar WASM ${searchName} preview mirror identity is invalid`,
           "output",
         );
       }
-      validateRoutePreview(preview, input.start, input.target, index, true);
+      validateRoutePreview(preview, input.start, input.target, index, command === routeCommand.stepThetaStar);
       return preview;
     });
     if (status === 0) {
@@ -1018,23 +1040,30 @@ function runStepRouteSearch(
       ) {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
-          "Graphwar WASM Step Theta* no-route result contains path state",
+          `Graphwar WASM ${searchName} no-route result contains path state`,
           "output",
         );
       }
       if (previews.some((preview) => pointsEqual(preview.bestPath.at(-1), input.target))) {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
-          "Graphwar WASM Step Theta* no-route preview reaches its target",
+          `Graphwar WASM ${searchName} no-route preview reaches its target`,
           "output",
         );
       }
       return { expansionCount, previews, type: "no-route" };
     }
+    if (command === routeCommand.stepVisibilityGraph && input.target.x <= input.start.x) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step visibility path success requires forward progress",
+        "output",
+      );
+    }
     if (pathLength === 0 || pathLength > GRAPHWAR_PLANE_LENGTH) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
-        "Graphwar WASM Step Theta* path length is invalid",
+        `Graphwar WASM ${searchName} path length is invalid`,
         "output",
       );
     }
@@ -1051,7 +1080,7 @@ function runStepRouteSearch(
       commandMinimumPointer,
     );
     const path = Array.from(xValues, (x, index) => ({ x, y: yValues[index] ?? Number.NaN }));
-    validateRoutePath(path, input.start, input.target, "Step Theta*");
+    validateRoutePath(path, input.start, input.target, searchName);
     const terminalState = copyStepRouteState(
       runtime,
       resultView.getFloat64(32, true),
@@ -1059,24 +1088,24 @@ function runStepRouteSearch(
       resultView.getUint32(44, true),
       resultView.getUint32(48, true),
       commandMinimumPointer,
-      "Step Theta* terminal state",
+      `${searchName} terminal state`,
     );
-    validateStepRouteStateModel(model, terminalState, "Step Theta* terminal state", "output");
+    validateStepRouteStateModel(model, terminalState, `${searchName} terminal state`, "output");
     validateDisjointRouteContextRanges([
-      { byteLength: routeStepSearchResultByteLength, label: "Step Theta* result", pointer: resultPointer },
+      { byteLength: routeStepSearchResultByteLength, label: `${searchName} result`, pointer: resultPointer },
       {
         byteLength: pathLength * Float64Array.BYTES_PER_ELEMENT,
-        label: "Step Theta* path x",
+        label: `${searchName} path x`,
         pointer: pathXPointer,
       },
       {
         byteLength: pathLength * Float64Array.BYTES_PER_ELEMENT,
-        label: "Step Theta* path y",
+        label: `${searchName} path y`,
         pointer: pathYPointer,
       },
       {
         byteLength: resultView.getUint32(48, true) * Uint32Array.BYTES_PER_ELEMENT,
-        label: "Step Theta* terminal state",
+        label: `${searchName} terminal state`,
         pointer: resultView.getUint32(44, true),
       },
     ]);
@@ -1084,7 +1113,7 @@ function runStepRouteSearch(
     if (shouldCollectPreviews && !pathsEqual(terminalPreview?.bestPath, path)) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
-        "Graphwar WASM Step Theta* terminal preview does not match its result path",
+        `Graphwar WASM ${searchName} terminal preview does not match its result path`,
         "output",
       );
     }

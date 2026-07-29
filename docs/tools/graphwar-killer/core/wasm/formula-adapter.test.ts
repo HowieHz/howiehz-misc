@@ -1080,7 +1080,9 @@ describe("Graphwar WASM formula Adapter", () => {
       ((bounds.maxY - targetPoint.y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT,
     );
     const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
-    mask[Math.floor(targetCenter.y) * GRAPHWAR_PLANE_LENGTH + Math.floor(targetCenter.x)] = 1;
+    mask[
+      javaPixelCoordinateForTest(targetCenter.y) * GRAPHWAR_PLANE_LENGTH + javaPixelCoordinateForTest(targetCenter.x)
+    ] = 1;
     const result = runGraphwarWasmTrajectory(await createRuntime(), {
       descriptor,
       start: { type: "cold" },
@@ -1250,6 +1252,27 @@ describe("Graphwar WASM formula Adapter", () => {
     expect(result?.stopReason).toBe(2);
     expect(result?.points.length).toBeGreaterThan(1);
     expect(result?.continuationEvidence.state.currentPoint).toEqual(result?.points.at(-1));
+  });
+
+  it("checks the Java-mapped mask cell before classifying a non-finite trial", async () => {
+    const descriptor = {
+      ...createDescriptor("pchip", "ddy"),
+      bounds: { maxX: 1e308, maxY: 1e308, minX: -1e308, minY: -1e308 },
+      points: [createGraphPoint(0, 0), createGraphPoint(1, 1e308)],
+      secondOrderLaunchAngle: { degrees: 0, radians: 0 },
+      soldierCenter: createGraphPoint(0, 0),
+    } satisfies GraphwarWasmFormulaInputDescriptor;
+    const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    mask[0] = 1;
+    const result = runGraphwarWasmTrajectory(await createRuntime(), {
+      descriptor,
+      start: { type: "cold" },
+      stop: createTargetStop({
+        collision: { boundaryExpansion: 0, mask, type: "mask" },
+      }),
+    });
+    expect(result?.stopReason).toBe(6);
+    expect(result?.obstacle).toEqual({ sampleIndex: 0, type: "hit" });
   });
 
   it("reuses the arena high-water mark across long-lived large and small formula/trajectory commands", async () => {
@@ -1528,8 +1551,12 @@ describe("Graphwar WASM formula Adapter", () => {
     if (!obstaclePoint) {
       return;
     }
-    const pixelX = Math.floor(((obstaclePoint.x - bounds.minX) / (bounds.maxX - bounds.minX)) * GRAPHWAR_PLANE_LENGTH);
-    const pixelY = Math.floor(((bounds.maxY - obstaclePoint.y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT);
+    const pixelX = javaPixelCoordinateForTest(
+      ((obstaclePoint.x - bounds.minX) / (bounds.maxX - bounds.minX)) * GRAPHWAR_PLANE_LENGTH,
+    );
+    const pixelY = javaPixelCoordinateForTest(
+      ((bounds.maxY - obstaclePoint.y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT,
+    );
     const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
     mask[pixelY * GRAPHWAR_PLANE_LENGTH + pixelX] = 1;
     const runtime = await createRuntime();
@@ -2035,4 +2062,12 @@ function orderedFloatBits(value: number) {
   new DataView(buffer).setFloat64(0, value, false);
   const bits = new DataView(buffer).getBigUint64(0, false);
   return bits >> 63n === 0n ? bits | (1n << 63n) : ~bits;
+}
+
+/** Mirrors Java's `(int)` conversion for mask fixture coordinates. */
+function javaPixelCoordinateForTest(value: number) {
+  if (Number.isNaN(value)) return 0;
+  if (value >= 2_147_483_647) return 2_147_483_647;
+  if (value <= -2_147_483_648) return -2_147_483_648;
+  return Math.trunc(value);
 }

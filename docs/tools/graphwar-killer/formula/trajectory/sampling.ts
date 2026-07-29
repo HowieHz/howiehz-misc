@@ -4046,8 +4046,8 @@ function createGraphwarTrajectoryStopTracker(options: {
       }
 
       if (collisionMask) {
-        const planeX = Math.floor((pixel.x - boundsRect.x) * collisionPlaneScaleX);
-        const planeY = Math.floor((pixel.y - boundsRect.y) * collisionPlaneScaleY);
+        const planeX = graphwarJavaPixelCoordinate((pixel.x - boundsRect.x) * collisionPlaneScaleX);
+        const planeY = graphwarJavaPixelCoordinate((pixel.y - boundsRect.y) * collisionPlaneScaleY);
         // 障碍 mask 的边界收缩在像素转平面格点后判断；展开热路径，避免每个采样点创建临时对象。
         if (
           !planePointIsInsideBoundaryExpansion(planeX, planeY, collisionBoundaryExpansion) ||
@@ -4085,6 +4085,20 @@ function createGraphwarTrajectoryStopTracker(options: {
       };
     },
   };
+}
+
+/** Match Java's `(int)` conversion used before Obstacle.collidePoint(). */
+function graphwarJavaPixelCoordinate(value: number) {
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+  if (value >= 2_147_483_647) {
+    return 2_147_483_647;
+  }
+  if (value <= -2_147_483_648) {
+    return -2_147_483_648;
+  }
+  return Math.trunc(value);
 }
 
 /** Measures one trajectory diagnostic phase without adding timers to normal previews. */

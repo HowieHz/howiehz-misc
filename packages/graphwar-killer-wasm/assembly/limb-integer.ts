@@ -240,6 +240,44 @@ export function createSignedLimbState(limbCapacity: u32): u32 {
   return statePointer;
 }
 
+/** Creates an owned canonical state from a validated external magnitude. */
+export function createSignedLimbStateFromMagnitude(
+  sign: i32,
+  pointer: u32,
+  count: u32,
+  capacity: u32,
+): u32 {
+  const canonicalCount = normalizeSignedLimbCount(pointer, count);
+  if (canonicalCount != count) {
+    trap();
+  }
+  requireCanonicalSign(sign, count);
+  if (capacity < count) {
+    trap();
+  }
+  const statePointer = createSignedLimbState(capacity);
+  addSignedMagnitudeToState(statePointer, sign, pointer, count);
+  return statePointer;
+}
+
+@inline
+export function getSignedLimbStateSign(statePointer: u32): i32 {
+  requireSignedLimbState(statePointer);
+  return load<i32>(statePointer + SIGNED_LIMB_STATE_SIGN_OFFSET);
+}
+
+@inline
+export function getSignedLimbStateCount(statePointer: u32): u32 {
+  requireSignedLimbState(statePointer);
+  return load<u32>(statePointer + SIGNED_LIMB_STATE_COUNT_OFFSET);
+}
+
+@inline
+export function getSignedLimbStatePointer(statePointer: u32): u32 {
+  requireSignedLimbState(statePointer);
+  return load<u32>(statePointer + SIGNED_LIMB_STATE_POINTER_OFFSET);
+}
+
 /** Clears a state while retaining its bounded storage for a new Step plateau origin. */
 export function resetSignedLimbState(statePointer: u32): void {
   requireSignedLimbState(statePointer);

@@ -2,17 +2,25 @@ import {
   graphwarThetaStarHeuristics,
   graphwarVisibilityGraphHeuristics,
 } from "../../pathfinding/routing/canonical-data";
-import type { GraphClosedRegion, PlaneMaskClosedRegion } from "../../pathfinding/routing/step-envelope";
+import type {
+  GraphClosedRegion,
+  GraphwarStepEnvelope,
+  GraphwarStepEnvelopeInvalidReason,
+  PlaneMaskClosedRegion,
+} from "../../pathfinding/routing/step-envelope";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { PlaneGridPoint } from "../plane-grid";
+import type { GraphPoint } from "../types";
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmBytes,
   copyGraphwarWasmFloat64Values,
   copyGraphwarWasmUint32Values,
   validateGraphwarWasmEnumValue,
+  validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
   validateGraphwarWasmU32,
+  writeGraphwarWasmUint32Values,
 } from "./abi";
 import type { GraphwarWasmKernelRuntime } from "./runtime";
 import {
@@ -31,11 +39,13 @@ const routeCommand = {
   pointHit: 2,
   thetaStar: 6,
   visibilityGraph: 7,
+  stepTransition: 8,
 } as const;
 const routeCreateInputByteLength = 48;
 const routeContextByteLength = 264;
 const routeContextMagic = 0x524f_5554;
 const routeContextMirroredFlag = 1;
+const routeContextStepModelFlag = 2;
 const routeQueryResultByteLength = 8;
 const routeQueryResultMagic = 0x5152_4f55;
 const routePointInputByteLength = 24;
@@ -45,6 +55,10 @@ const routeSearchInputByteLength = 48;
 const routePreviewByteLength = 48;
 const routeSearchResultByteLength = 32;
 const routeSearchResultMagic = 0x5253_4c54;
+const routeStepModelByteLength = 40;
+const routeStepTransitionInputByteLength = 64;
+const routeStepTransitionResultByteLength = 160;
+const routeStepTransitionResultMagic = 0x5354_4550;
 const routeBoundaryEdgeRecordU32Length = 5;
 const planeCellCount = 770 * 450;
 const summedAreaValueCount = 771 * 451;
@@ -58,6 +72,7 @@ export interface GraphwarWasmRouteContext {
   readonly routeObstacleCount: number;
   readonly simulationMask: Uint8Array;
   readonly simulationObstacleCount: number;
+  readonly stepRoute?: GraphwarWasmStepRouteContext;
   countPlaneRegionObstacles: (region: PlaneMaskClosedRegion) => number;
   dispose: () => void;
   findThetaStarPath: (
@@ -73,6 +88,36 @@ export interface GraphwarWasmRouteContext {
   graphRegionHitsObstacle: (region: GraphClosedRegion) => boolean;
   lineHitsObstacle: (start: PlaneGridPoint, end: PlaneGridPoint) => boolean;
   pointHitsObstacle: (point: PlaneGridPoint) => boolean;
+}
+
+/** Canonical Step state is always transported with both its finite runtime height and exact integer identity. */
+export interface GraphwarWasmStepRouteState {
+  readonly resolvedY: number;
+  readonly routeStateKey: string;
+}
+
+export interface GraphwarWasmStepRouteTransition {
+  readonly envelope: GraphwarStepEnvelope;
+  readonly resolvedEndY: number;
+  readonly resolvedStartY: number;
+  readonly routeState: GraphwarWasmStepRouteState;
+  readonly secondaryCost: number;
+}
+
+export type GraphwarWasmStepRouteTransitionResult =
+  | { readonly transition: GraphwarWasmStepRouteTransition; readonly type: "success" }
+  | {
+      readonly reason: GraphwarStepEnvelopeInvalidReason | "numeric" | "obstacle";
+      readonly type: "invalid";
+    };
+
+/** Stateful Step capability exists only when its complete model was retained with the route context. */
+export interface GraphwarWasmStepRouteContext {
+  evaluateTransition: (
+    previous: GraphPoint,
+    next: GraphPoint,
+    state: GraphwarWasmStepRouteState,
+  ) => GraphwarWasmStepRouteTransitionResult;
 }
 
 /** Stateless route search returns one complete path or an explicit normal no-route result. */
@@ -116,6 +161,7 @@ export function createGraphwarWasmRouteContext(
     inputView.setUint32(32, packed.routePolicy.length, true);
     inputView.setUint32(36, packed.thetaStarLookaheadColumnOffsets.pointer, true);
     inputView.setUint32(40, packed.thetaStarLookaheadColumnOffsets.length, true);
+    inputView.setUint32(44, packed.stepRouteModel?.pointer ?? 0, true);
 
     const contextPointer = runtime.runRouteTask(routeCommand.createContext, inputPointer, routeCreateInputByteLength);
     const contextRange = validateGraphwarWasmMemoryRange(
@@ -132,7 +178,7 @@ export function createGraphwarWasmRouteContext(
       );
     }
     const flags = contextView.getUint32(4, true);
-    if ((flags & ~routeContextMirroredFlag) !== 0) {
+    if ((flags & ~(routeContextMirroredFlag | routeContextStepModelFlag)) !== 0) {
       throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar WASM route context flags are invalid", "output");
     }
     const isMirrored = (flags & routeContextMirroredFlag) !== 0;
@@ -144,6 +190,40 @@ export function createGraphwarWasmRouteContext(
       );
     }
     validateRouteContextIdentity(contextView, input, packed.routePolicy, packed.thetaStarLookaheadColumnOffsets);
+    const stepModelPointer = contextView.getUint32(260, true);
+    if (
+      ((flags & routeContextStepModelFlag) !== 0) !== (packed.stepRouteModel !== undefined) ||
+      stepModelPointer !== (packed.stepRouteModel?.pointer ?? 0)
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Graphwar WASM route context does not preserve its Step model identity",
+        "output",
+      );
+    }
+    if (packed.stepRouteModel && input.stepRouteModel) {
+      const stepModelValues = copyGraphwarWasmFloat64Values(
+        runtime,
+        { length: 5, pointer: stepModelPointer },
+        runtime.arenaBase,
+      );
+      const expectedEquation =
+        input.stepRouteModel.equation === "y" ? 1 : input.stepRouteModel.equation === "dy" ? 2 : 3;
+      const expectedValues = [
+        input.stepRouteModel.originY,
+        input.stepRouteModel.formulaSteepness,
+        input.stepRouteModel.qualityTargetPlanePixels,
+        input.stepRouteModel.decimalPlaces,
+        expectedEquation,
+      ];
+      if (expectedValues.some((value, index) => !Object.is(value, stepModelValues[index]))) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "Graphwar WASM route context mutated its Step model identity",
+          "output",
+        );
+      }
+    }
 
     const routeMask = copyGraphwarWasmBytes(
       runtime,
@@ -372,6 +452,15 @@ export function createGraphwarWasmRouteContext(
         label: "Theta lookahead input",
         pointer: packed.thetaStarLookaheadColumnOffsets.pointer,
       },
+      ...(packed.stepRouteModel === undefined
+        ? []
+        : [
+            {
+              byteLength: routeStepModelByteLength,
+              label: "Step route model input",
+              pointer: packed.stepRouteModel.pointer,
+            },
+          ]),
       { byteLength: routeContextByteLength, label: "context record", pointer: contextPointer },
       { byteLength: routeMask.length, label: "route mask", pointer: contextView.getUint32(8, true) },
       { byteLength: simulationMask.length, label: "simulation mask", pointer: contextView.getUint32(16, true) },
@@ -515,6 +604,15 @@ export function createGraphwarWasmRouteContext(
       ]);
     }
 
+    const stepRoute: GraphwarWasmStepRouteContext | undefined = input.stepRouteModel
+      ? {
+          evaluateTransition(previous, next, state) {
+            assertActive();
+            return runStepRouteTransition(runtime, contextPointer, previous, next, state);
+          },
+        }
+      : undefined;
+
     return {
       countPlaneRegionObstacles(region) {
         return runRegionQuery(routeCommand.planeRegionCount, region);
@@ -580,6 +678,7 @@ export function createGraphwarWasmRouteContext(
       routeObstacleCount,
       simulationMask,
       simulationObstacleCount,
+      ...(stepRoute === undefined ? {} : { stepRoute }),
     };
   } catch (error) {
     runtime.resetArenaAfterFault(contextMark);
@@ -751,6 +850,281 @@ function runRouteSearch(
   } finally {
     runtime.resetArena(mark);
   }
+}
+
+/** Runs one stateful Step edge below the retained context and copies its exact successor state. */
+function runStepRouteTransition(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  previous: GraphPoint,
+  next: GraphPoint,
+  state: GraphwarWasmStepRouteState,
+): GraphwarWasmStepRouteTransitionResult {
+  const commandMinimumPointer = runtime.arenaCursor;
+  const commandMark = runtime.markArena();
+  try {
+    const previousX = validateGraphwarWasmFiniteNumber(previous.x, "previous.x", "input");
+    const previousY = validateGraphwarWasmFiniteNumber(previous.y, "previous.y", "input");
+    const nextX = validateGraphwarWasmFiniteNumber(next.x, "next.x", "input");
+    const nextY = validateGraphwarWasmFiniteNumber(next.y, "next.y", "input");
+    const resolvedY = validateGraphwarWasmFiniteNumber(state.resolvedY, "state.resolvedY", "input");
+    const routeState = parseCanonicalStepRouteState(state.routeStateKey);
+    const magnitude = routeState < 0n ? -routeState : routeState;
+    const limbs: number[] = [];
+    let remaining = magnitude;
+    while (remaining !== 0n) {
+      limbs.push(Number(remaining & 0xffff_ffffn));
+      remaining >>= 32n;
+    }
+    const packedLimbs = writeGraphwarWasmUint32Values(runtime, new Uint32Array(limbs), commandMinimumPointer);
+    const inputPointer = runtime.reserveArena(routeStepTransitionInputByteLength, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, routeStepTransitionInputByteLength);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setFloat64(8, previousX, true);
+    inputView.setFloat64(16, previousY, true);
+    inputView.setFloat64(24, nextX, true);
+    inputView.setFloat64(32, nextY, true);
+    inputView.setFloat64(40, resolvedY, true);
+    inputView.setInt32(48, routeState === 0n ? 0 : routeState < 0n ? -1 : 1, true);
+    inputView.setUint32(52, packedLimbs.pointer, true);
+    inputView.setUint32(56, packedLimbs.length, true);
+
+    const resultPointer = runtime.runRouteTask(
+      routeCommand.stepTransition,
+      inputPointer,
+      routeStepTransitionInputByteLength,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: routeStepTransitionResultByteLength, pointer: resultPointer },
+      { alignment: 8, elementByteLength: 1, minimumPointer: commandMinimumPointer },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (resultView.getUint32(0, true) !== routeStepTransitionResultMagic) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step transition magic is invalid",
+        "output",
+      );
+    }
+    const status = validateGraphwarWasmEnumValue(
+      resultView.getUint32(4, true),
+      [0, 1, 2, 3, 4, 5, 6] as const,
+      "Step transition status",
+    );
+    if (status !== 0) {
+      if (
+        resultView.getInt32(144, true) !== 0 ||
+        resultView.getUint32(148, true) !== 0 ||
+        resultView.getUint32(152, true) !== 0
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM invalid Step transition contains route state",
+          "output",
+        );
+      }
+      const reasons = [
+        "non-forward",
+        "numeric",
+        "center-outside-segment",
+        "symmetric-start-before-segment",
+        "obstacle",
+        "non-finite",
+      ] as const;
+      return { reason: reasons[status - 1], type: "invalid" };
+    }
+
+    const resolvedStartY = validateGraphwarWasmFiniteNumber(
+      resultView.getFloat64(8, true),
+      "transition.resolvedStartY",
+      "output",
+    );
+    const resolvedEndY = validateGraphwarWasmFiniteNumber(
+      resultView.getFloat64(16, true),
+      "transition.resolvedEndY",
+      "output",
+    );
+    const secondaryCost = validateGraphwarWasmFiniteNumber(
+      resultView.getFloat64(24, true),
+      "transition.secondaryCost",
+      "output",
+    );
+    if (secondaryCost < 0) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-point-data",
+        "Graphwar WASM Step transition secondary cost is negative",
+        "output",
+      );
+    }
+    const xs = validateGraphwarWasmFiniteNumber(resultView.getFloat64(32, true), "transition.xs", "output");
+    const ym = validateGraphwarWasmFiniteNumber(resultView.getFloat64(40, true), "transition.ym", "output");
+    const h = copyStepGraphRegion(resultView, 48, "transition.envelope.h");
+    const r0 = copyStepGraphRegion(resultView, 80, "transition.envelope.r0");
+    const r1 = copyStepGraphRegion(resultView, 112, "transition.envelope.r1");
+    validateStepTransitionConsistency({
+      h,
+      nextX,
+      nextY,
+      previousX,
+      previousY,
+      r0,
+      r1,
+      resolvedEndY,
+      resolvedStartY,
+      secondaryCost,
+      xs,
+      ym,
+    });
+    const stateSign = resultView.getInt32(144, true);
+    const statePointer = resultView.getUint32(148, true);
+    const stateCount = resultView.getUint32(152, true);
+    if ((stateCount === 0 && stateSign !== 0) || (stateCount !== 0 && stateSign !== -1 && stateSign !== 1)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step transition state sign is not canonical",
+        "output",
+      );
+    }
+    validateDisjointRouteContextRanges([
+      { byteLength: routeStepTransitionResultByteLength, label: "Step transition result", pointer: resultPointer },
+      {
+        byteLength: stateCount * Uint32Array.BYTES_PER_ELEMENT,
+        label: "Step transition state",
+        pointer: statePointer,
+      },
+    ]);
+    const stateLimbs = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: stateCount, pointer: statePointer },
+      commandMinimumPointer,
+    );
+    if (stateLimbs.at(-1) === 0) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step transition state magnitude is not canonical",
+        "output",
+      );
+    }
+    let nextRouteState = 0n;
+    for (let index = stateLimbs.length - 1; index >= 0; index -= 1) {
+      nextRouteState = (nextRouteState << 32n) | BigInt(stateLimbs[index] ?? 0);
+    }
+    if (stateSign < 0) {
+      nextRouteState = -nextRouteState;
+    }
+
+    return {
+      transition: {
+        envelope: {
+          h,
+          r0,
+          r1,
+          xs,
+          ym,
+        },
+        resolvedEndY,
+        resolvedStartY,
+        routeState: { resolvedY: resolvedEndY, routeStateKey: nextRouteState.toString() },
+        secondaryCost,
+      },
+      type: "success",
+    };
+  } finally {
+    runtime.resetArena(commandMark);
+  }
+}
+
+function validateStepTransitionConsistency(input: {
+  h: GraphClosedRegion;
+  nextX: number;
+  nextY: number;
+  previousX: number;
+  previousY: number;
+  r0: GraphClosedRegion;
+  r1: GraphClosedRegion;
+  resolvedEndY: number;
+  resolvedStartY: number;
+  secondaryCost: number;
+  xs: number;
+  ym: number;
+}) {
+  const centerX = input.r0.maxX;
+  const expectedYm = input.resolvedStartY / 2 + input.resolvedEndY / 2;
+  const expectedXs = centerX - (input.nextX - centerX);
+  if (
+    input.nextX <= input.previousX ||
+    input.xs < input.previousX ||
+    centerX < input.xs ||
+    centerX > input.nextX ||
+    !Object.is(input.secondaryCost, Math.abs(input.nextY - input.previousY)) ||
+    !Object.is(input.ym, expectedYm) ||
+    !Object.is(input.xs, expectedXs) ||
+    !regionsEqual(
+      input.h,
+      createStepGraphRegion(input.previousX, input.xs, input.resolvedStartY, input.resolvedStartY),
+    ) ||
+    !regionsEqual(input.r0, createStepGraphRegion(input.xs, centerX, input.resolvedStartY, input.ym)) ||
+    !regionsEqual(input.r1, createStepGraphRegion(centerX, input.nextX, input.ym, input.resolvedEndY))
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Graphwar WASM Step transition is inconsistent with its request",
+      "output",
+    );
+  }
+}
+
+function createStepGraphRegion(startX: number, endX: number, startY: number, endY: number): GraphClosedRegion {
+  return {
+    maxX: Math.max(startX, endX),
+    maxY: Math.max(startY, endY),
+    minX: Math.min(startX, endX),
+    minY: Math.min(startY, endY),
+  };
+}
+
+function regionsEqual(left: GraphClosedRegion, right: GraphClosedRegion) {
+  return (
+    Object.is(left.maxX, right.maxX) &&
+    Object.is(left.maxY, right.maxY) &&
+    Object.is(left.minX, right.minX) &&
+    Object.is(left.minY, right.minY)
+  );
+}
+
+function parseCanonicalStepRouteState(value: string) {
+  if (typeof value !== "string") {
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Step route state key must be a string", "input");
+  }
+  try {
+    const parsed = BigInt(value);
+    if (parsed.toString() !== value) {
+      throw new Error("non-canonical");
+    }
+    return parsed;
+  } catch {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Step route state key must be a canonical decimal integer",
+      "input",
+    );
+  }
+}
+
+function copyStepGraphRegion(view: DataView, offset: number, fieldName: string): GraphClosedRegion {
+  const minX = validateGraphwarWasmFiniteNumber(view.getFloat64(offset, true), `${fieldName}.minX`, "output");
+  const maxX = validateGraphwarWasmFiniteNumber(view.getFloat64(offset + 8, true), `${fieldName}.maxX`, "output");
+  const minY = validateGraphwarWasmFiniteNumber(view.getFloat64(offset + 16, true), `${fieldName}.minY`, "output");
+  const maxY = validateGraphwarWasmFiniteNumber(view.getFloat64(offset + 24, true), `${fieldName}.maxY`, "output");
+  if (minX > maxX || minY > maxY) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-point-data",
+      `Graphwar WASM ${fieldName} is not a closed region`,
+      "output",
+    );
+  }
+  return { maxX, maxY, minX, minY };
 }
 
 /** Runs one small query below the retained context and always restores its scratch mark. */

@@ -6,6 +6,10 @@ import {
   createGraphwarPlaneMaskSummedArea,
   graphClosedRegionHitsPlaneMask,
 } from "../../pathfinding/routing/step-envelope";
+import {
+  createGraphwarStepRouteModel,
+  evaluateGraphwarStepRouteTransition,
+} from "../../pathfinding/routing/step-route";
 import { buildGraphwarThetaStarPathForMask } from "../../pathfinding/routing/theta-star";
 import {
   buildGraphwarVisibilityGraphPathForMask,
@@ -14,7 +18,8 @@ import {
 } from "../../pathfinding/routing/visibility-graph";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { mirrorPlaneGridPoint } from "../plane-grid";
-import { createPixelPoint } from "../types";
+import { graphwarToolDefaults } from "../tool/defaults";
+import { createGraphPoint, createPixelPoint } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { createGraphwarWasmRouteContext } from "./route-adapter";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
@@ -29,6 +34,286 @@ beforeAll(async () => {
 });
 
 describe("Graphwar WASM route context", () => {
+  it.each([
+    { equation: "y" as const, isMirrored: false, name: "y", routeState: 0x1_0000_0000_0000_0001n },
+    { equation: "dy" as const, isMirrored: false, name: "dy", routeState: -0x1_0000_0000_0000_0001n },
+    { equation: "ddy" as const, isMirrored: true, name: "mirrored ddy", routeState: 0n },
+  ])("matches one canonical Step transition for $name", async ({ equation, isMirrored, routeState }) => {
+    const runtime = await createRuntime();
+    const routeBounds = isMirrored ? { ...bounds, maxX: bounds.minX, minX: bounds.maxX } : bounds;
+    const decimalPlaces = 4;
+    const scale = equation === "y" ? 1 : equation === "dy" ? 2 : 4;
+    const originY = -Number(routeState) / 10 ** decimalPlaces / scale;
+    const model = createGraphwarStepRouteModel(originY, {
+      decimalPlaces,
+      equation,
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    expect(model).toBeDefined();
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds: routeBounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    expect(stepRoute).toBeDefined();
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const contextCursor = runtime.arenaCursor;
+    const previous = createGraphPoint(-20, 0);
+    const next = createGraphPoint(-5, 5);
+    const routeStateKey = routeState.toString();
+    const expected = evaluateGraphwarStepRouteTransition(
+      model,
+      0,
+      previous,
+      next,
+      {
+        boundaryInset: 0,
+        bounds: routeBounds,
+        summedArea: createGraphwarPlaneMaskSummedArea(context.routeMask),
+      },
+      routeStateKey,
+    );
+    const actual = stepRoute.evaluateTransition(previous, next, { resolvedY: 0, routeStateKey });
+
+    expect(expected.ok).toBe(true);
+    expect(actual.type).toBe("success");
+    if (expected.ok && actual.type === "success") {
+      expect(actual.transition).toEqual({
+        envelope: expected.transition.envelope,
+        resolvedEndY: expected.transition.resolvedEndY,
+        resolvedStartY: expected.transition.resolvedStartY,
+        routeState: {
+          resolvedY: expected.transition.resolvedEndY,
+          routeStateKey: expected.transition.routeStateKey,
+        },
+        secondaryCost: expected.transition.secondaryCost,
+      });
+    }
+    expect(runtime.arenaCursor).toBe(contextCursor);
+    context.dispose();
+  });
+
+  it("matches Step edge rejection and keeps invalid results state-free", async () => {
+    const runtime = await createRuntime();
+    const sourceMask = new Uint8Array(planeCellCount);
+    sourceMask[187 * GRAPHWAR_PLANE_LENGTH + 277] = 1;
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask,
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const summedArea = createGraphwarPlaneMaskSummedArea(context.routeMask);
+    const zeroTransition = stepRoute.evaluateTransition(createGraphPoint(-20, 0), createGraphPoint(-5, 0), {
+      resolvedY: 0,
+      routeStateKey: "0",
+    });
+    expect(zeroTransition).toMatchObject({
+      transition: { routeState: { resolvedY: 0, routeStateKey: "0" } },
+      type: "success",
+    });
+    for (const [previous, next] of [
+      [createGraphPoint(-20, 0), createGraphPoint(-5, 5)],
+      [createGraphPoint(-5, 0), createGraphPoint(-20, 5)],
+    ] as const) {
+      const expected = evaluateGraphwarStepRouteTransition(
+        model,
+        0,
+        previous,
+        next,
+        { boundaryInset: 0, bounds, summedArea },
+        "0",
+      );
+      const actual = stepRoute.evaluateTransition(previous, next, { resolvedY: 0, routeStateKey: "0" });
+      expect(actual).toEqual(
+        expected.ok ? expect.objectContaining({ type: "success" }) : { reason: expected.reason, type: "invalid" },
+      );
+    }
+    context.dispose();
+  });
+
+  it.each(["result", "state"] as const)(
+    "rejects a Step transition %s pointing into retained context",
+    async (field) => {
+      const runtime = await createRuntime();
+      const model = createGraphwarStepRouteModel(0, {
+        decimalPlaces: 4,
+        equation: "y",
+        formulaPathSteepness: 2,
+        steepness: 2,
+      });
+      if (!model) {
+        throw new Error("Expected a valid Step route model");
+      }
+      let contextPointer = 0;
+      const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+      vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+        const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
+        if (command === 1) {
+          contextPointer = resultPointer;
+        } else if (command === 8) {
+          if (field === "result") {
+            return contextPointer;
+          }
+          const resultView = new DataView(runtime.buffer, resultPointer, 160);
+          resultView.setInt32(144, 1, true);
+          resultView.setUint32(148, contextPointer, true);
+          resultView.setUint32(152, 1, true);
+        }
+        return resultPointer;
+      });
+      const context = createGraphwarWasmRouteContext(runtime, {
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        friendlySoldierCenters: [],
+        routeOriginPoint: { x: 120, y: 225 },
+        routeTolerancePlanePixels: 0,
+        simulationTolerancePlanePixels: 0,
+        soldierHitRadiusPixels: 7,
+        sourceMask: new Uint8Array(planeCellCount),
+        stepRouteModel: {
+          ...model,
+          qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+        },
+      });
+      const stepRoute = context.stepRoute;
+      if (!stepRoute) {
+        throw new Error("Expected a retained Step route capability");
+      }
+
+      let caught: unknown;
+      try {
+        stepRoute.evaluateTransition(createGraphPoint(-20, 0), createGraphPoint(-5, 5), {
+          resolvedY: 0,
+          routeStateKey: "0",
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ faultDomain: "abi" });
+      expect(caught).toEqual(expect.objectContaining({ message: expect.stringMatching(/outside the raw arena/u) }));
+      context.dispose();
+    },
+  );
+
+  it.each([
+    {
+      corrupt(resultView: DataView) {
+        resultView.setUint32(4, 0, true);
+      },
+      name: "non-forward success",
+      next: createGraphPoint(-20, 5),
+      previous: createGraphPoint(-5, 0),
+    },
+    {
+      corrupt(resultView: DataView) {
+        resultView.setFloat64(24, resultView.getFloat64(24, true) + 1, true);
+      },
+      name: "secondary cost",
+      next: createGraphPoint(-5, 5),
+      previous: createGraphPoint(-20, 0),
+    },
+    {
+      corrupt(resultView: DataView) {
+        resultView.setFloat64(40, resultView.getFloat64(40, true) + 1, true);
+      },
+      name: "midpoint",
+      next: createGraphPoint(-5, 5),
+      previous: createGraphPoint(-20, 0),
+    },
+    {
+      corrupt(resultView: DataView) {
+        resultView.setFloat64(48, resultView.getFloat64(48, true) + 1, true);
+      },
+      name: "envelope region",
+      next: createGraphPoint(-5, 5),
+      previous: createGraphPoint(-20, 0),
+    },
+  ])("rejects an inconsistent Step transition $name", async ({ corrupt, next, previous }) => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
+      if (command === 8) {
+        corrupt(new DataView(runtime.buffer, resultPointer, 160));
+      }
+      return resultPointer;
+    });
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+
+    expect(() => stepRoute.evaluateTransition(previous, next, { resolvedY: 0, routeStateKey: "0" })).toThrow(
+      /inconsistent with its request/u,
+    );
+    context.dispose();
+  });
+
   it.each([
     { routeTolerance: 2.25, simulationTolerance: 1.5 },
     { routeTolerance: 0, simulationTolerance: 0 },

@@ -1,4 +1,17 @@
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "./game-constants";
+import { floorFormulaDecimal } from "./decimal";
+import { FORMULA_EQUATION_DDY, FORMULA_EQUATION_DY, FORMULA_EQUATION_Y } from "./formula-layout";
+import {
+  createStepFormulaResolutionFromPlateauState,
+  getStepFormulaResolutionStateCount,
+  getStepFormulaResolutionStatePointer,
+  getStepFormulaResolutionStateSign,
+  resolveStepFormulaTransition,
+  STEP_TRANSITION_EFFECTIVE_DELTA_Y_OFFSET,
+  STEP_TRANSITION_IS_VALID_OFFSET,
+  STEP_TRANSITION_RESOLVED_END_Y_OFFSET,
+  STEP_TRANSITION_RESOLVED_START_Y_OFFSET,
+} from "./formula-step-resolution";
 import { markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
 import * as Layout from "./pathfinding-layout";
 
@@ -1057,6 +1070,7 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   const policyLength = load<u32>(inputPointer + Layout.ROUTE_CREATE_POLICY_LENGTH_OFFSET);
   const lookaheadPointer = load<u32>(inputPointer + Layout.ROUTE_CREATE_LOOKAHEAD_POINTER_OFFSET);
   const lookaheadLength = load<u32>(inputPointer + Layout.ROUTE_CREATE_LOOKAHEAD_LENGTH_OFFSET);
+  const stepModelPointer = load<u32>(inputPointer + Layout.ROUTE_CREATE_STEP_MODEL_POINTER_OFFSET);
   const cellCount = getPlaneCellCount();
   if (
     sourceMaskLength != cellCount ||
@@ -1070,6 +1084,28 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaRange(friendlyYPointer, friendlyCount * sizeof<f64>(), sizeof<f64>());
   requireArenaRange(policyPointer, policyLength * sizeof<f64>(), sizeof<f64>());
   requireArenaRange(lookaheadPointer, lookaheadLength, 1);
+  if (stepModelPointer != 0) {
+    requireArenaRange(stepModelPointer, Layout.ROUTE_STEP_MODEL_BYTE_LENGTH, sizeof<f64>());
+    const stepOriginY = load<f64>(stepModelPointer + Layout.ROUTE_STEP_MODEL_ORIGIN_Y_OFFSET);
+    const formulaSteepness = load<f64>(stepModelPointer + Layout.ROUTE_STEP_MODEL_FORMULA_STEEPNESS_OFFSET);
+    const qualityTarget = load<f64>(
+      stepModelPointer + Layout.ROUTE_STEP_MODEL_QUALITY_TARGET_PLANE_PIXELS_OFFSET,
+    );
+    const decimalPlaces = load<f64>(stepModelPointer + Layout.ROUTE_STEP_MODEL_DECIMAL_PLACES_OFFSET);
+    const equation = load<f64>(stepModelPointer + Layout.ROUTE_STEP_MODEL_EQUATION_OFFSET);
+    if (
+      !isFiniteValue(stepOriginY) ||
+      !isFiniteValue(formulaSteepness) ||
+      formulaSteepness <= 0 ||
+      !isFiniteValue(qualityTarget) ||
+      qualityTarget < 0 ||
+      !isIntegerValue(decimalPlaces) ||
+      decimalPlaces < 0 ||
+      decimalPlaces > 15 ||
+      !isIntegerValue(equation) ||
+      (equation != FORMULA_EQUATION_Y && equation != FORMULA_EQUATION_DY && equation != FORMULA_EQUATION_DDY)
+    ) trap();
+  }
   const visibilityConcaveCrossTolerance = loadNonNegativePolicyValue(
     policyPointer,
     Layout.ROUTE_POLICY_VISIBILITY_CONCAVE_CROSS_TOLERANCE_INDEX,
@@ -1271,7 +1307,11 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
 
   const contextPointer = reserveArena(Layout.ROUTE_CONTEXT_BYTE_LENGTH, sizeof<u64>());
   store<u32>(contextPointer + Layout.ROUTE_CONTEXT_MAGIC_OFFSET, Layout.ROUTE_CONTEXT_MAGIC);
-  store<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET, isMirrored ? Layout.ROUTE_CONTEXT_FLAG_MIRRORED : 0);
+  store<u32>(
+    contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET,
+    (isMirrored ? Layout.ROUTE_CONTEXT_FLAG_MIRRORED : 0) |
+      (stepModelPointer != 0 ? Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL : 0),
+  );
   store<u32>(contextPointer + Layout.ROUTE_CONTEXT_ROUTE_MASK_POINTER_OFFSET, routeMaskPointer);
   store<u32>(contextPointer + Layout.ROUTE_CONTEXT_ROUTE_MASK_LENGTH_OFFSET, cellCount);
   store<u32>(contextPointer + Layout.ROUTE_CONTEXT_SIMULATION_MASK_POINTER_OFFSET, simulationMaskPointer);
@@ -1359,6 +1399,7 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
     contextPointer + Layout.ROUTE_CONTEXT_VISIBILITY_PREVIEW_EXPANSION_INTERVAL_OFFSET,
     visibilityPreviewExpansionInterval,
   );
+  store<u32>(contextPointer + Layout.ROUTE_CONTEXT_STEP_MODEL_POINTER_OFFSET, stepModelPointer);
   return contextPointer;
 }
 
@@ -1370,6 +1411,12 @@ function requireRouteContext(pointer: u32): void {
     load<u32>(pointer + Layout.ROUTE_CONTEXT_ROUTE_MASK_LENGTH_OFFSET) != getPlaneCellCount() ||
     load<u32>(pointer + Layout.ROUTE_CONTEXT_SUMMED_AREA_LENGTH_OFFSET) !=
       (getPlaneWidth() + 1) * (getPlaneHeight() + 1)
+  ) trap();
+  const flags = load<u32>(pointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET);
+  const stepModelPointer = load<u32>(pointer + Layout.ROUTE_CONTEXT_STEP_MODEL_POINTER_OFFSET);
+  if (
+    (flags & ~(Layout.ROUTE_CONTEXT_FLAG_MIRRORED | Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL)) != 0 ||
+    ((flags & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) != 0) != (stepModelPointer != 0)
   ) trap();
 }
 
@@ -1493,6 +1540,19 @@ function runGraphRegionHitQuery(inputPointer: u32, inputByteLength: u32): u32 {
     regionMinX > regionMaxX ||
     regionMinY > regionMaxY
   ) trap();
+  return createQueryResult(
+    graphRegionHitsRouteContext(contextPointer, regionMinX, regionMaxX, regionMinY, regionMaxY) ? 1 : 0,
+  );
+}
+
+/** Conservatively maps one validated Graphwar closed region onto the retained route mask. */
+function graphRegionHitsRouteContext(
+  contextPointer: u32,
+  regionMinX: f64,
+  regionMaxX: f64,
+  regionMinY: f64,
+  regionMaxY: f64,
+): bool {
   const boundsMinX = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MIN_X_OFFSET);
   const boundsMaxX = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MAX_X_OFFSET);
   const boundsMinY = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MIN_Y_OFFSET);
@@ -1502,7 +1562,7 @@ function runGraphRegionHitQuery(inputPointer: u32, inputByteLength: u32): u32 {
   const graphMinY = NativeMath.min(boundsMinY, boundsMaxY);
   const graphMaxY = NativeMath.max(boundsMinY, boundsMaxY);
   if (regionMinX < graphMinX || regionMaxX > graphMaxX || regionMinY < graphMinY || regionMaxY > graphMaxY) {
-    return createQueryResult(1);
+    return true;
   }
 
   const width = getGraphwarPlaneLength();
@@ -1520,7 +1580,7 @@ function runGraphRegionHitQuery(inputPointer: u32, inputByteLength: u32): u32 {
   const minY = <i32>NativeMath.max(0, NativeMath.ceil(minPlaneY) - 1);
   const maxY = <i32>NativeMath.min(height - 1, NativeMath.floor(maxPlaneY));
   if (!planePointIsInsideBounds(minX, minY) || !planePointIsInsideBounds(maxX, maxY) || minX > maxX || minY > maxY) {
-    return createQueryResult(1);
+    return true;
   }
   const boundaryInset = normalizeBoundaryInset(
     load<f64>(contextPointer + Layout.ROUTE_CONTEXT_BOUNDARY_EXPANSION_OFFSET),
@@ -1530,8 +1590,169 @@ function runGraphRegionHitQuery(inputPointer: u32, inputByteLength: u32): u32 {
     maxX >= <i32>getPlaneWidth() - boundaryInset ||
     minY < boundaryInset ||
     maxY >= <i32>getPlaneHeight() - boundaryInset
-  ) return createQueryResult(1);
-  return createQueryResult(countPlaneRegion(contextPointer, <u32>minX, <u32>maxX, <u32>minY, <u32>maxY) > 0 ? 1 : 0);
+  ) return true;
+  return countPlaneRegion(contextPointer, <u32>minX, <u32>maxX, <u32>minY, <u32>maxY) > 0;
+}
+
+function createStepTransitionResult(status: u32): u32 {
+  const resultPointer = reserveArena(Layout.ROUTE_STEP_TRANSITION_RESULT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(resultPointer, 0, Layout.ROUTE_STEP_TRANSITION_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_MAGIC_OFFSET, Layout.ROUTE_STEP_TRANSITION_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET, status);
+  return resultPointer;
+}
+
+@inline
+function storeGraphRegion(
+  pointer: u32,
+  startX: f64,
+  endX: f64,
+  startY: f64,
+  endY: f64,
+): void {
+  store<f64>(pointer, NativeMath.min(startX, endX));
+  store<f64>(pointer + 8, NativeMath.max(startX, endX));
+  store<f64>(pointer + 16, NativeMath.min(startY, endY));
+  store<f64>(pointer + 24, NativeMath.max(startY, endY));
+}
+
+@inline
+function graphRegionRecordHitsRouteContext(contextPointer: u32, pointer: u32): bool {
+  return graphRegionHitsRouteContext(
+    contextPointer,
+    load<f64>(pointer),
+    load<f64>(pointer + 8),
+    load<f64>(pointer + 16),
+    load<f64>(pointer + 24),
+  );
+}
+
+/** Resolves one canonical Step edge and checks its H/R0/R1 envelope without a JS callback. */
+function runStepTransition(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<f64>());
+  const contextPointer = load<u32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_CONTEXT_POINTER_OFFSET);
+  requireRouteContext(contextPointer);
+  const flags = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET);
+  if ((flags & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) == 0) trap();
+  const modelPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_STEP_MODEL_POINTER_OFFSET);
+  requireArenaRange(modelPointer, Layout.ROUTE_STEP_MODEL_BYTE_LENGTH, sizeof<f64>());
+
+  const previousX = load<f64>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_X_OFFSET);
+  const previousY = load<f64>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_Y_OFFSET);
+  const nextX = load<f64>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_X_OFFSET);
+  const nextY = load<f64>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_Y_OFFSET);
+  const resolvedY = load<f64>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_RESOLVED_Y_OFFSET);
+  const stateSign = load<i32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_SIGN_OFFSET);
+  const statePointer = load<u32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_POINTER_OFFSET);
+  const stateCount = load<u32>(inputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_COUNT_OFFSET);
+  if (
+    !isFiniteValue(previousX) ||
+    !isFiniteValue(previousY) ||
+    !isFiniteValue(nextX) ||
+    !isFiniteValue(nextY) ||
+    !isFiniteValue(resolvedY)
+  ) trap();
+  if (stateCount > u32.MAX_VALUE / sizeof<u32>()) trap();
+  requireArenaRange(stateCount == 0 ? 0 : statePointer, stateCount * sizeof<u32>(), sizeof<u32>());
+  if (nextX <= previousX) {
+    return createStepTransitionResult(Layout.ROUTE_STEP_TRANSITION_STATUS_NON_FORWARD);
+  }
+
+  const formulaSteepness = load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_FORMULA_STEEPNESS_OFFSET);
+  const decimalPlaces = <i32>load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_DECIMAL_PLACES_OFFSET);
+  const equation = <i32>load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_EQUATION_OFFSET);
+  const resolutionPointer = createStepFormulaResolutionFromPlateauState(
+    formulaSteepness,
+    decimalPlaces,
+    equation,
+    load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_ORIGIN_Y_OFFSET),
+    resolvedY,
+    stateSign,
+    statePointer,
+    stateCount,
+  );
+  const transitionPointer = reserveArena(64, sizeof<f64>());
+  resolveStepFormulaTransition(resolutionPointer, nextY, 0, false, decimalPlaces, equation, transitionPointer);
+  const resolvedStartY = load<f64>(transitionPointer + STEP_TRANSITION_RESOLVED_START_Y_OFFSET);
+  const resolvedEndY = load<f64>(transitionPointer + STEP_TRANSITION_RESOLVED_END_Y_OFFSET);
+  const effectiveDeltaY = load<f64>(transitionPointer + STEP_TRANSITION_EFFECTIVE_DELTA_Y_OFFSET);
+  if (
+    load<u32>(transitionPointer + STEP_TRANSITION_IS_VALID_OFFSET) == 0 ||
+    !isFiniteValue(resolvedStartY) ||
+    !isFiniteValue(resolvedEndY)
+  ) return createStepTransitionResult(Layout.ROUTE_STEP_TRANSITION_STATUS_NUMERIC);
+
+  const boundsMinX = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MIN_X_OFFSET);
+  const boundsMaxX = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MAX_X_OFFSET);
+  const boundsMinY = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MIN_Y_OFFSET);
+  const boundsMaxY = load<f64>(contextPointer + Layout.ROUTE_CONTEXT_MAX_Y_OFFSET);
+  const availableOffset =
+    nextX - previousX - NativeMath.abs(boundsMaxX - boundsMinX) / getGraphwarPlaneLength();
+  const requiredProgress =
+    1 -
+    (NativeMath.abs(boundsMaxY - boundsMinY) *
+      load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_QUALITY_TARGET_PLANE_PIXELS_OFFSET)) /
+      getGraphwarPlaneHeight() /
+      NativeMath.abs(effectiveDeltaY);
+  let centerX = nextX;
+  if (
+    effectiveDeltaY != 0 &&
+    requiredProgress > 0.5 &&
+    availableOffset > 0 &&
+    isFiniteValue(availableOffset)
+  ) {
+    const centerOffset = NativeMath.log(requiredProgress / (1 - requiredProgress)) / formulaSteepness;
+    centerX = nextX - NativeMath.min(centerOffset, availableOffset);
+  }
+  centerX = floorFormulaDecimal(centerX, decimalPlaces);
+  if (!isFiniteValue(centerX) || centerX > nextX) {
+    return createStepTransitionResult(
+      isFiniteValue(centerX)
+        ? Layout.ROUTE_STEP_TRANSITION_STATUS_CENTER_OUTSIDE_SEGMENT
+        : Layout.ROUTE_STEP_TRANSITION_STATUS_NON_FINITE,
+    );
+  }
+  const xs = centerX - (nextX - centerX);
+  const ym = resolvedStartY / 2 + resolvedEndY / 2;
+  if (!isFiniteValue(xs) || !isFiniteValue(ym)) {
+    return createStepTransitionResult(Layout.ROUTE_STEP_TRANSITION_STATUS_NON_FINITE);
+  }
+  if (xs < previousX) {
+    return createStepTransitionResult(Layout.ROUTE_STEP_TRANSITION_STATUS_SYMMETRIC_START_BEFORE_SEGMENT);
+  }
+
+  const resultPointer = createStepTransitionResult(Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS);
+  store<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_START_Y_OFFSET, resolvedStartY);
+  store<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET, resolvedEndY);
+  store<f64>(
+    resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_SECONDARY_COST_OFFSET,
+    NativeMath.abs(nextY - previousY),
+  );
+  store<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_XS_OFFSET, xs);
+  store<f64>(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_YM_OFFSET, ym);
+  storeGraphRegion(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_H_OFFSET, previousX, xs, resolvedStartY, resolvedStartY);
+  storeGraphRegion(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_R0_OFFSET, xs, centerX, resolvedStartY, ym);
+  storeGraphRegion(resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_R1_OFFSET, centerX, nextX, ym, resolvedEndY);
+  if (
+    graphRegionRecordHitsRouteContext(contextPointer, resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_H_OFFSET) ||
+    graphRegionRecordHitsRouteContext(contextPointer, resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_R0_OFFSET) ||
+    graphRegionRecordHitsRouteContext(contextPointer, resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_R1_OFFSET)
+  ) return createStepTransitionResult(Layout.ROUTE_STEP_TRANSITION_STATUS_OBSTACLE);
+  store<i32>(
+    resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET,
+    getStepFormulaResolutionStateSign(resolutionPointer),
+  );
+  const nextStateCount = getStepFormulaResolutionStateCount(resolutionPointer);
+  store<u32>(
+    resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET,
+    nextStateCount == 0 ? 0 : getStepFormulaResolutionStatePointer(resolutionPointer),
+  );
+  store<u32>(
+    resultPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET,
+    nextStateCount,
+  );
+  return resultPointer;
 }
 
 const THETA_HEAP_NODE_INDEX_OFFSET: u32 = 0;
@@ -3204,6 +3425,7 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_PLANE_REGION_COUNT) return runPlaneRegionCountQuery(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_THETA_STAR) return runThetaStarSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_VISIBILITY_GRAPH) return runVisibilityGraphSearch(inputPointer, inputByteLength);
+  if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
   trap();
   return 0;
 }

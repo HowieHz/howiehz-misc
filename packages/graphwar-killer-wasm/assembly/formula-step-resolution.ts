@@ -7,6 +7,12 @@ import {
   roundFormulaDecimal,
   signedLimbToF64,
 } from "./decimal";
+import {
+  createSignedLimbStateFromMagnitude,
+  getSignedLimbStateCount,
+  getSignedLimbStatePointer,
+  getSignedLimbStateSign,
+} from "./limb-integer";
 import { FORMULA_EQUATION_DY, FORMULA_EQUATION_Y } from "./formula-layout";
 import { reserveArena } from "./memory";
 
@@ -62,6 +68,50 @@ export function createStepFormulaResolution(
   );
   store<u32>(statePointer + STEP_RESOLUTION_HAS_EXACT_PLATEAU_OFFSET, 1);
   return statePointer;
+}
+
+/** Restores the atomic canonical plateau state used by stateful Step routing. */
+export function createStepFormulaResolutionFromPlateauState(
+  formulaSteepness: f64,
+  decimalPlaces: i32,
+  equation: i32,
+  originY: f64,
+  resolvedY: f64,
+  sign: i32,
+  limbPointer: u32,
+  limbCount: u32,
+): u32 {
+  const statePointer = reserveArena(STEP_RESOLUTION_BYTE_LENGTH, sizeof<f64>());
+  store<f64>(statePointer + STEP_RESOLUTION_ORIGIN_Y_OFFSET, originY);
+  store<f64>(statePointer + STEP_RESOLUTION_RESOLVED_Y_OFFSET, resolvedY);
+  store<f64>(statePointer + STEP_RESOLUTION_FORMULA_STEEPNESS_OFFSET, formulaSteepness);
+  store<f64>(statePointer + STEP_RESOLUTION_SCALE_OFFSET, getEquationScale(equation, formulaSteepness));
+  const minimumCapacity = getDecimalAccumulatorLimbCapacity(decimalPlaces, 1);
+  if (limbCount == u32.MAX_VALUE) {
+    unreachable();
+  }
+  const capacity = limbCount >= minimumCapacity ? limbCount + 1 : minimumCapacity;
+  store<u32>(
+    statePointer + STEP_RESOLUTION_LIMB_STATE_POINTER_OFFSET,
+    createSignedLimbStateFromMagnitude(sign, limbPointer, limbCount, capacity),
+  );
+  store<u32>(statePointer + STEP_RESOLUTION_HAS_EXACT_PLATEAU_OFFSET, 1);
+  return statePointer;
+}
+
+@inline
+export function getStepFormulaResolutionStateSign(statePointer: u32): i32 {
+  return getSignedLimbStateSign(load<u32>(statePointer + STEP_RESOLUTION_LIMB_STATE_POINTER_OFFSET));
+}
+
+@inline
+export function getStepFormulaResolutionStateCount(statePointer: u32): u32 {
+  return getSignedLimbStateCount(load<u32>(statePointer + STEP_RESOLUTION_LIMB_STATE_POINTER_OFFSET));
+}
+
+@inline
+export function getStepFormulaResolutionStatePointer(statePointer: u32): u32 {
+  return getSignedLimbStatePointer(load<u32>(statePointer + STEP_RESOLUTION_LIMB_STATE_POINTER_OFFSET));
 }
 
 @inline

@@ -172,6 +172,17 @@ export interface GraphwarWasmRouteContextInput {
   simulationTolerancePlanePixels: number;
   soldierHitRadiusPixels: number;
   sourceMask: Uint8Array;
+  /** Step state and numerical settings are one optional capability of the retained route context. */
+  stepRouteModel?: GraphwarWasmStepRouteModelInput;
+}
+
+/** Canonical Step route model consumed directly by the WASM edge evaluator. */
+export interface GraphwarWasmStepRouteModelInput {
+  decimalPlaces: number;
+  equation: "ddy" | "dy" | "y";
+  formulaSteepness: number;
+  originY: number;
+  qualityTargetPlanePixels: number;
 }
 
 /** Packed route context 原子携带全部长期数据，不允许 policy/mask 半状态。 */
@@ -180,6 +191,7 @@ export interface GraphwarWasmPackedRouteContextInput {
   friendlySoldierCenters: GraphwarWasmPackedPointSoA;
   routePolicy: GraphwarWasmMemorySlice;
   sourceMask: GraphwarWasmMemorySlice;
+  stepRouteModel?: GraphwarWasmMemorySlice;
   thetaStarLookaheadColumnOffsets: GraphwarWasmMemorySlice;
 }
 
@@ -573,11 +585,57 @@ export function packGraphwarWasmRouteContextInput(
     validateGraphwarWasmFiniteNumber(input.routeOriginPoint.y, "routeOriginPoint.y", "input"),
     validateNonNegativeFiniteNumber(input.soldierHitRadiusPixels, "soldierHitRadiusPixels"),
   ]);
+  const stepRouteModel = input.stepRouteModel;
+  let packedStepRouteModel: GraphwarWasmMemorySlice | undefined;
+  if (stepRouteModel) {
+    const decimalPlaces = validateGraphwarWasmU32(
+      stepRouteModel.decimalPlaces,
+      "stepRouteModel.decimalPlaces",
+      "input",
+    );
+    if (decimalPlaces > 15) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-formula-input",
+        "stepRouteModel.decimalPlaces must be between 0 and 15",
+        "input",
+      );
+    }
+    const formulaSteepness = validatePositiveFiniteNumber(
+      stepRouteModel.formulaSteepness,
+      "stepRouteModel.formulaSteepness",
+    );
+    const equation =
+      stepRouteModel.equation === "y"
+        ? 1
+        : stepRouteModel.equation === "dy"
+          ? 2
+          : stepRouteModel.equation === "ddy"
+            ? 3
+            : 0;
+    if (equation === 0) {
+      throw new GraphwarWasmAdapterError("invalid-formula-input", "stepRouteModel.equation is invalid", "input");
+    }
+    packedStepRouteModel = writeGraphwarWasmFloat64Values(
+      arena,
+      new Float64Array([
+        validateGraphwarWasmFiniteNumber(stepRouteModel.originY, "stepRouteModel.originY", "input"),
+        formulaSteepness,
+        validateNonNegativeFiniteNumber(
+          stepRouteModel.qualityTargetPlanePixels,
+          "stepRouteModel.qualityTargetPlanePixels",
+        ),
+        decimalPlaces,
+        equation,
+      ]),
+      minimumPointer,
+    );
+  }
   return {
     context: writeGraphwarWasmFloat64Values(arena, context, minimumPointer),
     friendlySoldierCenters: packGraphwarWasmPointSoA(arena, input.friendlySoldierCenters, minimumPointer),
     routePolicy: writeGraphwarWasmFloat64Values(arena, createGraphwarRoutePolicyData(), minimumPointer),
     sourceMask: packGraphwarPlaneMask(arena, input.sourceMask, minimumPointer),
+    ...(packedStepRouteModel === undefined ? {} : { stepRouteModel: packedStepRouteModel }),
     thetaStarLookaheadColumnOffsets: writeGraphwarWasmBytes(
       arena,
       createGraphwarThetaStarLookaheadColumnOffsetData(),

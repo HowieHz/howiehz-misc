@@ -1,16 +1,21 @@
+import { graphwarThetaStarHeuristics } from "../../pathfinding/routing/canonical-data";
 import type { GraphClosedRegion, PlaneMaskClosedRegion } from "../../pathfinding/routing/step-envelope";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { PlaneGridPoint } from "../plane-grid";
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmBytes,
+  copyGraphwarWasmFloat64Values,
   copyGraphwarWasmUint32Values,
+  validateGraphwarWasmEnumValue,
   validateGraphwarWasmMemoryRange,
   validateGraphwarWasmU32,
 } from "./abi";
 import type { GraphwarWasmKernelRuntime } from "./runtime";
 import {
+  copyGraphwarWasmPathfindingPreviewEvent,
   packGraphwarWasmRouteContextInput,
+  type GraphwarWasmPathfindingPreviewEvent,
   type GraphwarWasmRouteContextInput,
   type GraphwarWasmPoint,
 } from "./task-adapter";
@@ -21,9 +26,10 @@ const routeCommand = {
   lineHit: 3,
   planeRegionCount: 5,
   pointHit: 2,
+  thetaStar: 6,
 } as const;
 const routeCreateInputByteLength = 48;
-const routeContextByteLength = 152;
+const routeContextByteLength = 208;
 const routeContextMagic = 0x524f_5554;
 const routeContextMirroredFlag = 1;
 const routeQueryResultByteLength = 8;
@@ -31,6 +37,10 @@ const routeQueryResultMagic = 0x5152_4f55;
 const routePointInputByteLength = 24;
 const routeLineInputByteLength = 40;
 const routeRegionInputByteLength = 40;
+const routeSearchInputByteLength = 48;
+const routePreviewByteLength = 48;
+const routeSearchResultByteLength = 32;
+const routeSearchResultMagic = 0x5253_4c54;
 const routeBoundaryEdgeRecordU32Length = 5;
 const planeCellCount = 770 * 450;
 const summedAreaValueCount = 771 * 451;
@@ -46,10 +56,29 @@ export interface GraphwarWasmRouteContext {
   readonly simulationObstacleCount: number;
   countPlaneRegionObstacles: (region: PlaneMaskClosedRegion) => number;
   dispose: () => void;
+  findThetaStarPath: (
+    start: PlaneGridPoint,
+    target: PlaneGridPoint,
+    shouldCollectPreviews?: boolean,
+  ) => GraphwarWasmRouteSearchResult;
   graphRegionHitsObstacle: (region: GraphClosedRegion) => boolean;
   lineHitsObstacle: (start: PlaneGridPoint, end: PlaneGridPoint) => boolean;
   pointHitsObstacle: (point: PlaneGridPoint) => boolean;
 }
+
+/** Stateless route search returns one complete path or an explicit normal no-route result. */
+export type GraphwarWasmRouteSearchResult =
+  | {
+      readonly expansionCount: number;
+      readonly previews: readonly GraphwarWasmPathfindingPreviewEvent[];
+      readonly type: "no-route";
+    }
+  | {
+      readonly expansionCount: number;
+      readonly path: readonly PlaneGridPoint[];
+      readonly previews: readonly GraphwarWasmPathfindingPreviewEvent[];
+      readonly type: "success";
+    };
 
 /**
  * Creates one long-lived route context below an arena mark.
@@ -176,6 +205,165 @@ export function createGraphwarWasmRouteContext(
       { length: boundaryEdgeValueCount, pointer: contextView.getUint32(56, true) },
       runtime.arenaBase,
     );
+    if (contextView.getUint32(156, true) !== GRAPHWAR_PLANE_LENGTH + 1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route free-span offset length is invalid",
+        "output",
+      );
+    }
+    const freeSpanOffsets = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: contextView.getUint32(156, true), pointer: contextView.getUint32(152, true) },
+      runtime.arenaBase,
+    );
+    const freeSpanValueCount = contextView.getUint32(164, true);
+    if (freeSpanValueCount % 2 !== 0 || freeSpanValueCount > planeCellCount * 2) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route free-span value length is invalid",
+        "output",
+      );
+    }
+    const freeSpanValues = copyGraphwarWasmUint32Values(
+      runtime,
+      { length: freeSpanValueCount, pointer: contextView.getUint32(160, true) },
+      runtime.arenaBase,
+    );
+    const thetaClosedRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: planeCellCount, pointer: contextView.getUint32(168, true) },
+      { alignment: 1, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+    );
+    const thetaGScoreRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: planeCellCount, pointer: contextView.getUint32(172, true) },
+      { alignment: 8, elementByteLength: 8, minimumPointer: runtime.arenaBase },
+    );
+    const thetaParentRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: planeCellCount, pointer: contextView.getUint32(176, true) },
+      { alignment: 4, elementByteLength: 4, minimumPointer: runtime.arenaBase },
+    );
+    const thetaTouchedRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: planeCellCount, pointer: contextView.getUint32(180, true) },
+      { alignment: 4, elementByteLength: 4, minimumPointer: runtime.arenaBase },
+    );
+    if (contextView.getUint32(184, true) !== 0) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route Theta scratch is not initially empty",
+        "output",
+      );
+    }
+    const thetaCandidateRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: GRAPHWAR_PLANE_HEIGHT, pointer: contextView.getUint32(188, true) },
+      { alignment: 4, elementByteLength: 4, minimumPointer: runtime.arenaBase },
+    );
+    const thetaSeenRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: GRAPHWAR_PLANE_HEIGHT, pointer: contextView.getUint32(192, true) },
+      { alignment: 1, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+    );
+    if (
+      contextView.getUint32(196, true) !== graphwarThetaStarHeuristics.previewCandidateLimit ||
+      contextView.getUint32(200, true) !== graphwarThetaStarHeuristics.previewEdgeLimit ||
+      contextView.getUint32(204, true) !== graphwarThetaStarHeuristics.previewExpansionInterval
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Graphwar WASM route context does not preserve its Theta preview policy",
+        "output",
+      );
+    }
+    validateDisjointRouteContextRanges([
+      { byteLength: packed.sourceMask.length, label: "source mask input", pointer: packed.sourceMask.pointer },
+      {
+        byteLength: packed.context.length * Float64Array.BYTES_PER_ELEMENT,
+        label: "context input",
+        pointer: packed.context.pointer,
+      },
+      {
+        byteLength: packed.friendlySoldierCenters.length * Float64Array.BYTES_PER_ELEMENT,
+        label: "friendly x input",
+        pointer: packed.friendlySoldierCenters.x.pointer,
+      },
+      {
+        byteLength: packed.friendlySoldierCenters.length * Float64Array.BYTES_PER_ELEMENT,
+        label: "friendly y input",
+        pointer: packed.friendlySoldierCenters.y.pointer,
+      },
+      {
+        byteLength: packed.routePolicy.length * Float64Array.BYTES_PER_ELEMENT,
+        label: "route policy input",
+        pointer: packed.routePolicy.pointer,
+      },
+      {
+        byteLength: packed.thetaStarLookaheadColumnOffsets.length,
+        label: "Theta lookahead input",
+        pointer: packed.thetaStarLookaheadColumnOffsets.pointer,
+      },
+      { byteLength: routeContextByteLength, label: "context record", pointer: contextPointer },
+      { byteLength: routeMask.length, label: "route mask", pointer: contextView.getUint32(8, true) },
+      { byteLength: simulationMask.length, label: "simulation mask", pointer: contextView.getUint32(16, true) },
+      {
+        byteLength: summedAreaValueCount * Uint32Array.BYTES_PER_ELEMENT,
+        label: "summed area",
+        pointer: contextView.getUint32(24, true),
+      },
+      {
+        byteLength: planeCellCount * Uint32Array.BYTES_PER_ELEMENT,
+        label: "component labels",
+        pointer: contextView.getUint32(48, true),
+      },
+      {
+        byteLength: boundaryEdgeValueCount * Uint32Array.BYTES_PER_ELEMENT,
+        label: "boundary edges",
+        pointer: contextView.getUint32(56, true),
+      },
+      {
+        byteLength: freeSpanOffsets.length * Uint32Array.BYTES_PER_ELEMENT,
+        label: "free-span offsets",
+        pointer: contextView.getUint32(152, true),
+      },
+      {
+        byteLength: freeSpanValues.length * Uint32Array.BYTES_PER_ELEMENT,
+        label: "free-span values",
+        pointer: contextView.getUint32(160, true),
+      },
+      { byteLength: thetaClosedRange.byteLength, label: "Theta closed", pointer: thetaClosedRange.byteOffset },
+      { byteLength: thetaGScoreRange.byteLength, label: "Theta gScore", pointer: thetaGScoreRange.byteOffset },
+      { byteLength: thetaParentRange.byteLength, label: "Theta parent", pointer: thetaParentRange.byteOffset },
+      { byteLength: thetaTouchedRange.byteLength, label: "Theta touched", pointer: thetaTouchedRange.byteOffset },
+      {
+        byteLength: thetaCandidateRange.byteLength,
+        label: "Theta candidates",
+        pointer: thetaCandidateRange.byteOffset,
+      },
+      { byteLength: thetaSeenRange.byteLength, label: "Theta seen", pointer: thetaSeenRange.byteOffset },
+    ]);
+    if (
+      new Uint8Array(thetaClosedRange.buffer, thetaClosedRange.byteOffset, thetaClosedRange.elementLength).some(
+        (value) => value !== 0,
+      ) ||
+      new Float64Array(thetaGScoreRange.buffer, thetaGScoreRange.byteOffset, thetaGScoreRange.elementLength).some(
+        (value) => value !== Number.POSITIVE_INFINITY,
+      ) ||
+      new Int32Array(thetaParentRange.buffer, thetaParentRange.byteOffset, thetaParentRange.elementLength).some(
+        (value) => value !== -1,
+      ) ||
+      new Uint8Array(thetaSeenRange.buffer, thetaSeenRange.byteOffset, thetaSeenRange.elementLength).some(
+        (value) => value !== 0,
+      )
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route Theta scratch has an invalid initial state",
+        "output",
+      );
+    }
 
     if (
       routeObstacleCount !== validateAndCountMaskObstacles(routeMask, "routeMask") ||
@@ -195,6 +383,7 @@ export function createGraphwarWasmRouteContext(
       boundaryEdges,
       routeBoundaryEdgeCount,
     );
+    validateRouteFreeSpanCache(routeMask, isMirrored, input.boundaryExpansion, freeSpanOffsets, freeSpanValues);
 
     function assertActive() {
       if (isDisposed) {
@@ -228,6 +417,20 @@ export function createGraphwarWasmRouteContext(
         runtime.resetArena(contextMark);
         isDisposed = true;
       },
+      findThetaStarPath(start, target, shouldCollectPreviews = false) {
+        assertActive();
+        validatePlanePoint(start, "start");
+        validatePlanePoint(target, "target");
+        return runRouteSearch(
+          runtime,
+          routeCommand.thetaStar,
+          contextPointer,
+          start,
+          target,
+          shouldCollectPreviews,
+          isMirrored,
+        );
+      },
       graphRegionHitsObstacle(region) {
         return runRegionQuery(routeCommand.graphRegionHit, region) === 1;
       },
@@ -258,6 +461,163 @@ export function createGraphwarWasmRouteContext(
   } catch (error) {
     runtime.resetArenaAfterFault(contextMark);
     throw error;
+  }
+}
+
+/** Runs one complete stateless search and copies its stable path before releasing command scratch. */
+function runRouteSearch(
+  runtime: GraphwarWasmKernelRuntime,
+  command: number,
+  contextPointer: number,
+  start: PlaneGridPoint,
+  target: PlaneGridPoint,
+  shouldCollectPreviews: boolean,
+  isMirrored: boolean,
+): GraphwarWasmRouteSearchResult {
+  const mark = runtime.markArena();
+  try {
+    const inputPointer = runtime.reserveArena(routeSearchInputByteLength, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, routeSearchInputByteLength);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setFloat64(8, start.x, true);
+    inputView.setFloat64(16, start.y, true);
+    inputView.setFloat64(24, target.x, true);
+    inputView.setFloat64(32, target.y, true);
+    inputView.setUint32(40, shouldCollectPreviews ? 1 : 0, true);
+    const resultPointer = runtime.runRouteTask(command, inputPointer, routeSearchInputByteLength);
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: routeSearchResultByteLength, pointer: resultPointer },
+      { alignment: 4, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (resultView.getUint32(0, true) !== routeSearchResultMagic) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route search magic is invalid",
+        "output",
+      );
+    }
+    const status = validateGraphwarWasmEnumValue(resultView.getUint32(4, true), [0, 1] as const, "route status");
+    const pathLength = resultView.getUint32(16, true);
+    const previewPointer = resultView.getUint32(20, true);
+    const previewCount = resultView.getUint32(24, true);
+    const expansionCount = validateGraphwarWasmU32(resultView.getUint32(28, true), "route expansion count", "output");
+    const expectedPreviewCount = shouldCollectPreviews
+      ? Math.floor(expansionCount / graphwarThetaStarHeuristics.previewExpansionInterval) + status
+      : 0;
+    if ((previewCount === 0) !== (previewPointer === 0) || previewCount !== expectedPreviewCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route search returned an invalid preview range",
+        "output",
+      );
+    }
+    const previewRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: previewCount, pointer: previewPointer },
+      { alignment: 4, elementByteLength: routePreviewByteLength, minimumPointer: runtime.arenaBase },
+    );
+    const previews = Array.from({ length: previewCount }, (_, index) => {
+      const view = new DataView(
+        previewRange.buffer,
+        previewRange.byteOffset + index * routePreviewByteLength,
+        routePreviewByteLength,
+      );
+      const preview = copyGraphwarWasmPathfindingPreviewEvent(
+        runtime,
+        {
+          acceptedEdgePointIndexes: { length: view.getUint32(16, true), pointer: view.getUint32(12, true) },
+          bestPathPointIndexes: { length: view.getUint32(24, true), pointer: view.getUint32(20, true) },
+          candidatePointIndexes: { length: view.getUint32(32, true), pointer: view.getUint32(28, true) },
+          currentPointIndex: view.getUint32(36, true),
+          isMirrored: view.getUint32(40, true),
+          points: {
+            length: view.getUint32(8, true),
+            x: { length: view.getUint32(8, true), pointer: view.getUint32(0, true) },
+            y: { length: view.getUint32(8, true), pointer: view.getUint32(4, true) },
+          },
+        },
+        runtime.arenaBase,
+      );
+      if (preview.isMirrored !== isMirrored) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "Graphwar WASM route preview mirror identity is invalid",
+          "output",
+        );
+      }
+      validateRoutePreview(preview, start, target, index);
+      return preview;
+    });
+    if (status === 0) {
+      if (resultView.getUint32(8, true) !== 0 || resultView.getUint32(12, true) !== 0 || pathLength !== 0) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM no-route result contains a path",
+          "output",
+        );
+      }
+      if (previews.some((preview) => pointsEqual(preview.bestPath.at(-1), target))) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM no-route preview reaches its target",
+          "output",
+        );
+      }
+      return { expansionCount, previews, type: "no-route" };
+    }
+    if (pathLength === 0 || pathLength > GRAPHWAR_PLANE_LENGTH) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route path length is invalid",
+        "output",
+      );
+    }
+    const xValues = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pathLength, pointer: resultView.getUint32(8, true) },
+      runtime.arenaBase,
+    );
+    const yValues = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pathLength, pointer: resultView.getUint32(12, true) },
+      runtime.arenaBase,
+    );
+    const path = Array.from(xValues, (x, index) => ({ x, y: yValues[index] ?? Number.NaN }));
+    for (let index = 0; index < path.length; index += 1) {
+      validatePlanePoint(path[index] ?? { x: Number.NaN, y: Number.NaN }, `path[${index}]`, "output");
+      if (index > 0 && (path[index]?.x ?? -1) <= (path[index - 1]?.x ?? GRAPHWAR_PLANE_LENGTH)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-point-data",
+          "Graphwar WASM route path does not advance in x+ order",
+          "output",
+        );
+      }
+    }
+    if (
+      path[0]?.x !== start.x ||
+      path[0]?.y !== start.y ||
+      path.at(-1)?.x !== target.x ||
+      path.at(-1)?.y !== target.y
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Graphwar WASM route path endpoints do not match its request",
+        "output",
+      );
+    }
+    const terminalPreview = previews.at(-1);
+    if (shouldCollectPreviews && !pathsEqual(terminalPreview?.bestPath, path)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM terminal preview does not match its result path",
+        "output",
+      );
+    }
+    return { expansionCount, path, previews, type: "success" };
+  } finally {
+    runtime.resetArena(mark);
   }
 }
 
@@ -304,7 +664,7 @@ function runRouteQuery(
   }
 }
 
-function validatePlanePoint(point: GraphwarWasmPoint, fieldName: string) {
+function validatePlanePoint(point: GraphwarWasmPoint, fieldName: string, faultDomain: "input" | "output" = "input") {
   if (
     !Number.isInteger(point.x) ||
     !Number.isInteger(point.y) ||
@@ -316,9 +676,80 @@ function validatePlanePoint(point: GraphwarWasmPoint, fieldName: string) {
     throw new GraphwarWasmAdapterError(
       "invalid-point-data",
       `${fieldName} must identify one Graphwar plane cell`,
-      "input",
+      faultDomain,
     );
   }
+}
+
+/** Route previews are untrusted WASM output and must preserve the x+ search identity. */
+function validateRoutePreview(
+  preview: GraphwarWasmPathfindingPreviewEvent,
+  start: PlaneGridPoint,
+  target: PlaneGridPoint,
+  previewIndex: number,
+) {
+  const fieldPrefix = `previews[${previewIndex}]`;
+  for (let edgeIndex = 0; edgeIndex < preview.acceptedEdges.length; edgeIndex += 1) {
+    const edge = preview.acceptedEdges[edgeIndex];
+    const edgeStart = edge?.[0] ?? { x: Number.NaN, y: Number.NaN };
+    const edgeTarget = edge?.[1] ?? { x: Number.NaN, y: Number.NaN };
+    validatePlanePoint(edgeStart, `${fieldPrefix}.acceptedEdges[${edgeIndex}][0]`, "output");
+    validatePlanePoint(edgeTarget, `${fieldPrefix}.acceptedEdges[${edgeIndex}][1]`, "output");
+    if (edgeTarget.x <= edgeStart.x) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-point-data",
+        `${fieldPrefix}.acceptedEdges[${edgeIndex}] does not advance in x+ order`,
+        "output",
+      );
+    }
+  }
+  for (let pointIndex = 0; pointIndex < preview.bestPath.length; pointIndex += 1) {
+    const point = preview.bestPath[pointIndex] ?? { x: Number.NaN, y: Number.NaN };
+    validatePlanePoint(point, `${fieldPrefix}.bestPath[${pointIndex}]`, "output");
+    if (pointIndex > 0 && point.x <= (preview.bestPath[pointIndex - 1]?.x ?? GRAPHWAR_PLANE_LENGTH)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-point-data",
+        `${fieldPrefix}.bestPath does not advance in x+ order`,
+        "output",
+      );
+    }
+  }
+  for (let pointIndex = 0; pointIndex < preview.candidates.length; pointIndex += 1) {
+    validatePlanePoint(
+      preview.candidates[pointIndex] ?? { x: Number.NaN, y: Number.NaN },
+      `${fieldPrefix}.candidates[${pointIndex}]`,
+      "output",
+    );
+  }
+  if (!preview.current) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      `${fieldPrefix} does not identify its current point`,
+      "output",
+    );
+  }
+  validatePlanePoint(preview.current, `${fieldPrefix}.current`, "output");
+  if (
+    !pointsEqual(preview.bestPath[0], start) ||
+    (!pointsEqual(preview.bestPath.at(-1), preview.current) && !pointsEqual(preview.bestPath.at(-1), target)) ||
+    !pointsEqual(preview.candidates[0], start) ||
+    !preview.candidates.some((point) => pointsEqual(point, target)) ||
+    !preview.candidates.some((point) => pointsEqual(point, preview.current))
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      `${fieldPrefix} does not match its route request`,
+      "output",
+    );
+  }
+}
+
+function pointsEqual(left: GraphwarWasmPoint | undefined, right: GraphwarWasmPoint | undefined) {
+  return left?.x === right?.x && left?.y === right?.y;
+}
+
+function pathsEqual(left: readonly GraphwarWasmPoint[] | undefined, right: readonly GraphwarWasmPoint[]) {
+  return left?.length === right.length && left.every((point, index) => pointsEqual(point, right[index]));
 }
 
 function validateRegion(region: GraphClosedRegion | PlaneMaskClosedRegion, shouldRequirePlaneCells: boolean) {
@@ -349,6 +780,67 @@ function validateAndCountMaskObstacles(mask: Uint8Array, fieldName: string) {
     count += value ? 1 : 0;
   }
   return count;
+}
+
+/** Validates the retained Theta* column spans in x+ coordinates, including stable per-column ordering. */
+function validateRouteFreeSpanCache(
+  routeMask: Uint8Array,
+  isMirrored: boolean,
+  boundaryExpansion: number,
+  offsets: Uint32Array,
+  values: Uint32Array,
+) {
+  const boundaryInset = Math.min(Math.floor(boundaryExpansion), Math.max(GRAPHWAR_PLANE_LENGTH, GRAPHWAR_PLANE_HEIGHT));
+  let spanIndex = 0;
+  for (let x = 0; x < GRAPHWAR_PLANE_LENGTH; x += 1) {
+    if (offsets[x] !== spanIndex) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM route free-span offsets are inconsistent",
+        "output",
+      );
+    }
+    const maskX = isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - x : x;
+    let spanStart = -1;
+    for (let y = 0; y < GRAPHWAR_PLANE_HEIGHT; y += 1) {
+      const isFree =
+        x >= boundaryInset &&
+        x < GRAPHWAR_PLANE_LENGTH - boundaryInset &&
+        y >= boundaryInset &&
+        y < GRAPHWAR_PLANE_HEIGHT - boundaryInset &&
+        routeMask[y * GRAPHWAR_PLANE_LENGTH + maskX] === 0;
+      if (isFree && spanStart < 0) {
+        spanStart = y;
+      } else if (!isFree && spanStart >= 0) {
+        if (values[spanIndex * 2] !== spanStart || values[spanIndex * 2 + 1] !== y - 1) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-state",
+            "Graphwar WASM route free-span values are inconsistent",
+            "output",
+          );
+        }
+        spanIndex += 1;
+        spanStart = -1;
+      }
+    }
+    if (spanStart >= 0) {
+      if (values[spanIndex * 2] !== spanStart || values[spanIndex * 2 + 1] !== GRAPHWAR_PLANE_HEIGHT - 1) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM route free-span values are inconsistent",
+          "output",
+        );
+      }
+      spanIndex += 1;
+    }
+  }
+  if (offsets[GRAPHWAR_PLANE_LENGTH] !== spanIndex || values.length !== spanIndex * 2) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Graphwar WASM route free-span cache is incomplete",
+      "output",
+    );
+  }
 }
 
 /** Validates the retained topology cache against the owned route mask in the same stable x+ scan order. */
@@ -506,5 +998,27 @@ function validateRouteContextIdentity(
       "Graphwar WASM route context does not preserve its input identity",
       "output",
     );
+  }
+}
+
+/** A retained context owns all of these buffers together; aliasing any pair can silently corrupt later searches. */
+function validateDisjointRouteContextRanges(
+  ranges: readonly { readonly byteLength: number; readonly label: string; readonly pointer: number }[],
+) {
+  for (let leftIndex = 0; leftIndex < ranges.length; leftIndex += 1) {
+    const left = ranges[leftIndex];
+    if (!left || left.byteLength === 0) continue;
+    const leftEnd = left.pointer + left.byteLength;
+    for (let rightIndex = leftIndex + 1; rightIndex < ranges.length; rightIndex += 1) {
+      const right = ranges[rightIndex];
+      if (!right || right.byteLength === 0) continue;
+      if (left.pointer < right.pointer + right.byteLength && right.pointer < leftEnd) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          `Graphwar WASM route ${left.label} and ${right.label} ranges overlap`,
+          "output",
+        );
+      }
+    }
   }
 }

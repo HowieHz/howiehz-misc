@@ -18,6 +18,8 @@ export interface GraphwarSoldierTemplateWorkerRequest {
   scale: number;
   /** 当前子 Worker 负责评分的候选中心。 */
   candidates: readonly SoldierTemplateCenterCandidate[];
+  /** 当前连续切片在 parent candidate batch 中的稳定起始 id。 */
+  candidateStart: number;
 }
 
 /** 士兵模板匹配子 Worker 的成功或错误响应。 */
@@ -25,17 +27,22 @@ export type GraphwarSoldierTemplateWorkerResponse =
   | {
       /** 与父检测任务相同，用于拒绝迟到 lane 响应。 */
       attempt: GraphwarBackendAttemptIdentity;
+      /** 与请求相同的 parent core session，用于拒绝 stale lane 响应。 */
+      session: GraphwarWasmSessionIdentity;
       /** 对应子 Worker 请求 id。 */
       id: number;
       /** 当前候选切片的评分耗时，单位毫秒。 */
       elapsedMs: number;
       /** 当前候选切片的模板匹配结果。 */
       matches: SoldierMatchCandidate[];
+      /** 与 matches 一一对应的 parent candidate id。 */
+      candidateIndexes: number[];
       type: "success";
     }
   | {
       attempt: GraphwarBackendAttemptIdentity;
       id: number;
       message: string;
+      session: GraphwarWasmSessionIdentity;
       type: "error";
     };

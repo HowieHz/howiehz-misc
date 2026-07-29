@@ -5,12 +5,18 @@ import {
   graphwarWasmSessionIdentitiesAreEqual,
   isGraphwarWasmFault,
   type GraphwarBackendAttemptIdentity,
+  type GraphwarAlgorithmBackendContext,
   type GraphwarBackendControlMessage,
   type GraphwarBackendInitializationMessage,
   GraphwarWasmFault,
 } from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
+import {
+  runGraphwarWasmDetectionTemplateShard,
+  type GraphwarWasmDetectionCandidate,
+} from "../../core/wasm/detection-adapter";
+import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
   createGraphwarWorkerBackendRuntime,
   createGraphwarWorkerBackendSlot,
@@ -70,6 +76,8 @@ interface GraphwarDetectionWorkerScope {
 interface SoldierTemplateWorkerTask {
   /** 当前子 Worker 负责评分的候选中心。 */
   candidates: SoldierTemplateCenterCandidate[];
+  /** 当前切片在完整稳定 candidate batch 中的起始下标。 */
+  candidateStart: number;
   /** 复制后的截图像素，buffer 会被转移给子 Worker。 */
   imageData: ImageData;
   /** 子 Worker 序号，用于日志和 timing 展示。 */
@@ -141,9 +149,9 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
       backendRuntime,
       request.attempt,
       { attempt: request.attempt, type: "task" },
-      async () => {
+      async (backendContext) => {
         if (request.task.type === "detect-auto") {
-          await runAutoDetectionTask(requestContext, request.task, timings);
+          await runAutoDetectionTask(backendContext, requestContext, request.task, timings);
           return;
         }
         if (request.task.type === "detect-bounds-only") {
@@ -169,6 +177,7 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
           requestContext,
           {
             result: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
+              backendContext,
               requestContext,
               task.imageData,
               task.edgeRect,
@@ -194,6 +203,7 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
 
 /** 执行自动检测任务，只有识别到平面边界后才继续对象检测。 */
 async function runAutoDetectionTask(
+  backendContext: GraphwarAlgorithmBackendContext,
   requestContext: GraphwarDetectionRequestContext,
   task: Extract<GraphwarDetectionWorkerTask, { type: "detect-auto" }>,
   timings: GraphwarDetectionWorkerTimingEntry[],
@@ -212,6 +222,7 @@ async function runAutoDetectionTask(
       result: {
         edgeRect,
         objects: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
+          backendContext,
           requestContext,
           task.imageData,
           edgeRect,
@@ -228,6 +239,7 @@ async function runAutoDetectionTask(
 
 /** 在已知边界内识别士兵和障碍，并允许模板匹配并行化。 */
 async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
+  backendContext: GraphwarAlgorithmBackendContext,
   requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
@@ -252,6 +264,7 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
     );
     matches = await measureDetectionStageAsync(timings, "matching-soldier-templates", async () => {
       const matched = await matchSoldierTemplatesWithOptionalWorkers(
+        backendContext,
         requestContext,
         imageData,
         edgeRect,
@@ -283,6 +296,7 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
 
 /** 根据设置选择串行或多 Worker 模板匹配，失败时降级为串行。 */
 async function matchSoldierTemplatesWithOptionalWorkers(
+  backendContext: GraphwarAlgorithmBackendContext,
   requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
@@ -293,7 +307,7 @@ async function matchSoldierTemplatesWithOptionalWorkers(
   warnings: GraphwarDetectionWarning[],
 ) {
   if (candidates.length <= 1) {
-    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "serial", 1);
+    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "serial", 1);
   }
   if (startup.type === "failed") {
     warnings.push({ code: "template-matching-worker-fallback", message: startup.error.message });
@@ -302,11 +316,11 @@ async function matchSoldierTemplatesWithOptionalWorkers(
       type: "template-matching-mode",
       workerCount: startup.requestedWorkerCount,
     });
-    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "fallback", 1);
+    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "fallback", 1);
   }
   const startedWorkers = startup.workers;
   if (startedWorkers.length === 0) {
-    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "serial", 1);
+    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "serial", 1);
   }
 
   const laneCount = Math.min(startedWorkers.length, candidates.length);
@@ -340,12 +354,13 @@ async function matchSoldierTemplatesWithOptionalWorkers(
       type: "template-matching-mode",
       workerCount: laneCount,
     });
-    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "fallback", 1);
+    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "fallback", 1);
   }
 }
 
 /** 在当前线程执行模板匹配，并记录串行或 fallback 模式。 */
 function matchSoldierTemplatesSerial(
+  backendContext: GraphwarAlgorithmBackendContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
   scale: number,
@@ -365,7 +380,28 @@ function matchSoldierTemplatesSerial(
     timings,
     "matching-soldier-templates",
     { type: mode === "serial" ? "template-matching-serial" : "template-matching-fallback-serial" },
-    () => matchSoldierTemplates(imageData, edgeRect, scale, candidates),
+    () => {
+      if (candidates.length === 0) {
+        return [];
+      }
+      if (backendContext.type === "typescript") {
+        return matchSoldierTemplates(imageData, edgeRect, scale, candidates);
+      }
+      if (!(backendContext.runtime instanceof GraphwarWasmKernelRuntime)) {
+        throw new GraphwarWasmFault("abi", "Detection main Worker received an incompatible WASM runtime");
+      }
+      return runGraphwarWasmDetectionTemplateShard(backendContext.runtime, {
+        candidates: candidates.map(
+          (candidate, candidateIndex) =>
+            ({
+              ...candidate,
+              candidateIndex,
+            }) satisfies GraphwarWasmDetectionCandidate,
+        ),
+        edgeRect,
+        imageData,
+      }).map(({ candidateIndex: _, ...match }) => match);
+    },
   );
 }
 
@@ -386,12 +422,12 @@ async function runSoldierTemplateWorkerTasks(
     measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-dispatch" }, () => {
       const tasks: SoldierTemplateWorkerTask[] = [];
       for (let index = 0; index < laneCount; index += 1) {
+        const candidateStart = Math.floor((index * candidates.length) / laneCount);
+        const candidateEnd = Math.floor(((index + 1) * candidates.length) / laneCount);
         tasks.push({
           // 连续均分候选，保持 lane 顺序和原合并顺序一致。
-          candidates: candidates.slice(
-            Math.floor((index * candidates.length) / laneCount),
-            Math.floor(((index + 1) * candidates.length) / laneCount),
-          ),
+          candidates: candidates.slice(candidateStart, candidateEnd),
+          candidateStart,
           // 每个 buffer 只能转移一次；lane 必须拥有独立的截图像素。
           imageData: new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height),
           workerIndex: index + 1,
@@ -469,7 +505,7 @@ function startSoldierTemplateWorkers(workerCount: number, attempt: GraphwarBacke
         onWasmFault: (message) => {
           const fault = new GraphwarWasmFault(message.fault.code, message.fault.message);
           if (message.fault.code === "module-clone") {
-            startupError ??= fault;
+            startupError ??= new Error(fault.message);
             return;
           }
           workerScope.postMessage(message);
@@ -551,6 +587,7 @@ function createSoldierTemplateWorkerHandle(
     }
     const request: GraphwarSoldierTemplateWorkerRequest = {
       attempt,
+      candidateStart: task.candidateStart,
       candidates: task.candidates,
       edgeRect,
       id: task.workerIndex,
@@ -565,12 +602,16 @@ function createSoldierTemplateWorkerHandle(
         const backendState = started.backendSlot.getState();
         if (backendState.type === "failed") {
           cleanup?.();
-          reject(started.startupWasmFault ?? backendState.error);
+          reject(started.startupWasmFault ?? normalizeNestedTemplateWorkerFailure(backendState.error));
         }
         return;
       }
       const response = event.data;
-      if (response.id !== request.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, request.attempt)) {
+      if (
+        response.id !== request.id ||
+        !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, request.attempt) ||
+        !graphwarWasmSessionIdentitiesAreEqual(response.session, request.session)
+      ) {
         cleanup?.();
         reject(new Error(`Worker ${task.workerIndex}: returned an unexpected request identity`));
         return;
@@ -578,6 +619,13 @@ function createSoldierTemplateWorkerHandle(
       cleanup?.();
       if (response.type === "error") {
         reject(new Error(`Worker ${task.workerIndex}: ${response.message}`));
+        return;
+      }
+      if (
+        response.candidateIndexes.length !== response.matches.length ||
+        response.candidateIndexes.some((candidateIndex, index) => candidateIndex !== request.candidateStart + index)
+      ) {
+        reject(new Error(`Worker ${task.workerIndex}: returned inconsistent candidate identities`));
         return;
       }
       resolve({ elapsedMs: response.elapsedMs, matches: response.matches });
@@ -615,6 +663,11 @@ function createSoldierTemplateWorkerHandle(
     worker,
     workerIndex: task.workerIndex,
   };
+}
+
+/** Nested Module clone failure keeps the parent instance usable and therefore remains ordinary fallback. */
+function normalizeNestedTemplateWorkerFailure(error: Error): Error {
+  return isGraphwarWasmFault(error) && error.code === "module-clone" ? new Error(error.message) : error;
 }
 
 /** 通知主线程当前检测阶段，便于页面显示进度。 */

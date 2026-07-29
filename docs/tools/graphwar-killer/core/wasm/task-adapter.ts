@@ -1,4 +1,9 @@
 import {
+  createGraphwarSoldierTemplateCanonicalData,
+  type GraphwarSoldierTemplateCanonicalData,
+} from "../../detection/objects";
+import {
+  createGraphwarSoldierTemplateProfileData,
   defaultGraphwarMaximumSoldierCount,
   defaultGraphwarSoldierTemplateCandidateTopRatio,
   defaultGraphwarTemplateMatchingWorkerCount,
@@ -20,6 +25,7 @@ import {
   validateGraphwarWasmU32,
   writeGraphwarWasmBytes,
   writeGraphwarWasmFloat64Values,
+  writeGraphwarWasmUint32Values,
   type GraphwarWasmArenaMemorySource,
   type GraphwarWasmMemorySlice,
   type GraphwarWasmMemorySource,
@@ -37,6 +43,18 @@ export interface GraphwarWasmPackedRgbaImage {
   height: number;
   rgba: GraphwarWasmMemorySlice;
   width: number;
+}
+
+/** One immutable upload of the canonical soldier-template tables used by a detection instance/task. */
+export interface GraphwarWasmPackedSoldierTemplates {
+  baseFlags: GraphwarWasmMemorySlice;
+  baseGeometry: GraphwarWasmMemorySlice;
+  basePixelRanges: GraphwarWasmMemorySlice;
+  pixelCoordinates: GraphwarWasmMemorySlice;
+  profile: GraphwarWasmMemorySlice;
+  signatureColors: GraphwarWasmMemorySlice;
+  templateNames: readonly string[];
+  templateRecords: GraphwarWasmMemorySlice;
 }
 
 /** Flat point array 使用 SoA，避免 WASM 热循环中的 JS 对象传输。 */
@@ -128,12 +146,14 @@ export type GraphwarWasmPackedDetectionInput =
   | {
       image: GraphwarWasmPackedRgbaImage;
       settings: GraphwarWasmMemorySlice;
+      templates: GraphwarWasmPackedSoldierTemplates;
       type: "detect-auto";
     }
   | {
       edgeRect: GraphwarWasmMemorySlice;
       image: GraphwarWasmPackedRgbaImage;
       settings: GraphwarWasmMemorySlice;
+      templates: GraphwarWasmPackedSoldierTemplates;
       type: "detect-bounds";
     };
 
@@ -432,6 +452,11 @@ export function packGraphwarWasmDetectionInput(
   if (task.type === "detect-bounds-only") {
     return { image, type: "detect-bounds-only" };
   }
+  const templates = packGraphwarWasmSoldierTemplates(
+    arena,
+    createGraphwarSoldierTemplateCanonicalData(),
+    minimumPointer,
+  );
   const settings = writeGraphwarWasmFloat64Values(
     arena,
     new Float64Array([
@@ -451,7 +476,7 @@ export function packGraphwarWasmDetectionInput(
     minimumPointer,
   );
   if (task.type === "detect-auto") {
-    return { image, settings, type: "detect-auto" };
+    return { image, settings, templates, type: "detect-auto" };
   }
   return {
     edgeRect: writeGraphwarWasmFloat64Values(
@@ -466,7 +491,26 @@ export function packGraphwarWasmDetectionInput(
     ),
     image,
     settings,
+    templates,
     type: "detect-bounds",
+  };
+}
+
+/** Packs the canonical template/profile tables without allowing a partial table set. */
+export function packGraphwarWasmSoldierTemplates(
+  arena: GraphwarWasmArenaMemorySource,
+  data: GraphwarSoldierTemplateCanonicalData,
+  minimumPointer = 0,
+): GraphwarWasmPackedSoldierTemplates {
+  return {
+    baseFlags: writeGraphwarWasmBytes(arena, data.baseFlags, minimumPointer),
+    baseGeometry: writeGraphwarWasmFloat64Values(arena, data.baseGeometry, minimumPointer),
+    basePixelRanges: writeGraphwarWasmUint32Values(arena, data.basePixelRanges, minimumPointer),
+    pixelCoordinates: writeGraphwarWasmBytes(arena, data.pixelCoordinates, minimumPointer),
+    profile: writeGraphwarWasmFloat64Values(arena, createGraphwarSoldierTemplateProfileData(), minimumPointer),
+    signatureColors: writeGraphwarWasmUint32Values(arena, data.signatureColors, minimumPointer),
+    templateNames: data.templateNames,
+    templateRecords: writeGraphwarWasmUint32Values(arena, data.templateRecords, minimumPointer),
   };
 }
 

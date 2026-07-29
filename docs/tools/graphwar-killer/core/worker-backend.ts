@@ -295,27 +295,27 @@ export async function executeGraphwarWorkerTask<TResult>(
   runtime: Pick<ReturnType<typeof createGraphwarWorkerBackendRuntime>, "reportWasmFault" | "waitForBackend">,
   attempt: GraphwarBackendAttemptIdentity,
   faultContext: Exclude<GraphwarWasmFaultContext, { type: "initialization" }>,
-  task: () => TResult | Promise<TResult>,
+  task: (context: GraphwarAlgorithmBackendContext) => TResult | Promise<TResult>,
 ): Promise<{ result: TResult; type: "complete" } | { type: "wasm-fault" }> {
   try {
-    await runtime.waitForBackend(attempt);
+    const context = await runtime.waitForBackend(attempt);
+    try {
+      return { result: await task(context), type: "complete" };
+    } catch (error) {
+      if (!isGraphwarWasmFault(error)) {
+        throw error;
+      }
+      if (!error.hasBeenReported) {
+        runtime.reportWasmFault(faultContext, error);
+        error.markReported();
+      }
+      return { type: "wasm-fault" };
+    }
   } catch (error) {
     if (isGraphwarWasmFault(error)) {
       return { type: "wasm-fault" };
     }
     throw error;
-  }
-  try {
-    return { result: await task(), type: "complete" };
-  } catch (error) {
-    if (!isGraphwarWasmFault(error)) {
-      throw error;
-    }
-    if (!error.hasBeenReported) {
-      runtime.reportWasmFault(faultContext, error);
-      error.markReported();
-    }
-    return { type: "wasm-fault" };
   }
 }
 

@@ -1,16 +1,28 @@
 import {
+  DETECTION_CANDIDATE_BYTE_LENGTH,
   DETECTION_INPUT_BYTE_LENGTH,
+  DETECTION_INPUT_CANDIDATE_COUNT_OFFSET,
+  DETECTION_INPUT_CANDIDATE_POINTER_OFFSET,
   DETECTION_INPUT_EDGE_LENGTH_OFFSET,
   DETECTION_INPUT_EDGE_POINTER_OFFSET,
   DETECTION_INPUT_HEIGHT_OFFSET,
+  DETECTION_INPUT_MATCH_COUNT_OFFSET,
+  DETECTION_INPUT_MATCH_POINTER_OFFSET,
+  DETECTION_INPUT_PHASE_OFFSET,
   DETECTION_INPUT_RESERVED_OFFSET,
   DETECTION_INPUT_RGBA_BYTE_LENGTH_OFFSET,
   DETECTION_INPUT_RGBA_POINTER_OFFSET,
   DETECTION_INPUT_SETTINGS_LENGTH_OFFSET,
   DETECTION_INPUT_SETTINGS_POINTER_OFFSET,
+  DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET,
+  DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET,
+  DETECTION_INPUT_SESSION_EDGE_X_OFFSET,
+  DETECTION_INPUT_SESSION_EDGE_Y_OFFSET,
   DETECTION_INPUT_TASK_OFFSET,
   DETECTION_INPUT_WIDTH_OFFSET,
   DETECTION_RESULT_BYTE_LENGTH,
+  DETECTION_RESULT_CANDIDATE_COUNT_OFFSET,
+  DETECTION_RESULT_CANDIDATE_POINTER_OFFSET,
   DETECTION_RESULT_COMPLETE,
   DETECTION_RESULT_RUNNING,
   DETECTION_RESULT_EDGE_HEIGHT_OFFSET,
@@ -19,6 +31,8 @@ import {
   DETECTION_RESULT_EDGE_Y_OFFSET,
   DETECTION_RESULT_FLAGS_OFFSET,
   DETECTION_RESULT_FLAG_HAS_EDGE_RECT,
+  DETECTION_RESULT_MATCH_COUNT_OFFSET,
+  DETECTION_RESULT_MATCH_POINTER_OFFSET,
   DETECTION_RESULT_SESSION_POINTER_OFFSET,
   DETECTION_RESULT_STAGE_COUNT_OFFSET,
   DETECTION_RESULT_STAGE_POINTER_OFFSET,
@@ -26,12 +40,26 @@ import {
   DETECTION_RESULT_TASK_OFFSET,
   DETECTION_RESULT_WORK_COUNT_OFFSET,
   DETECTION_RESULT_WORK_POINTER_OFFSET,
+  DETECTION_SHARD_BYTE_LENGTH,
   DETECTION_STAGE_BOUNDS_END,
   DETECTION_STAGE_BOUNDS_START,
+  DETECTION_STAGE_CANDIDATES_END,
+  DETECTION_STAGE_CANDIDATES_START,
+  DETECTION_STAGE_TEMPLATES_END,
+  DETECTION_STAGE_TEMPLATES_START,
   DETECTION_TASK_AUTO,
   DETECTION_TASK_BOUNDS_ONLY,
   DETECTION_TASK_KNOWN_BOUNDS,
+  DETECTION_TEMPLATE_SHARD_RESULT_BYTE_LENGTH,
+  DETECTION_MATCH_BYTE_LENGTH,
 } from "./detection-layout";
+import {
+  collectDetectionCandidates,
+  detectionMatchCandidateIndexOffset,
+  finalizeDetectionTemplateMatches,
+  scoreDetectionTemplateCandidates,
+  validateDetectionTemplateTables,
+} from "./detection-template";
 import { markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
 
 const SETTINGS_LENGTH: u32 = 4;
@@ -49,8 +77,10 @@ const AXIS_TRIPLET_LAST_OFFSET: u32 = 8;
 const AXIS_TRIPLET_SCORE_OFFSET: u32 = 16;
 const AXIS_TRIPLET_LIMIT: u32 = 16;
 const DETECTION_SESSION_PHASE_BOUNDS_PENDING: u32 = 1;
-const DETECTION_SESSION_PHASE_OBJECTS_PENDING: u32 = 2;
-const DETECTION_SESSION_PHASE_COMPLETE: u32 = 3;
+const DETECTION_SESSION_PHASE_CANDIDATES_PENDING: u32 = 2;
+const DETECTION_SESSION_PHASE_TEMPLATES_PENDING: u32 = 3;
+const DETECTION_SESSION_PHASE_OBSTACLES_PENDING: u32 = 4;
+const DETECTION_SESSION_PHASE_COMPLETE: u32 = 5;
 
 @inline
 function trap(): void {
@@ -102,6 +132,7 @@ export function beginDetectionTask(inputPointer: u32, inputByteLength: u32): u32
     }
   } else {
     validateSettings(settingsPointer, settingsLength);
+    validateDetectionTemplateTables(inputPointer);
     if (task == DETECTION_TASK_AUTO) {
       if (edgePointer != 0 || edgeLength != 0) {
         trap();
@@ -112,33 +143,61 @@ export function beginDetectionTask(inputPointer: u32, inputByteLength: u32): u32
   }
 
   if (task == DETECTION_TASK_KNOWN_BOUNDS) {
-    store<u32>(inputPointer + DETECTION_INPUT_RESERVED_OFFSET, DETECTION_SESSION_PHASE_OBJECTS_PENDING);
+    const edgeX = load<f64>(edgePointer);
+    const edgeY = load<f64>(edgePointer + sizeof<f64>());
+    const edgeWidth = load<f64>(edgePointer + 2 * sizeof<f64>());
+    const edgeHeight = load<f64>(edgePointer + 3 * sizeof<f64>());
+    storeSessionEdge(inputPointer, edgeX, edgeY, edgeWidth, edgeHeight);
+    store<u32>(inputPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_CANDIDATES_PENDING);
     return writeDetectionResult(
       task,
       DETECTION_RESULT_RUNNING,
       inputPointer,
+      DETECTION_STAGE_CANDIDATES_START,
       0,
-      load<f64>(edgePointer),
-      load<f64>(edgePointer + sizeof<f64>()),
-      load<f64>(edgePointer + 2 * sizeof<f64>()),
-      load<f64>(edgePointer + 3 * sizeof<f64>()),
+      0,
+      0,
+      0,
+      0,
+      edgeX,
+      edgeY,
+      edgeWidth,
+      edgeHeight,
     );
   }
-  store<u32>(inputPointer + DETECTION_INPUT_RESERVED_OFFSET, DETECTION_SESSION_PHASE_BOUNDS_PENDING);
-  return writeDetectionResult(task, DETECTION_RESULT_RUNNING, inputPointer, DETECTION_STAGE_BOUNDS_START, 0, 0, 0, 0);
+  store<u32>(inputPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_BOUNDS_PENDING);
+  return writeDetectionResult(task, DETECTION_RESULT_RUNNING, inputPointer, DETECTION_STAGE_BOUNDS_START, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 }
 
-/** Executes the bounds phase after the Adapter has observed its start marker. */
-export function resumeDetectionTask(sessionPointer: u32): u32 {
+/** Executes one exact retained phase after the Adapter has observed the preceding stage marker. */
+export function resumeDetectionTask(sessionPointer: u32, workPointer: u32, workCount: u32): u32 {
   requireArenaInitialized();
   requireArenaRange(sessionPointer, DETECTION_INPUT_BYTE_LENGTH, sizeof<u64>());
   const task = load<u32>(sessionPointer + DETECTION_INPUT_TASK_OFFSET);
-  if (
-    (task != DETECTION_TASK_BOUNDS_ONLY && task != DETECTION_TASK_AUTO) ||
-    load<u32>(sessionPointer + DETECTION_INPUT_RESERVED_OFFSET) != DETECTION_SESSION_PHASE_BOUNDS_PENDING
-  ) {
-    trap();
+  const phase = load<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET);
+  if (phase == DETECTION_SESSION_PHASE_BOUNDS_PENDING) {
+    if ((task != DETECTION_TASK_BOUNDS_ONLY && task != DETECTION_TASK_AUTO) || workPointer != 0 || workCount != 0) {
+      trap();
+    }
+    return resumeBounds(sessionPointer, task);
   }
+  if (phase == DETECTION_SESSION_PHASE_CANDIDATES_PENDING) {
+    if (task == DETECTION_TASK_BOUNDS_ONLY || workPointer != 0 || workCount != 0) {
+      trap();
+    }
+    return resumeCandidates(sessionPointer, task);
+  }
+  if (phase == DETECTION_SESSION_PHASE_TEMPLATES_PENDING) {
+    if (task == DETECTION_TASK_BOUNDS_ONLY) {
+      trap();
+    }
+    return resumeTemplates(sessionPointer, task, workPointer, workCount);
+  }
+  trap();
+  return 0;
+}
+
+function resumeBounds(sessionPointer: u32, task: u32): u32 {
   const width = load<u32>(sessionPointer + DETECTION_INPUT_WIDTH_OFFSET);
   const height = load<u32>(sessionPointer + DETECTION_INPUT_HEIGHT_OFFSET);
   const rgbaPointer = load<u32>(sessionPointer + DETECTION_INPUT_RGBA_POINTER_OFFSET);
@@ -159,17 +218,20 @@ export function resumeDetectionTask(sessionPointer: u32): u32 {
     task == DETECTION_TASK_BOUNDS_ONLY || (task == DETECTION_TASK_AUTO && !hasEdgeRect)
       ? DETECTION_RESULT_COMPLETE
       : DETECTION_RESULT_RUNNING;
-  store<u32>(
-    sessionPointer + DETECTION_INPUT_RESERVED_OFFSET,
-    state == DETECTION_RESULT_RUNNING
-      ? DETECTION_SESSION_PHASE_OBJECTS_PENDING
-      : DETECTION_SESSION_PHASE_COMPLETE,
-  );
+  if (state == DETECTION_RESULT_RUNNING) {
+    storeSessionEdge(sessionPointer, edgeX, edgeY, edgeWidth, edgeHeight);
+  }
+  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, state == DETECTION_RESULT_RUNNING ? DETECTION_SESSION_PHASE_CANDIDATES_PENDING : DETECTION_SESSION_PHASE_COMPLETE);
   return writeDetectionResult(
     task,
     state,
     state == DETECTION_RESULT_RUNNING ? sessionPointer : 0,
     DETECTION_STAGE_BOUNDS_END,
+    state == DETECTION_RESULT_RUNNING ? DETECTION_STAGE_CANDIDATES_START : 0,
+    0,
+    0,
+    0,
+    0,
     edgeX,
     edgeY,
     edgeWidth,
@@ -177,19 +239,119 @@ export function resumeDetectionTask(sessionPointer: u32): u32 {
   );
 }
 
+function resumeCandidates(sessionPointer: u32, task: u32): u32 {
+  collectDetectionCandidates(sessionPointer);
+  const candidatePointer = load<u32>(sessionPointer + DETECTION_INPUT_CANDIDATE_POINTER_OFFSET);
+  const candidateCount = load<u32>(sessionPointer + DETECTION_INPUT_CANDIDATE_COUNT_OFFSET);
+  const settingsPointer = load<u32>(sessionPointer + DETECTION_INPUT_SETTINGS_POINTER_OFFSET);
+  const requestedWorkerCount = <u32>load<f64>(settingsPointer + 3 * sizeof<f64>());
+  const shardCount =
+    requestedWorkerCount > 1 && candidateCount > 1
+      ? requestedWorkerCount < candidateCount
+        ? requestedWorkerCount
+        : candidateCount
+      : 0;
+  const shardsPointer = shardCount == 0 ? 0 : reserveArena(shardCount * DETECTION_SHARD_BYTE_LENGTH, sizeof<u32>());
+  for (let shardIndex: u32 = 0; shardIndex < shardCount; shardIndex += 1) {
+    const shard = shardsPointer + shardIndex * DETECTION_SHARD_BYTE_LENGTH;
+    const start = <u32>((<u64>shardIndex * candidateCount) / shardCount);
+    const end = <u32>((<u64>(shardIndex + 1) * candidateCount) / shardCount);
+    store<u32>(shard, shardIndex + 1);
+    store<u32>(shard + 4, start);
+    store<u32>(shard + 8, end - start);
+    store<u32>(shard + 12, 0);
+  }
+  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_TEMPLATES_PENDING);
+  return writeDetectionResult(
+    task,
+    DETECTION_RESULT_RUNNING,
+    sessionPointer,
+    DETECTION_STAGE_CANDIDATES_END,
+    DETECTION_STAGE_TEMPLATES_START,
+    shardsPointer,
+    shardCount,
+    candidatePointer,
+    candidateCount,
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_X_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_Y_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET),
+  );
+}
+
+function resumeTemplates(sessionPointer: u32, task: u32, workPointer: u32, workCount: u32): u32 {
+  const candidatePointer = load<u32>(sessionPointer + DETECTION_INPUT_CANDIDATE_POINTER_OFFSET);
+  const candidateCount = load<u32>(sessionPointer + DETECTION_INPUT_CANDIDATE_COUNT_OFFSET);
+  let rawMatchesPointer = workPointer;
+  if (workPointer == 0 && workCount == 0) {
+    rawMatchesPointer = scoreDetectionTemplateCandidates(sessionPointer, candidatePointer, candidateCount);
+    workCount = candidateCount;
+  } else {
+    if (workCount != candidateCount) {
+      trap();
+    }
+    requireArenaRange(workPointer, workCount * DETECTION_MATCH_BYTE_LENGTH, sizeof<f64>());
+    for (let index: u32 = 0; index < workCount; index += 1) {
+      if (load<u32>(workPointer + index * DETECTION_MATCH_BYTE_LENGTH + detectionMatchCandidateIndexOffset) != index) {
+        trap();
+      }
+    }
+  }
+  finalizeDetectionTemplateMatches(sessionPointer, rawMatchesPointer, workCount);
+  store<u32>(sessionPointer + DETECTION_INPUT_PHASE_OFFSET, DETECTION_SESSION_PHASE_OBSTACLES_PENDING);
+  return writeDetectionResult(
+    task,
+    DETECTION_RESULT_RUNNING,
+    sessionPointer,
+    DETECTION_STAGE_TEMPLATES_END,
+    0,
+    0,
+    0,
+    candidatePointer,
+    candidateCount,
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_X_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_Y_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET),
+    load<f64>(sessionPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET),
+  );
+}
+
+/** Scores one child Worker shard through the same canonical template implementation as the main instance. */
+export function runDetectionTemplateShard(inputPointer: u32, inputByteLength: u32): u32 {
+  requireArenaInitialized();
+  if (inputByteLength != DETECTION_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u64>());
+  validateDetectionCommand(inputPointer, true);
+  const candidatePointer = load<u32>(inputPointer + DETECTION_INPUT_CANDIDATE_POINTER_OFFSET);
+  const candidateCount = load<u32>(inputPointer + DETECTION_INPUT_CANDIDATE_COUNT_OFFSET);
+  const matchesPointer = scoreDetectionTemplateCandidates(inputPointer, candidatePointer, candidateCount);
+  const resultPointer = reserveArena(DETECTION_TEMPLATE_SHARD_RESULT_BYTE_LENGTH, sizeof<u64>());
+  memory.fill(resultPointer, 0, DETECTION_TEMPLATE_SHARD_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer, matchesPointer);
+  store<u32>(resultPointer + 4, candidateCount);
+  return resultPointer;
+}
+
 function writeDetectionResult(
   task: u32,
   state: u32,
   sessionPointer: u32,
   stage: u32,
+  secondStage: u32,
+  workPointer: u32,
+  workCount: u32,
+  candidatePointer: u32,
+  candidateCount: u32,
   edgeX: f64,
   edgeY: f64,
   edgeWidth: f64,
   edgeHeight: f64,
 ): u32 {
-  const stagePointer = stage == 0 ? 0 : reserveArena(sizeof<u32>(), sizeof<u32>());
+  const stageCount: u32 = stage == 0 ? 0 : secondStage == 0 ? 1 : 2;
+  const stagePointer = stageCount == 0 ? 0 : reserveArena(stageCount * sizeof<u32>(), sizeof<u32>());
   if (stage != 0) {
     store<u32>(stagePointer, stage);
+    if (secondStage != 0) store<u32>(stagePointer + sizeof<u32>(), secondStage);
   }
   const resultPointer = reserveArena(DETECTION_RESULT_BYTE_LENGTH, sizeof<u64>());
   memory.fill(resultPointer, 0, DETECTION_RESULT_BYTE_LENGTH);
@@ -200,15 +362,46 @@ function writeDetectionResult(
     edgeWidth > 0 && edgeHeight > 0 ? DETECTION_RESULT_FLAG_HAS_EDGE_RECT : 0,
   );
   store<u32>(resultPointer + DETECTION_RESULT_STAGE_POINTER_OFFSET, stagePointer);
-  store<u32>(resultPointer + DETECTION_RESULT_STAGE_COUNT_OFFSET, stage == 0 ? 0 : 1);
+  store<u32>(resultPointer + DETECTION_RESULT_STAGE_COUNT_OFFSET, stageCount);
   store<u32>(resultPointer + DETECTION_RESULT_SESSION_POINTER_OFFSET, sessionPointer);
-  store<u32>(resultPointer + DETECTION_RESULT_WORK_POINTER_OFFSET, 0);
-  store<u32>(resultPointer + DETECTION_RESULT_WORK_COUNT_OFFSET, 0);
+  store<u32>(resultPointer + DETECTION_RESULT_WORK_POINTER_OFFSET, workPointer);
+  store<u32>(resultPointer + DETECTION_RESULT_WORK_COUNT_OFFSET, workCount);
   store<f64>(resultPointer + DETECTION_RESULT_EDGE_X_OFFSET, edgeX);
   store<f64>(resultPointer + DETECTION_RESULT_EDGE_Y_OFFSET, edgeY);
   store<f64>(resultPointer + DETECTION_RESULT_EDGE_WIDTH_OFFSET, edgeWidth);
   store<f64>(resultPointer + DETECTION_RESULT_EDGE_HEIGHT_OFFSET, edgeHeight);
+  store<u32>(resultPointer + DETECTION_RESULT_CANDIDATE_POINTER_OFFSET, candidatePointer);
+  store<u32>(resultPointer + DETECTION_RESULT_CANDIDATE_COUNT_OFFSET, candidateCount);
+  store<u32>(resultPointer + DETECTION_RESULT_MATCH_POINTER_OFFSET, sessionPointer == 0 ? 0 : load<u32>(sessionPointer + DETECTION_INPUT_MATCH_POINTER_OFFSET));
+  store<u32>(resultPointer + DETECTION_RESULT_MATCH_COUNT_OFFSET, sessionPointer == 0 ? 0 : load<u32>(sessionPointer + DETECTION_INPUT_MATCH_COUNT_OFFSET));
   return resultPointer;
+}
+
+function storeSessionEdge(commandPointer: u32, x: f64, y: f64, width: f64, height: f64): void {
+  store<f64>(commandPointer + DETECTION_INPUT_SESSION_EDGE_X_OFFSET, x);
+  store<f64>(commandPointer + DETECTION_INPUT_SESSION_EDGE_Y_OFFSET, y);
+  store<f64>(commandPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET, width);
+  store<f64>(commandPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET, height);
+}
+
+function validateDetectionCommand(commandPointer: u32, isShard: bool): void {
+  const task = load<u32>(commandPointer + DETECTION_INPUT_TASK_OFFSET);
+  if (task != DETECTION_TASK_AUTO && task != DETECTION_TASK_KNOWN_BOUNDS) trap();
+  const width = load<u32>(commandPointer + DETECTION_INPUT_WIDTH_OFFSET);
+  const height = load<u32>(commandPointer + DETECTION_INPUT_HEIGHT_OFFSET);
+  const rgbaLength = load<u32>(commandPointer + DETECTION_INPUT_RGBA_BYTE_LENGTH_OFFSET);
+  if (width == 0 || height == 0 || <u64>width * height * 4 != rgbaLength) trap();
+  requireArenaRange(load<u32>(commandPointer + DETECTION_INPUT_RGBA_POINTER_OFFSET), rgbaLength, 1);
+  validateSettings(load<u32>(commandPointer + DETECTION_INPUT_SETTINGS_POINTER_OFFSET), load<u32>(commandPointer + DETECTION_INPUT_SETTINGS_LENGTH_OFFSET));
+  validateDetectionTemplateTables(commandPointer);
+  const edgeWidth = load<f64>(commandPointer + DETECTION_INPUT_SESSION_EDGE_WIDTH_OFFSET);
+  const edgeHeight = load<f64>(commandPointer + DETECTION_INPUT_SESSION_EDGE_HEIGHT_OFFSET);
+  if (!isFinitePositiveValue(edgeWidth) || !isFinitePositiveValue(edgeHeight)) trap();
+  if (isShard) {
+    const count = load<u32>(commandPointer + DETECTION_INPUT_CANDIDATE_COUNT_OFFSET);
+    if (count == 0) trap();
+    requireArenaRange(load<u32>(commandPointer + DETECTION_INPUT_CANDIDATE_POINTER_OFFSET), count * DETECTION_CANDIDATE_BYTE_LENGTH, sizeof<f64>());
+  }
 }
 
 function validateSettings(pointer: u32, length: u32): void {

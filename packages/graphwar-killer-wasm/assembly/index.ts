@@ -1,4 +1,4 @@
-export { beginDetectionTask, resumeDetectionTask } from "./detection";
+export { beginDetectionTask, resumeDetectionTask, runDetectionTemplateShard } from "./detection";
 export { runFormula } from "./formula";
 export { initializeGraphwarGameConstants } from "./game-constants";
 export {

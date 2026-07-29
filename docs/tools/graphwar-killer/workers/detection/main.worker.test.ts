@@ -20,6 +20,17 @@ const objectMocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   matchTemplates: vi.fn(),
   reportWasmFault: vi.fn(),
+  runWasmShard: vi.fn(),
+}));
+
+vi.mock("../../core/wasm/detection-adapter", () => ({
+  runGraphwarWasmDetectionTemplateShard: objectMocks.runWasmShard,
+}));
+
+vi.mock("../../core/wasm/runtime", () => ({
+  GraphwarWasmKernelRuntime: class GraphwarWasmKernelRuntime {
+    readonly isTestRuntime = true;
+  },
 }));
 
 vi.mock("../../detection/objects", () => ({
@@ -35,6 +46,7 @@ vi.mock("../../detection/objects", () => ({
 
 vi.mock("../../core/worker-backend", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../core/worker-backend")>();
+  const { GraphwarWasmKernelRuntime } = await import("../../core/wasm/runtime");
   return {
     ...original,
     createGraphwarWorkerBackendRuntime: (options: {
@@ -67,7 +79,11 @@ vi.mock("../../core/worker-backend", async (importOriginal) => {
           return true;
         },
         reportWasmFault: objectMocks.reportWasmFault,
-        waitForBackend: async () => undefined,
+        waitForBackend: async () => ({
+          generation: 1,
+          runtime: Object.create(GraphwarWasmKernelRuntime.prototype),
+          type: "wasm" as const,
+        }),
       };
     },
   };
@@ -86,7 +102,7 @@ const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarDete
 let handleMessage:
   | ((event: MessageEvent<GraphwarBackendControlMessage | GraphwarDetectionWorkerRequest>) => void)
   | undefined;
-let laneBehavior: "ordinary-failure" | "typed-fault" = "ordinary-failure";
+let laneBehavior: "module-clone" | "ordinary-failure" | "stale-success" | "typed-fault" = "ordinary-failure";
 
 beforeAll(async () => {
   Object.defineProperty(globalThis, "ImageData", { configurable: true, value: FakeImageData });
@@ -140,7 +156,12 @@ beforeEach(() => {
   });
   objectMocks.matchTemplates.mockReset();
   objectMocks.reportWasmFault.mockReset();
+  objectMocks.runWasmShard.mockReset();
   objectMocks.matchTemplates.mockImplementation(() => {
+    expect(FakeTemplateWorker.instances.every((worker) => worker.isTerminated)).toBe(true);
+    return [];
+  });
+  objectMocks.runWasmShard.mockImplementation(() => {
     expect(FakeTemplateWorker.instances.every((worker) => worker.isTerminated)).toBe(true);
     return [];
   });
@@ -158,7 +179,8 @@ describe("Detection template Worker failure handling", () => {
     await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
     expect(FakeTemplateWorker.instances).toHaveLength(4);
     expect(FakeTemplateWorker.instances.every((worker) => worker.isTerminated)).toBe(true);
-    expect(objectMocks.matchTemplates).toHaveBeenCalledOnce();
+    expect(objectMocks.runWasmShard).toHaveBeenCalledOnce();
+    expect(objectMocks.matchTemplates).not.toHaveBeenCalled();
   });
 
   it("fails fast on a typed child fault while another lane never responds", async () => {
@@ -190,6 +212,24 @@ describe("Detection template Worker failure handling", () => {
     expect(postMessage.mock.calls.some(([message]) => message.type === "success" || message.type === "error")).toBe(
       false,
     );
+  });
+
+  it("keeps nested Module clone failure on the main-WASM fallback path", async () => {
+    laneBehavior = "module-clone";
+    dispatchDetectionRequest();
+
+    await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
+    expect(objectMocks.runWasmShard).toHaveBeenCalledOnce();
+    expect(postMessage.mock.calls.some(([message]) => message.type === "wasm-fault")).toBe(false);
+  });
+
+  it("rejects stale template success identity before main-WASM fallback", async () => {
+    laneBehavior = "stale-success";
+    dispatchDetectionRequest();
+
+    await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
+    expect(objectMocks.runWasmShard).toHaveBeenCalledOnce();
+    expect(postMessage.mock.calls.some(([message]) => message.type === "wasm-fault")).toBe(false);
   });
 });
 
@@ -238,6 +278,18 @@ class FakeTemplateWorker {
       if (message.type !== "backend-init") {
         throw new Error("Template Worker only accepts backend initialization control messages");
       }
+      if (laneBehavior === "module-clone") {
+        queueMicrotask(() =>
+          this.emit({
+            context: { type: "initialization" },
+            fault: { code: "module-clone", message: "nested module could not be cloned" },
+            generation: message.generation,
+            role: "detection-template",
+            type: "wasm-fault",
+          }),
+        );
+        return;
+      }
       queueMicrotask(() =>
         this.emit({
           backend: message.backend.type,
@@ -253,6 +305,20 @@ class FakeTemplateWorker {
     }
     if (laneBehavior === "ordinary-failure") {
       queueMicrotask(() => this.fail("lane failed"));
+      return;
+    }
+    if (laneBehavior === "stale-success") {
+      queueMicrotask(() =>
+        this.emit({
+          attempt: message.attempt,
+          candidateIndexes: message.candidates.map((_, index) => message.candidateStart + index),
+          elapsedMs: 0,
+          id: message.id,
+          matches: [],
+          session: { ...message.session, nonce: message.session.nonce + 1 },
+          type: "success",
+        }),
+      );
       return;
     }
     queueMicrotask(() =>

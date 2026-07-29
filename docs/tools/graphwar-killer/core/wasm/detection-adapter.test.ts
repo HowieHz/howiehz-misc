@@ -1,9 +1,20 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { detectGraphwarPlayArea } from "../../detection/objects";
+import {
+  collectSoldierTemplateCenterCandidatesForMatching,
+  detectGraphwarPlayArea,
+  finalizeSoldierTemplateMatches,
+  getGraphwarDetectionScale,
+  matchSoldierTemplates,
+} from "../../detection/objects";
 import type { GraphwarDetectionWorkerTask } from "../../detection/runtime/protocol";
+import { GraphwarWasmFault } from "../algorithm-backend";
 import { GraphwarWasmAdapterError, type GraphwarWasmAdapterErrorCode } from "./abi";
-import { copyGraphwarWasmDetectionResult, createGraphwarWasmDetectionController } from "./detection-adapter";
+import {
+  copyGraphwarWasmDetectionResult,
+  createGraphwarWasmDetectionController,
+  runGraphwarWasmDetectionTemplateShard,
+} from "./detection-adapter";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime, type GraphwarWasmKernelRuntime } from "./runtime";
 
@@ -96,7 +107,12 @@ describe("Graphwar WASM detection bounds", () => {
     const knownRuntime = await createRuntime(module);
     const knownController = createGraphwarWasmDetectionController(knownRuntime);
     const known = knownController.begin({ backendGeneration: 2, requestId: 6, task: knownTask });
-    expect(known).toMatchObject({ edgeRect, stageEvents: [], taskType: "detect-bounds", type: "running" });
+    expect(known).toMatchObject({
+      edgeRect,
+      stageEvents: [{ phase: "start", stage: "collecting-soldier-candidates" }],
+      taskType: "detect-bounds",
+      type: "running",
+    });
     knownController.cancel(known.handle);
     expect(knownRuntime.arenaCursor).toBe(knownRuntime.arenaBase);
   });
@@ -134,12 +150,171 @@ describe("Graphwar WASM detection bounds", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("matches candidate, template shard, stable merge, and nested arena semantics", async () => {
+    const imageData = createWhiteImage(120, 72);
+    const edgeRect = { height: 64, width: 110, x: 5, y: 3 };
+    for (const [x, y] of [
+      [24, 22],
+      [25, 22],
+      [91, 44],
+      [92, 44],
+    ] as const) {
+      setPixel(imageData, x, y, 0xff, 0xe8, 0x20);
+    }
+    const settings = { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 4 };
+    const task = {
+      edgeRect,
+      imageData,
+      soldierSettings: settings,
+      thresholds: { minArea: 3 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const expectedCandidates = collectSoldierTemplateCenterCandidatesForMatching(imageData, edgeRect, settings);
+    expect(expectedCandidates.length).toBeGreaterThan(1);
+
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const started = controller.begin({ backendGeneration: 4, requestId: 19, task });
+    const candidateState = controller.resumeCandidates(started.handle);
+    expect(candidateState.candidates.map(({ candidateIndex: _, ...candidate }) => candidate)).toEqual(
+      expectedCandidates,
+    );
+    expect(candidateState.shards.map((shard) => shard.id)).toEqual(
+      Array.from({ length: Math.min(4, expectedCandidates.length) }, (_, index) => index + 1),
+    );
+
+    const shardResults = candidateState.shards.map((shard) => {
+      const matches = runGraphwarWasmDetectionTemplateShard(runtime, {
+        candidates: shard.candidates,
+        edgeRect,
+        imageData,
+      });
+      const expectedMatches = matchSoldierTemplates(
+        imageData,
+        edgeRect,
+        getGraphwarDetectionScale(edgeRect),
+        shard.candidates,
+      );
+      expect(matches.map(({ candidateIndex: _, ...match }) => match)).toEqual(expectedMatches);
+      return { id: shard.id, matches, session: candidateState.handle };
+    });
+    const completedTemplates = controller.resumeTemplates(started.handle, shardResults.reverse());
+    const expectedMatches = finalizeSoldierTemplateMatches(
+      matchSoldierTemplates(imageData, edgeRect, getGraphwarDetectionScale(edgeRect), expectedCandidates),
+      getGraphwarDetectionScale(edgeRect),
+      settings,
+    );
+    expect(completedTemplates.matches.map(({ candidateIndex: _, ...match }) => match)).toEqual(expectedMatches);
+    controller.cancel(started.handle);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("keeps serial and 1/2/4/N shard configurations equivalent", async () => {
+    const { edgeRect, imageData } = createTemplateCandidateFixture();
+    for (const templateMatchingWorkerCount of [1, 2, 4, 9]) {
+      const settings = { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount };
+      const task = {
+        edgeRect,
+        imageData,
+        soldierSettings: settings,
+        thresholds: { minArea: 3 },
+        type: "detect-bounds",
+      } satisfies GraphwarDetectionWorkerTask;
+      const expectedCandidates = collectSoldierTemplateCenterCandidatesForMatching(imageData, edgeRect, settings);
+      const runtime = await createRuntime(module);
+      const controller = createGraphwarWasmDetectionController(runtime);
+      const started = controller.begin({ backendGeneration: 7, requestId: templateMatchingWorkerCount, task });
+      const candidateState = controller.resumeCandidates(started.handle);
+      expect(candidateState.shards).toHaveLength(
+        templateMatchingWorkerCount === 1 ? 0 : Math.min(templateMatchingWorkerCount, expectedCandidates.length),
+      );
+      const shardResults = candidateState.shards.map((shard) => ({
+        id: shard.id,
+        matches: runGraphwarWasmDetectionTemplateShard(runtime, { candidates: shard.candidates, edgeRect, imageData }),
+        session: candidateState.handle,
+      }));
+      const result = controller.resumeTemplates(started.handle, shardResults.reverse());
+      expect(result.matches.map(({ candidateIndex: _, ...match }) => match)).toEqual(
+        finalizeSoldierTemplateMatches(
+          matchSoldierTemplates(imageData, edgeRect, getGraphwarDetectionScale(edgeRect), expectedCandidates),
+          getGraphwarDetectionScale(edgeRect),
+          settings,
+        ),
+      );
+      controller.cancel(started.handle);
+      expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+    }
+  });
+
+  it("rejects missing, duplicate, and foreign shard results without polluting the session", async () => {
+    const { edgeRect, imageData } = createTemplateCandidateFixture();
+    const task = {
+      edgeRect,
+      imageData,
+      soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 2 },
+      thresholds: { minArea: 3 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const started = controller.begin({ backendGeneration: 8, requestId: 31, task });
+    const candidateState = controller.resumeCandidates(started.handle);
+    const results = candidateState.shards.map((shard) => ({
+      id: shard.id,
+      matches: runGraphwarWasmDetectionTemplateShard(runtime, { candidates: shard.candidates, edgeRect, imageData }),
+      session: candidateState.handle,
+    }));
+    expectAdapterErrorCode(() => controller.resumeTemplates(started.handle, []), "missing-work-id");
+    expectAdapterErrorCode(
+      () =>
+        controller.resumeTemplates(
+          started.handle,
+          results.map((result) => results[0] ?? result),
+        ),
+      "duplicate-work-id",
+    );
+    expectAdapterErrorCode(
+      () =>
+        controller.resumeTemplates(
+          started.handle,
+          results.map((result) => ({ ...result, id: result.id + 20 })),
+        ),
+      "missing-work-id",
+    );
+    expectAdapterErrorCode(
+      () =>
+        controller.resumeTemplates(
+          started.handle,
+          results.map((result) => ({
+            ...result,
+            session: { ...result.session, nonce: result.session.nonce + 1 },
+          })),
+        ),
+      "invalid-session-identity",
+    );
+    expectAdapterErrorCode(
+      () =>
+        controller.resumeTemplates(
+          started.handle,
+          results.map((result) => ({
+            ...result,
+            session: { ...result.session, taskType: "one-click-clear" as const },
+          })),
+        ),
+      "invalid-session-identity",
+    );
+    controller.resumeTemplates(started.handle, results);
+    expectAdapterErrorCode(() => controller.resumeTemplates(started.handle, results), "invalid-session-state");
+    controller.cancel(started.handle);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("rejects malformed result state, stage order, and edge records at the Adapter boundary", () => {
     const buffer = new ArrayBuffer(256);
     const memory = { arenaBase: 8, arenaCursor: 256, buffer };
     const resultPointer = 64;
     const stagePointer = 48;
-    const resultView = new DataView(buffer, resultPointer, 64);
+    const resultView = new DataView(buffer, resultPointer, 80);
     resultView.setUint32(0, 1, true);
     resultView.setUint32(4, 1, true);
     resultView.setUint32(8, 1, true);
@@ -151,20 +326,73 @@ describe("Graphwar WASM detection bounds", () => {
     resultView.setFloat64(56, 4, true);
     const stages = new Uint32Array(buffer, stagePointer, 2);
     stages.set([1, 2]);
-    expect(copyGraphwarWasmDetectionResult(memory, resultPointer, 32, "detect-bounds-only", [1, 2])).toMatchObject({
+    expect(
+      copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
+    ).toMatchObject({
       edgeRect: { height: 4, width: 3, x: 1, y: 2 },
       state: 1,
     });
 
     stages.set([2, 1]);
     expectDetectionResultError(() =>
-      copyGraphwarWasmDetectionResult(memory, resultPointer, 32, "detect-bounds-only", [1, 2]),
+      copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
     );
     stages.set([1, 2]);
     resultView.setFloat64(48, 0, true);
     expectDetectionResultError(() =>
-      copyGraphwarWasmDetectionResult(memory, resultPointer, 32, "detect-bounds-only", [1, 2]),
+      copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
     );
+  });
+
+  it("rejects aliased detection output arrays", () => {
+    const buffer = new ArrayBuffer(512);
+    const memory = { arenaBase: 8, arenaCursor: 512, buffer };
+    const sharedPointer = 64;
+    const resultPointer = 160;
+    const resultView = new DataView(buffer, resultPointer, 80);
+    resultView.setUint32(0, 1, true);
+    resultView.setUint32(4, 1, true);
+    resultView.setUint32(12, sharedPointer, true);
+    resultView.setUint32(16, 2, true);
+    resultView.setUint32(64, sharedPointer, true);
+    resultView.setUint32(68, 1, true);
+    new Uint32Array(buffer, sharedPointer, 2).set([1, 2]);
+    const candidateView = new DataView(buffer, sharedPointer, 32);
+    candidateView.setUint32(16, 1, true);
+
+    expectDetectionResultError(() =>
+      copyGraphwarWasmDetectionResult(memory, resultPointer, 32, 32, "detect-bounds-only", [1, 2], []),
+    );
+  });
+
+  it("classifies malformed template output and changed candidate identity as a typed output fault", async () => {
+    const { edgeRect, imageData } = createTemplateCandidateFixture();
+    const settings = { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 2 };
+    const [candidate] = collectSoldierTemplateCenterCandidatesForMatching(imageData, edgeRect, settings);
+    expect(candidate).toBeDefined();
+    const runtime = await createRuntime(module);
+    const runShard = runtime.runDetectionTemplateShard.bind(runtime);
+    vi.spyOn(runtime, "runDetectionTemplateShard").mockImplementation((inputPointer, inputByteLength) => {
+      const resultPointer = runShard(inputPointer, inputByteLength);
+      const resultView = new DataView(runtime.buffer, resultPointer, 16);
+      const matchPointer = resultView.getUint32(0, true);
+      const matchView = new DataView(runtime.buffer, matchPointer, 72);
+      matchView.setFloat64(0, matchView.getFloat64(0, true) + 1, true);
+      return resultPointer;
+    });
+
+    let error: unknown;
+    try {
+      runGraphwarWasmDetectionTemplateShard(runtime, {
+        candidates: [{ ...candidate, candidateIndex: 0 }],
+        edgeRect,
+        imageData,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(GraphwarWasmFault);
+    expect(error).toMatchObject({ code: "output" });
   });
 });
 
@@ -203,6 +431,20 @@ function createAxisFixture(
   return image;
 }
 
+function createTemplateCandidateFixture() {
+  const imageData = createWhiteImage(120, 72);
+  const edgeRect = { height: 64, width: 110, x: 5, y: 3 };
+  for (const [x, y] of [
+    [24, 22],
+    [25, 22],
+    [91, 44],
+    [92, 44],
+  ] as const) {
+    setPixel(imageData, x, y, 0xff, 0xe8, 0x20);
+  }
+  return { edgeRect, imageData };
+}
+
 function expectDetectionResultError(task: () => unknown): void {
   expectAdapterErrorCode(task, "invalid-detection-result");
 }
@@ -218,10 +460,10 @@ function expectAdapterErrorCode(task: () => unknown, code: GraphwarWasmAdapterEr
   expect(error).toMatchObject({ code });
 }
 
-function setPixel(image: ImageData, x: number, y: number, value: number): void {
+function setPixel(image: ImageData, x: number, y: number, red: number, green = red, blue = red): void {
   const offset = (y * image.width + x) * 4;
-  image.data[offset] = value;
-  image.data[offset + 1] = value;
-  image.data[offset + 2] = value;
+  image.data[offset] = red;
+  image.data[offset + 1] = green;
+  image.data[offset + 2] = blue;
   image.data[offset + 3] = 255;
 }

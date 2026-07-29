@@ -14,6 +14,7 @@ const wasmPath = join(buildDirectory, "graphwar-kernel.wasm");
 const roleExports = [
   "beginDetectionTask",
   "resumeDetectionTask",
+  "runDetectionTemplateShard",
   "runFormula",
   "runTrajectory",
   "runRouteTask",
@@ -227,26 +228,26 @@ test("keeps allocator count, canary, cursor, and high-water stable across long-l
   const stableByteLength = exports.memory.buffer.byteLength;
   const stablePeak = exports.getArenaPeak();
   for (const roleExport of roleExports.filter(
-    (name) => name !== "beginDetectionTask" && name !== "resumeDetectionTask",
+    (name) => name !== "beginDetectionTask" && name !== "resumeDetectionTask" && name !== "runDetectionTemplateShard",
   )) {
     assert.equal(exports[roleExport](), 0);
   }
   const detectionMark = exports.markArena();
   const rgbaPointer = exports.reserveArena(4, 1);
   new Uint8Array(exports.memory.buffer, rgbaPointer, 4).fill(255);
-  const detectionInputPointer = exports.reserveArena(40, 8);
-  const detectionInput = new DataView(exports.memory.buffer, detectionInputPointer, 40);
+  const detectionInputPointer = exports.reserveArena(152, 8);
+  const detectionInput = new DataView(exports.memory.buffer, detectionInputPointer, 152);
   detectionInput.setUint32(0, 1, true);
   detectionInput.setUint32(4, 1, true);
   detectionInput.setUint32(8, 1, true);
   detectionInput.setUint32(12, rgbaPointer, true);
   detectionInput.setUint32(16, 4, true);
-  const detectionBeginResult = exports.beginDetectionTask(detectionInputPointer, 40);
+  const detectionBeginResult = exports.beginDetectionTask(detectionInputPointer, 152);
   assert.ok(detectionBeginResult > detectionInputPointer);
-  const detectionSessionPointer = new DataView(exports.memory.buffer, detectionBeginResult, 64).getUint32(20, true);
+  const detectionSessionPointer = new DataView(exports.memory.buffer, detectionBeginResult, 80).getUint32(20, true);
   assert.equal(detectionSessionPointer, detectionInputPointer);
-  assert.ok(exports.resumeDetectionTask(detectionSessionPointer) > detectionBeginResult);
-  assert.throws(() => exports.resumeDetectionTask(detectionSessionPointer), WebAssembly.RuntimeError);
+  assert.ok(exports.resumeDetectionTask(detectionSessionPointer, 0, 0) > detectionBeginResult);
+  assert.throws(() => exports.resumeDetectionTask(detectionSessionPointer, 0, 0), WebAssembly.RuntimeError);
   exports.resetArena(detectionMark);
   for (let iteration = 0; iteration < 5_000; iteration += 1) {
     const markToken = exports.markArena();

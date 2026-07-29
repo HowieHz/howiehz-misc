@@ -6,6 +6,7 @@ import { writeGraphwarWasmFloat64Values } from "./abi";
 export const graphwarWasmRequiredFunctionExports = [
   "beginDetectionTask",
   "resumeDetectionTask",
+  "runDetectionTemplateShard",
   "runFormula",
   "runTrajectory",
   "runRouteTask",
@@ -44,7 +45,8 @@ interface GraphwarWasmArenaExports {
 
 interface GraphwarWasmFormulaExports {
   beginDetectionTask: (inputPointer: number, inputByteLength: number) => number;
-  resumeDetectionTask: (sessionPointer: number) => number;
+  resumeDetectionTask: (sessionPointer: number, workPointer: number, workCount: number) => number;
+  runDetectionTemplateShard: (inputPointer: number, inputByteLength: number) => number;
   runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
   runTrajectory: (inputPointer: number, inputByteLength: number) => number;
 }
@@ -227,13 +229,13 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
   }
 
   /** Continues an exact retained detection session pointer after a stage or external-work boundary. */
-  resumeDetectionTask(sessionPointer: number) {
-    if (!isU32(sessionPointer)) {
+  resumeDetectionTask(sessionPointer: number, workPointer = 0, workCount = 0) {
+    if (!isU32(sessionPointer) || !isU32(workPointer) || !isU32(workCount)) {
       throw new GraphwarWasmFault("input", "Graphwar WASM detection session pointer must be a uint32 value");
     }
     let resultPointer: number;
     try {
-      resultPointer = this.#exports.resumeDetectionTask(sessionPointer);
+      resultPointer = this.#exports.resumeDetectionTask(sessionPointer, workPointer, workCount);
     } catch (error) {
       throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM detection resume failed", "trap");
     }
@@ -245,6 +247,29 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       resultPointer >= cursor
     ) {
       throw new GraphwarWasmFault("output", "Graphwar WASM detection resume returned an invalid result pointer");
+    }
+    return resultPointer;
+  }
+
+  /** Scores one complete template shard and validates its returned result-record pointer. */
+  runDetectionTemplateShard(inputPointer: number, inputByteLength: number) {
+    if (!isU32(inputPointer) || !isU32(inputByteLength)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM template-shard fields must be uint32 values");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.runDetectionTemplateShard(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM template shard failed", "trap");
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 8 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM template shard returned an invalid result pointer");
     }
     return resultPointer;
   }

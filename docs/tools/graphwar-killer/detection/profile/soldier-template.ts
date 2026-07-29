@@ -1,4 +1,5 @@
 /** 士兵模板 Profile 集中经验阈值和 Graphwar 20x20 贴图几何，检测流程应只消费这些常量。 */
+import { GRAPHWAR_SOLDIER_VISIBLE_SIZE } from "../../core/game/constants";
 
 /** Graphwar 士兵贴图源码画布是 20x20，Soldier.x/y 位于画布中心。 */
 export const graphwarSoldierCanvasCenter = 10;
@@ -39,5 +40,6 @@ export function createGraphwarSoldierTemplateProfileData() {
     graphwarSoldierTemplateMinimumPlayerScore,
     graphwarSoldierTemplateMinimumSignatureScore,
     graphwarSoldierGenerationMinimumAxisGap,
+    GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2,
   ]);
 }

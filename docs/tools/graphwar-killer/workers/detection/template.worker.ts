@@ -1,6 +1,15 @@
 /** 士兵模板匹配子 worker：只负责候选切片评分，不做全局排序和重叠抑制。 */
-import type { GraphwarBackendControlMessage, GraphwarBackendInitializationMessage } from "../../core/algorithm-backend";
+import {
+  GraphwarWasmFault,
+  type GraphwarBackendControlMessage,
+  type GraphwarBackendInitializationMessage,
+} from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
+import {
+  runGraphwarWasmDetectionTemplateShard,
+  type GraphwarWasmDetectionCandidate,
+} from "../../core/wasm/detection-adapter";
+import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../core/worker-backend";
 import { matchSoldierTemplates } from "../../detection/objects";
 import type {
@@ -47,11 +56,39 @@ async function runTemplateRequest(request: GraphwarSoldierTemplateWorkerRequest)
         shardId: request.id,
         type: "template-shard",
       },
-      () => {
+      (context) => {
         const startedAt = nowMs();
+        const candidates = request.candidates.map(
+          (candidate, index) =>
+            ({
+              ...candidate,
+              candidateIndex: request.candidateStart + index,
+            }) satisfies GraphwarWasmDetectionCandidate,
+        );
+        let scoredMatches;
+        if (context.type === "wasm") {
+          if (!(context.runtime instanceof GraphwarWasmKernelRuntime)) {
+            throw new GraphwarWasmFault("abi", "Detection template Worker received an incompatible WASM runtime");
+          }
+          scoredMatches = runGraphwarWasmDetectionTemplateShard(context.runtime, {
+            candidates,
+            edgeRect: request.edgeRect,
+            imageData: request.imageData,
+          });
+        } else {
+          scoredMatches = matchSoldierTemplates(
+            request.imageData,
+            request.edgeRect,
+            request.scale,
+            request.candidates,
+          ).map((match, index) => ({ ...match, candidateIndex: request.candidateStart + index }));
+        }
         // 先完成评分再读取 elapsedMs；该顺序不能依赖响应对象的属性求值位置。
-        const matches = matchSoldierTemplates(request.imageData, request.edgeRect, request.scale, request.candidates);
-        return { elapsedMs: nowMs() - startedAt, matches };
+        return {
+          candidateIndexes: scoredMatches.map((match) => match.candidateIndex),
+          elapsedMs: nowMs() - startedAt,
+          matches: scoredMatches.map(({ candidateIndex: _, ...match }) => match),
+        };
       },
     );
     if (execution.type === "wasm-fault") {
@@ -59,9 +96,11 @@ async function runTemplateRequest(request: GraphwarSoldierTemplateWorkerRequest)
     }
     workerScope.postMessage({
       attempt: request.attempt,
+      candidateIndexes: execution.result.candidateIndexes,
       elapsedMs: execution.result.elapsedMs,
       id: request.id,
       matches: execution.result.matches,
+      session: request.session,
       type: "success",
     });
   } catch (error) {
@@ -69,6 +108,7 @@ async function runTemplateRequest(request: GraphwarSoldierTemplateWorkerRequest)
       attempt: request.attempt,
       id: request.id,
       message: error instanceof Error ? error.message : String(error),
+      session: request.session,
       type: "error",
     });
   }

@@ -45,15 +45,16 @@ interface GraphwarWasmArenaExports {
   resetArenaAfterFault: (markToken: number) => void;
 }
 
-interface GraphwarWasmFormulaExports {
+interface GraphwarWasmAlgorithmExports {
   beginDetectionTask: (inputPointer: number, inputByteLength: number) => number;
   resumeDetectionTask: (sessionPointer: number, workPointer: number, workCount: number) => number;
   runDetectionTemplateShard: (inputPointer: number, inputByteLength: number) => number;
   runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
+  runRouteTask: (command: number, inputPointer: number, inputByteLength: number) => number;
   runTrajectory: (inputPointer: number, inputByteLength: number) => number;
 }
 
-type GraphwarWasmRuntimeExports = GraphwarWasmArenaExports & GraphwarWasmFormulaExports;
+type GraphwarWasmRuntimeExports = GraphwarWasmArenaExports & GraphwarWasmAlgorithmExports;
 
 /** Atomic diagnostic snapshot used by soak tests and later benchmark reporting. */
 export interface GraphwarWasmArenaDiagnostics {
@@ -333,6 +334,29 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       resultPointer >= cursor
     ) {
       throw new GraphwarWasmFault("output", "Graphwar WASM trajectory returned an invalid result pointer");
+    }
+    return resultPointer;
+  }
+
+  /** Executes one route-context or collision command and validates its returned arena pointer. */
+  runRouteTask(command: number, inputPointer: number, inputByteLength: number) {
+    if (!isU32(command) || !isU32(inputPointer) || !isU32(inputByteLength)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM route command fields must be uint32 values");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.runRouteTask(command, inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM route command failed", "trap");
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 4 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault("output", "Graphwar WASM route command returned an invalid result pointer");
     }
     return resultPointer;
   }

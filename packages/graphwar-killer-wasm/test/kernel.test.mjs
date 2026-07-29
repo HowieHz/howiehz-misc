@@ -252,7 +252,11 @@ test("keeps allocator count, canary, cursor, and high-water stable across long-l
   const stableByteLength = exports.memory.buffer.byteLength;
   const stablePeak = exports.getArenaPeak();
   for (const roleExport of roleExports.filter(
-    (name) => name !== "beginDetectionTask" && name !== "resumeDetectionTask" && name !== "runDetectionTemplateShard",
+    (name) =>
+      name !== "beginDetectionTask" &&
+      name !== "resumeDetectionTask" &&
+      name !== "runDetectionTemplateShard" &&
+      name !== "runRouteTask",
   )) {
     assert.equal(exports[roleExport](), 0);
   }

@@ -12,6 +12,10 @@ import type { GraphwarDetectionWorkerTask } from "../../detection/runtime/protoc
 import type { GraphwarExpressionProgram } from "../../formula/expression/program";
 import { isGraphwarExpressionProgram } from "../../formula/expression/program";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
+import {
+  createGraphwarRoutePolicyData,
+  createGraphwarThetaStarLookaheadColumnOffsetData,
+} from "../../pathfinding/routing/canonical-data";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { AlgorithmMode, EquationMode, GraphBounds } from "../types";
 import {
@@ -157,21 +161,26 @@ export type GraphwarWasmPackedDetectionInput =
       type: "detect-bounds";
     };
 
-/** 几何 route session 的原子静态输入；mask 与全部身份数值在同一次 begin command 写入。 */
-export interface GraphwarWasmRouteSessionInput {
+/** WASM route context 的原子静态输入；基础 mask、友军与两类容差在同一次命令写入。 */
+export interface GraphwarWasmRouteContextInput {
   boundaryExpansion: number;
   bounds: { maxX: number; maxY: number; minX: number; minY: number };
   boundsRect: { height: number; width: number; x: number; y: number };
-  routeMask: Uint8Array;
-  routeMode: "theta-star" | "visibility-graph";
+  friendlySoldierCenters: readonly GraphwarWasmPoint[];
   routeOriginPoint: GraphwarWasmPoint;
   routeTolerancePlanePixels: number;
+  simulationTolerancePlanePixels: number;
+  soldierHitRadiusPixels: number;
+  sourceMask: Uint8Array;
 }
 
-/** Packed route session 只暴露固定 context record 与唯一 mask slice。 */
-export interface GraphwarWasmPackedRouteSessionInput {
+/** Packed route context 原子携带全部长期数据，不允许 policy/mask 半状态。 */
+export interface GraphwarWasmPackedRouteContextInput {
   context: GraphwarWasmMemorySlice;
-  routeMask: GraphwarWasmMemorySlice;
+  friendlySoldierCenters: GraphwarWasmPackedPointSoA;
+  routePolicy: GraphwarWasmMemorySlice;
+  sourceMask: GraphwarWasmMemorySlice;
+  thetaStarLookaheadColumnOffsets: GraphwarWasmMemorySlice;
 }
 
 /** 可并行派发的无状态几何 edge job；Step 状态证据由后续公式 descriptor Adapter 原子附加。 */
@@ -535,41 +544,45 @@ export function packGraphwarWasmSoldierTemplates(
   };
 }
 
-/** 一次写入 route session 的固定 context 与 mask，后续同 session 不重复上传。 */
-export function packGraphwarWasmRouteSessionInput(
+/** 一次写入 route context 的固定输入，后续碰撞与搜索命令只引用 context pointer。 */
+export function packGraphwarWasmRouteContextInput(
   arena: GraphwarWasmArenaMemorySource,
-  input: GraphwarWasmRouteSessionInput,
+  input: GraphwarWasmRouteContextInput,
   minimumPointer = 0,
-): GraphwarWasmPackedRouteSessionInput {
+): GraphwarWasmPackedRouteContextInput {
   const minX = validateGraphwarWasmFiniteNumber(input.bounds.minX, "bounds.minX", "input");
   const minY = validateGraphwarWasmFiniteNumber(input.bounds.minY, "bounds.minY", "input");
   const maxX = validateGraphwarWasmFiniteNumber(input.bounds.maxX, "bounds.maxX", "input");
   const maxY = validateGraphwarWasmFiniteNumber(input.bounds.maxY, "bounds.maxY", "input");
-  if (minX >= maxX || minY >= maxY) {
+  if (minX === maxX || minY === maxY) {
     throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar route bounds must span both axes", "input");
-  }
-  const routeModeTag = input.routeMode === "theta-star" ? 1 : input.routeMode === "visibility-graph" ? 2 : 0;
-  if (routeModeTag === 0) {
-    throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar route mode is unsupported", "input");
   }
   const context = new Float64Array([
     minX,
-    minY,
     maxX,
+    minY,
     maxY,
     validateGraphwarWasmFiniteNumber(input.boundsRect.x, "boundsRect.x", "input"),
     validateGraphwarWasmFiniteNumber(input.boundsRect.y, "boundsRect.y", "input"),
     validatePositiveFiniteNumber(input.boundsRect.width, "boundsRect.width"),
     validatePositiveFiniteNumber(input.boundsRect.height, "boundsRect.height"),
     validateNonNegativeFiniteNumber(input.boundaryExpansion, "boundaryExpansion"),
-    validateNonNegativeFiniteNumber(input.routeTolerancePlanePixels, "routeTolerancePlanePixels"),
+    validateGraphwarWasmFiniteNumber(input.routeTolerancePlanePixels, "routeTolerancePlanePixels", "input"),
+    validateGraphwarWasmFiniteNumber(input.simulationTolerancePlanePixels, "simulationTolerancePlanePixels", "input"),
     validateGraphwarWasmFiniteNumber(input.routeOriginPoint.x, "routeOriginPoint.x", "input"),
     validateGraphwarWasmFiniteNumber(input.routeOriginPoint.y, "routeOriginPoint.y", "input"),
-    routeModeTag,
+    validateNonNegativeFiniteNumber(input.soldierHitRadiusPixels, "soldierHitRadiusPixels"),
   ]);
   return {
     context: writeGraphwarWasmFloat64Values(arena, context, minimumPointer),
-    routeMask: packGraphwarPlaneMask(arena, input.routeMask, minimumPointer),
+    friendlySoldierCenters: packGraphwarWasmPointSoA(arena, input.friendlySoldierCenters, minimumPointer),
+    routePolicy: writeGraphwarWasmFloat64Values(arena, createGraphwarRoutePolicyData(), minimumPointer),
+    sourceMask: packGraphwarPlaneMask(arena, input.sourceMask, minimumPointer),
+    thetaStarLookaheadColumnOffsets: writeGraphwarWasmBytes(
+      arena,
+      createGraphwarThetaStarLookaheadColumnOffsetData(),
+      minimumPointer,
+    ),
   };
 }
 

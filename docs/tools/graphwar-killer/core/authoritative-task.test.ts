@@ -164,6 +164,89 @@ describe("Graphwar authoritative task coordinator", () => {
     expect(task.cancel()).toBe(false);
   });
 
+  it("keeps a Worker result provisional until the asynchronous workflow commit", async () => {
+    const harness = createHarness();
+    let releaseCommit: (() => void) | undefined;
+    const committed: string[] = [];
+    const task = harness.coordinator.beginTask(
+      { bytes: new Uint8Array([1]), settings: { scale: 1 } },
+      { generation: 2, promise: Promise.resolve(createGraphwarTypescriptWorkerBackendConfiguration(2)) },
+      {
+        commitResult: async (result, context) => {
+          await new Promise<void>((resolve) => {
+            releaseCommit = resolve;
+          });
+          context.commit(() => committed.push(result));
+        },
+      },
+    );
+    await Promise.resolve();
+    harness.attempts[0]?.resolve("provisional");
+    await Promise.resolve();
+    let isSettled = false;
+    void task.promise.finally(() => {
+      isSettled = true;
+    });
+
+    expect(isSettled).toBe(false);
+    expect(committed).toEqual([]);
+    releaseCommit?.();
+    await expect(task.promise).resolves.toBe("provisional");
+    expect(committed).toEqual(["provisional"]);
+  });
+
+  it("revokes a pending workflow commit and publishes only the TS replay", async () => {
+    const harness = createHarness();
+    const pendingCommits: (() => void)[] = [];
+    const committed: string[] = [];
+    const task = harness.coordinator.beginTask(
+      { bytes: new Uint8Array([1]), settings: { scale: 1 } },
+      { generation: 3, promise: Promise.resolve(createGraphwarTypescriptWorkerBackendConfiguration(3)) },
+      {
+        commitResult: async (result, context) => {
+          await new Promise<void>((resolve) => pendingCommits.push(resolve));
+          context.commit(() => committed.push(result));
+        },
+      },
+    );
+    await Promise.resolve();
+    harness.attempts[0]?.resolve("old WASM");
+    await Promise.resolve();
+
+    expect(harness.coordinator.replayGenerationAsTypescript(3, 4)).toBe(true);
+    harness.attempts[1]?.resolve("TS replay");
+    await Promise.resolve();
+    pendingCommits[0]?.();
+    pendingCommits[1]?.();
+
+    await expect(task.promise).resolves.toBe("TS replay");
+    expect(committed).toEqual(["TS replay"]);
+  });
+
+  it("makes workflow commit single-use before a later fault can replay it", async () => {
+    const harness = createHarness();
+    const published = vi.fn();
+    const secondCommit = vi.fn();
+    const task = harness.coordinator.beginTask(
+      { bytes: new Uint8Array([1]), settings: { scale: 1 } },
+      { generation: 5, promise: Promise.resolve(createGraphwarTypescriptWorkerBackendConfiguration(5)) },
+      {
+        commitResult: (result, context) => {
+          expect(context.commit(() => published(result))).toBe(true);
+          expect(context.commit(secondCommit)).toBe(false);
+          expect(harness.coordinator.replayGenerationAsTypescript(5, 6)).toBe(true);
+        },
+      },
+    );
+    await Promise.resolve();
+    harness.attempts[0]?.resolve("committed");
+
+    await expect(task.promise).resolves.toBe("committed");
+    expect(published).toHaveBeenCalledExactlyOnceWith("committed");
+    expect(secondCommit).not.toHaveBeenCalled();
+    expect(harness.attempts).toHaveLength(1);
+  });
+
   it("lets explicit cancellation win while backend selection is still pending", async () => {
     const harness = createHarness();
     let resolveSelection:

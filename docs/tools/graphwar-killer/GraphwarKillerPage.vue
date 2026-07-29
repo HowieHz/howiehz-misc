@@ -795,8 +795,8 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
   },
 });
 const {
-  autoDetectionEnabled: isAutoDetectionEnabled,
-  inProgress: isDetectionInProgress,
+  isAutoDetectionEnabled,
+  isInProgress: isDetectionInProgress,
   status: detectionStatus,
   statusKind: detectionStatusKind,
   statusWarning: detectionStatusWarning,

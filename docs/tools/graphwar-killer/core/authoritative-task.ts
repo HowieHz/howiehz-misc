@@ -40,13 +40,23 @@ interface GraphwarAuthoritativeTaskCoordinatorOptions<TInput, TSnapshot, TResult
   ) => GraphwarAuthoritativeAttemptExecution<TResult>;
 }
 
-interface GraphwarAuthoritativeTaskOptions<TEvent> {
+/** Workflow commit can cross paint boundaries while every actual side effect remains identity-gated. */
+export interface GraphwarAuthoritativeResultCommitContext {
+  readonly attempt: GraphwarBackendAttemptIdentity;
+  readonly commit: (publish: () => void) => boolean;
+}
+
+interface GraphwarAuthoritativeTaskOptions<TResult, TEvent> {
+  commitResult?: (result: TResult, context: GraphwarAuthoritativeResultCommitContext) => Promise<void> | void;
   onEvent?: (event: TEvent) => void;
 }
 
 interface ActiveAuthoritativeTask<TSnapshot, TResult, TEvent> {
   attempt: GraphwarBackendAttemptIdentity;
   cancelAttempt: (() => void) | undefined;
+  commitResult:
+    | ((result: TResult, context: GraphwarAuthoritativeResultCommitContext) => Promise<void> | void)
+    | undefined;
   isSettled: boolean;
   onEvent: ((event: TEvent) => void) | undefined;
   reject: (reason?: unknown) => void;
@@ -57,6 +67,7 @@ interface ActiveAuthoritativeTask<TSnapshot, TResult, TEvent> {
 /** 公开任务句柄保留同一 Promise；只有显式用户取消才终止 outer task。 */
 export interface GraphwarAuthoritativeTask<TResult> {
   cancel: (reason?: unknown) => boolean;
+  fail: (reason: unknown) => boolean;
   getAttempt: () => GraphwarBackendAttemptIdentity | undefined;
   promise: Promise<TResult>;
 }
@@ -76,7 +87,7 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
   function beginTask(
     input: TInput,
     backendSelection: GraphwarWorkerBackendSelection,
-    taskOptions: GraphwarAuthoritativeTaskOptions<TEvent> = {},
+    taskOptions: GraphwarAuthoritativeTaskOptions<TResult, TEvent> = {},
   ): GraphwarAuthoritativeTask<TResult> {
     const snapshot = options.cloneInput(input);
     const attempt = attemptGate.beginOuterTask(backendSelection.generation);
@@ -89,6 +100,7 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
     const activeTask: ActiveAuthoritativeTask<TSnapshot, TResult, TEvent> = {
       attempt,
       cancelAttempt: undefined,
+      commitResult: taskOptions.commitResult,
       isSettled: false,
       onEvent: taskOptions.onEvent,
       reject: rejectTask,
@@ -103,6 +115,7 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
 
     return {
       cancel: (reason = new GraphwarAuthoritativeTaskCancelledError()) => cancelTask(activeTask, reason),
+      fail: (reason) => failTask(activeTask, reason),
       getAttempt: () => (activeTask.isSettled ? undefined : copyAttemptIdentity(activeTask.attempt)),
       promise,
     };
@@ -193,9 +206,37 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
     }
     task.cancelAttempt = execution.cancel;
     void execution.result.then(
-      (result) => completeTaskIfCurrent(task, attempt, result),
+      (result) => commitTaskResult(task, attempt, result),
       (error) => failTaskIfCurrent(task, attempt, error),
     );
+  }
+
+  /** Algorithm success remains provisional until the workflow finishes its generation-gated commit. */
+  async function commitTaskResult(
+    task: ActiveAuthoritativeTask<TSnapshot, TResult, TEvent>,
+    attempt: GraphwarBackendAttemptIdentity,
+    result: TResult,
+  ) {
+    if (!isCurrentTaskAttempt(task, attempt)) {
+      return;
+    }
+    try {
+      await task.commitResult?.(result, {
+        attempt: copyAttemptIdentity(attempt),
+        commit: (publish) => {
+          if (!isCurrentTaskAttempt(task, attempt)) {
+            return false;
+          }
+          publish();
+          completeTaskIfCurrent(task, attempt, result);
+          return true;
+        },
+      });
+    } catch (error) {
+      failTaskIfCurrent(task, attempt, error);
+      return;
+    }
+    completeTaskIfCurrent(task, attempt, result);
   }
 
   /** 用户取消优先于迟到 selection/result，并只结算一次公开 Promise。 */
@@ -205,6 +246,20 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
     }
     attemptGate.cancelOuterTask(task.attempt);
     activeTasks.delete(task.attempt.outerTaskId);
+    task.isSettled = true;
+    cancelAttemptSafely(task);
+    task.reject(reason);
+    return true;
+  }
+
+  /** Ordinary attempt infrastructure failure is terminal, but remains distinct from user cancellation and replay. */
+  function failTask(task: ActiveAuthoritativeTask<TSnapshot, TResult, TEvent>, reason: unknown) {
+    if (task.isSettled || !isCurrentTaskAttempt(task, task.attempt)) {
+      return false;
+    }
+    const attempt = task.attempt;
+    attemptGate.completeOuterTask(attempt);
+    activeTasks.delete(attempt.outerTaskId);
     task.isSettled = true;
     cancelAttemptSafely(task);
     task.reject(reason);

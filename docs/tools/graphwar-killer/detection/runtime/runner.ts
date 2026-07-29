@@ -6,9 +6,15 @@ import {
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
   type GraphwarWorkerBackendConfiguration,
+  type GraphwarWorkerBackendSelection,
   GraphwarWasmFault,
 } from "../../core/algorithm-backend";
-import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
+import {
+  createGraphwarAuthoritativeTaskCoordinator,
+  type GraphwarAuthoritativeAttemptContext,
+  type GraphwarAuthoritativeResultCommitContext,
+  type GraphwarAuthoritativeTask,
+} from "../../core/authoritative-task";
 import { createGraphwarWorkerBackendSlot } from "../../core/worker-backend";
 import { detectGraphwarObjectsInBounds, detectGraphwarPlayArea } from "../objects";
 import type {
@@ -49,7 +55,15 @@ export function isGraphwarDetectionCancelledError(error: unknown) {
 }
 
 /** 单次检测运行时的页面回调。 */
-export interface GraphwarDetectionRunOptions {
+export interface GraphwarDetectionRunOptions<
+  TResult extends GraphwarDetectionWorkerSuccessResponse["result"] = GraphwarDetectionWorkerSuccessResponse["result"],
+> {
+  /** Workflow result stays provisional until this asynchronous generation-gated commit finishes. */
+  commitResult?: (
+    result: TResult,
+    timings: readonly GraphwarDetectionWorkerTimingEntry[],
+    context: GraphwarAuthoritativeResultCommitContext,
+  ) => Promise<void> | void;
   /** Worker 进入耗时阶段时通知页面更新状态。 */
   onStage?: (stage: GraphwarDetectionWorkerStage) => void;
   /** Worker 或同步 fallback 完成后返回各识别阶段的准确耗时。 */
@@ -57,19 +71,17 @@ export interface GraphwarDetectionRunOptions {
 }
 
 /** 当前权威 detection outer task；Worker 与同步 fallback 共用同一 commit gate。 */
-interface PendingDetectionTask {
+interface PendingDetectionAttempt {
   /** 当前 outer task 中唯一可提交的 backend attempt。 */
   attempt: GraphwarBackendAttemptIdentity;
   /** 发送给 Worker 的请求 id。 */
   id: number;
-  /** Worker 阶段通知回调。 */
-  onStage?: (stage: GraphwarDetectionWorkerStage) => void;
-  /** Worker 完成后的阶段耗时回调。 */
-  onTimings?: (timings: readonly GraphwarDetectionWorkerTimingEntry[]) => void;
+  /** 当前 attempt 的所有非终态事件都必须通过 coordinator publish。 */
+  publish: (event: GraphwarDetectionAttemptEvent) => boolean;
   /** Promise 失败回调。 */
   reject: (reason?: unknown) => void;
   /** Promise 成功回调。 */
-  resolve: (value: GraphwarDetectionWorkerSuccessResponse["result"]) => void;
+  resolve: (value: GraphwarDetectionAttemptResult) => void;
   /** 当前请求的任务类型；成功响应必须与它一致。 */
   taskType: GraphwarDetectionWorkerRequest["task"]["type"];
 }
@@ -77,26 +89,61 @@ interface PendingDetectionTask {
 /** Detection main Worker 与 nested template Worker 共用的 backend 生命周期注入点。 */
 export interface GraphwarDetectionRunnerOptions {
   backendConfiguration?: GraphwarWorkerBackendConfiguration;
-  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
+  createBackendSelection?: () => GraphwarWorkerBackendSelection;
+  /** Returning a newer generation authorizes this runner to replace the faulted attempt with TS cold replay. */
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => number | undefined;
+}
+
+type GraphwarDetectionAttemptResult = GraphwarDetectionWorkerSuccessResponse extends infer TResponse
+  ? TResponse extends GraphwarDetectionWorkerSuccessResponse
+    ? Pick<TResponse, "result" | "taskType" | "timings">
+    : never
+  : never;
+
+interface GraphwarDetectionAttemptEvent {
+  stage: GraphwarDetectionWorkerStage;
 }
 
 /** 创建页面可复用的检测 runner。 */
 export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOptions = {}) {
-  const attemptGate = createGraphwarBackendAttemptGate();
-  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  if (options.backendConfiguration && options.createBackendSelection) {
+    throw new TypeError("Detection runner cannot combine fixed and dynamic backend selection");
+  }
+  const fixedBackendConfiguration =
+    options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  const createBackendSelection =
+    options.createBackendSelection ??
+    (() => ({
+      generation: fixedBackendConfiguration.generation,
+      promise: Promise.resolve(fixedBackendConfiguration),
+    }));
   let worker: Worker | undefined;
   let workerBackendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot> | undefined;
+  let workerConfiguration: GraphwarWorkerBackendConfiguration | undefined;
   let nextRequestId = 1;
-  let pendingTask: PendingDetectionTask | undefined;
+  let pendingAttempt: PendingDetectionAttempt | undefined;
+  let activeTask: GraphwarAuthoritativeTask<GraphwarDetectionAttemptResult> | undefined;
+
+  const coordinator = createGraphwarAuthoritativeTaskCoordinator<
+    GraphwarDetectionWorkerRequest["task"],
+    GraphwarDetectionWorkerRequest["task"],
+    GraphwarDetectionAttemptResult,
+    GraphwarDetectionAttemptEvent
+  >({
+    cloneInput: cloneGraphwarDetectionTask,
+    cloneSnapshotForAttempt: cloneGraphwarDetectionTask,
+    executeAttempt,
+  });
 
   /** 懒创建检测 Worker；不支持 Worker 的环境会走同步 fallback。 */
-  function ensureWorker() {
+  function ensureWorker(configuration: GraphwarWorkerBackendConfiguration) {
     if (typeof Worker === "undefined") {
       return undefined;
     }
-    if (worker) {
+    if (worker && workerConfiguration && isSameBackendConfiguration(workerConfiguration, configuration)) {
       return worker;
     }
+    resetWorker();
 
     const createdWorker = new Worker(new URL("../../workers/detection/main.worker.ts", import.meta.url), {
       name: "graphwar-detection",
@@ -119,45 +166,65 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
       rejectPendingTaskFromWorker(createdWorker, event.error instanceof Error ? event.error : new Error(event.message));
     });
     let initializationError: Error | undefined;
+    let initializationFault: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }> | undefined;
+    let isBackendSlotCreated = false;
     const createdBackendSlot = createGraphwarWorkerBackendSlot({
-      configuration: backendConfiguration,
+      configuration,
       onInfrastructureFailure: (error) => {
-        if (workerBackendSlot) {
+        if (isBackendSlotCreated) {
           rejectPendingTaskFromWorker(createdWorker, error);
         } else {
           initializationError = error;
         }
       },
       onWasmFault: (message) => {
-        if (workerBackendSlot) {
+        if (isBackendSlotCreated) {
           handleWasmFaultFromWorker(createdWorker, message);
         } else {
-          options.onWasmFault?.(message);
+          initializationFault = message;
           initializationError = new GraphwarWasmFault(message.fault.code, message.fault.message);
         }
       },
       role: "detection-main",
       worker: createdWorker,
     });
-    workerBackendSlot = createdBackendSlot;
+    isBackendSlotCreated = true;
     const backendState = createdBackendSlot.getState();
     if (initializationError) {
-      resetWorker();
+      if (initializationFault) {
+        const replacementGeneration = options.onWasmFault?.(initializationFault);
+        if (replacementGeneration !== undefined) {
+          coordinator.replayGenerationAsTypescript(initializationFault.generation, replacementGeneration);
+        }
+      }
+      if (worker === createdWorker) {
+        worker = undefined;
+        workerBackendSlot = undefined;
+        workerConfiguration = undefined;
+      }
+      createdWorker.terminate();
       throw initializationError;
     }
     if (backendState.type === "failed") {
-      resetWorker();
+      if (worker === createdWorker) {
+        worker = undefined;
+        workerBackendSlot = undefined;
+        workerConfiguration = undefined;
+      }
+      createdWorker.terminate();
       throw backendState.error;
     }
+    workerBackendSlot = createdBackendSlot;
+    workerConfiguration = configuration;
     return createdWorker;
   }
 
   /** 执行自动检测流程，先识别坐标系边界，再在边界内识别对象。 */
-  function detectAuto(input: GraphwarAutoDetectionInput, options?: GraphwarDetectionRunOptions) {
-    cancel();
-    const activeWorker = ensureWorker();
+  function detectAuto(
+    input: GraphwarAutoDetectionInput,
+    options?: GraphwarDetectionRunOptions<GraphwarAutoDetectionResult>,
+  ) {
     return runDetectionTask<GraphwarAutoDetectionResult>(
-      activeWorker,
       {
         imageData: input.imageData,
         soldierSettings: input.soldierSettings,
@@ -165,31 +232,29 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
         type: "detect-auto",
       },
       options,
-      (onStage) => detectAutoSynchronously(input, onStage),
     );
   }
 
   /** 只识别坐标系边界，供手动“识别边界”按钮使用。 */
-  function detectBounds(input: GraphwarBoundsOnlyDetectionInput, options?: GraphwarDetectionRunOptions) {
-    cancel();
-    const activeWorker = ensureWorker();
+  function detectBounds(
+    input: GraphwarBoundsOnlyDetectionInput,
+    options?: GraphwarDetectionRunOptions<GraphwarBoundsOnlyDetectionResult>,
+  ) {
     return runDetectionTask<GraphwarBoundsOnlyDetectionResult>(
-      activeWorker,
       {
         imageData: input.imageData,
         type: "detect-bounds-only",
       },
       options,
-      (onStage) => detectBoundsSynchronously(input, onStage),
     );
   }
 
   /** 执行已知边界内的对象识别，复用自动检测的 Worker 管线。 */
-  function detectObjectsInBounds(input: GraphwarBoundsDetectionInput, options?: GraphwarDetectionRunOptions) {
-    cancel();
-    const activeWorker = ensureWorker();
+  function detectObjectsInBounds(
+    input: GraphwarBoundsDetectionInput,
+    options?: GraphwarDetectionRunOptions<GraphwarObjectsDetectionResult>,
+  ) {
     return runDetectionTask<GraphwarObjectsDetectionResult>(
-      activeWorker,
       {
         edgeRect: input.edgeRect,
         imageData: input.imageData,
@@ -198,73 +263,98 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
         type: "detect-bounds",
       },
       options,
-      (onStage) => detectObjectsInBoundsSynchronously(input, onStage),
     );
   }
 
-  /** 为一次公开检测建立稳定 outer task，并安装当前唯一 TypeScript attempt。 */
+  /** 为一次公开检测同步固定 master RGBA snapshot，再等待 backend selection。 */
   function runDetectionTask<TResult extends GraphwarDetectionWorkerSuccessResponse["result"]>(
-    activeWorker: Worker | undefined,
     taskInput: GraphwarDetectionWorkerRequest["task"],
-    options: GraphwarDetectionRunOptions | undefined,
-    runSynchronously: (onStage: (stage: GraphwarDetectionWorkerStage) => void) => {
-      result: TResult;
-      timings: readonly GraphwarDetectionWorkerTimingEntry[];
-    },
+    runOptions: GraphwarDetectionRunOptions<TResult> | undefined,
   ) {
-    const request: GraphwarDetectionWorkerRequest = {
-      attempt: attemptGate.beginOuterTask(backendConfiguration.generation),
-      id: nextRequestId,
-      task: taskInput,
-    };
-    nextRequestId += 1;
-    if (!activeWorker) {
-      try {
-        const completed = runSynchronously((stage) => {
-          if (attemptGate.canCommit(request.attempt)) {
-            options?.onStage?.(stage);
-          }
-        });
-        attemptGate.completeOuterTask(request.attempt);
-        options?.onTimings?.(completed.timings);
-        return Promise.resolve(completed.result);
-      } catch (error) {
-        if (attemptGate.canCommit(request.attempt)) {
-          attemptGate.completeOuterTask(request.attempt);
+    cancel();
+    const task = coordinator.beginTask(taskInput, createBackendSelection(), {
+      commitResult: async (completed, context) => {
+        if (runOptions?.commitResult) {
+          await runOptions.commitResult(completed.result as TResult, completed.timings, context);
+          return;
+        }
+        context.commit(() => runOptions?.onTimings?.(completed.timings));
+      },
+      onEvent: (event) => runOptions?.onStage?.(event.stage),
+    });
+    activeTask = task;
+    return task.promise.then(
+      (completed) => {
+        if (activeTask === task) {
+          activeTask = undefined;
+        }
+        return completed.result as TResult;
+      },
+      (error) => {
+        if (activeTask === task) {
+          activeTask = undefined;
         }
         throw error;
-      }
+      },
+    );
+  }
+
+  /** 每个 attempt 只消费自己的 snapshot；Worker transfer 不能 detach coordinator 的 master copy。 */
+  function executeAttempt(
+    context: GraphwarAuthoritativeAttemptContext<GraphwarDetectionWorkerRequest["task"], GraphwarDetectionAttemptEvent>,
+  ) {
+    const activeWorker = ensureWorker(context.backendConfiguration);
+    if (!activeWorker) {
+      const completed = runDetectionTaskSynchronously(context.snapshot, (stage) => context.publish({ stage }));
+      return { cancel: () => undefined, result: Promise.resolve(completed) };
     }
-    return new Promise<TResult>((resolve, reject) => {
-      const task: PendingDetectionTask = {
+
+    const request: GraphwarDetectionWorkerRequest = {
+      attempt: context.attempt,
+      id: nextRequestId,
+      task: context.snapshot,
+    };
+    nextRequestId += 1;
+    let rejectAttempt: (reason?: unknown) => void = () => undefined;
+    const result = new Promise<GraphwarDetectionAttemptResult>((resolve, reject) => {
+      rejectAttempt = reject;
+      const attempt: PendingDetectionAttempt = {
         attempt: request.attempt,
         id: request.id,
-        onStage: options?.onStage,
-        onTimings: options?.onTimings,
+        publish: context.publish,
         reject,
-        resolve: resolve as PendingDetectionTask["resolve"],
+        resolve,
         taskType: request.task.type,
       };
-      pendingTask = task;
+      pendingAttempt = attempt;
       try {
-        const cloneableRequest = cloneGraphwarDetectionWorkerRequest(request);
-        const imageBuffer = cloneableRequest.task.imageData.data.buffer;
-        activeWorker.postMessage(cloneableRequest, imageBuffer instanceof ArrayBuffer ? [imageBuffer] : []);
+        const imageBuffer = request.task.imageData.data.buffer;
+        activeWorker.postMessage(request, imageBuffer instanceof ArrayBuffer ? [imageBuffer] : []);
       } catch (error) {
-        completeTask(task, () => task.reject(error));
+        rejectAttemptFromWorker(attempt, error);
       }
     });
+    return {
+      cancel: () => {
+        const attempt = pendingAttempt;
+        if (attempt?.attempt === request.attempt) {
+          pendingAttempt = undefined;
+          rejectAttempt(new GraphwarDetectionCancelledError());
+        }
+        resetWorker();
+      },
+      result,
+    };
   }
 
   /** 取消当前检测并丢弃 Worker，避免旧任务继续占用资源或回写状态。 */
   function cancel() {
-    const task = pendingTask;
+    const task = activeTask;
     if (!task) {
-      return;
+      return false;
     }
-
-    cancelTask(task, () => task.reject(new GraphwarDetectionCancelledError()));
-    resetWorker();
+    activeTask = undefined;
+    return task.cancel(new GraphwarDetectionCancelledError());
   }
 
   /** 关闭 runner 时释放 Worker，并让挂起任务按取消处理。 */
@@ -291,37 +381,30 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
       }
       return;
     }
-    const task = pendingTask;
-    if (!task) {
+    const attempt = pendingAttempt;
+    if (!attempt) {
       return;
     }
     const response = event.data;
-    if (response.id !== task.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, task.attempt)) {
+    if (response.id !== attempt.id || !graphwarBackendAttemptIdentitiesAreEqual(response.attempt, attempt.attempt)) {
       // Backend replacement 会沿用 outer task；旧 attempt 的迟到消息只作废，不能使新 attempt 失败。
       return;
     }
     if (response.type === "stage") {
-      publishStage(task, response.stage);
+      attempt.publish({ stage: response.stage });
       return;
     }
 
     if (response.type === "error") {
-      completeTask(task, () => task.reject(new Error(response.message)));
+      rejectAttemptFromWorker(attempt, new Error(response.message));
       return;
     }
-    if (response.taskType !== task.taskType) {
-      completeTask(task, () => task.reject(new Error("Detection Worker returned a mismatched task result")));
+    if (response.taskType !== attempt.taskType) {
+      rejectAttemptFromWorker(attempt, new Error("Detection Worker returned a mismatched task result"));
       return;
     }
-    completeTask(task, () => {
-      try {
-        task.onTimings?.(response.timings);
-      } catch (error) {
-        task.reject(error);
-        return;
-      }
-      task.resolve(response.result);
-    });
+    pendingAttempt = undefined;
+    attempt.resolve(response);
   }
 
   /** Root 或 nested Worker 的 typed fault 直接通知页面 fuse，不进入 detection infrastructure fallback。 */
@@ -332,21 +415,36 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
     if (worker !== sourceWorker) {
       return;
     }
-    options.onWasmFault?.(message);
-    const task = pendingTask;
-    if (task) {
-      completeTask(task, () => task.reject(new GraphwarWasmFault(message.fault.code, message.fault.message)));
+    const attempt = pendingAttempt;
+    if (
+      attempt &&
+      message.context.type !== "initialization" &&
+      !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, attempt.attempt)
+    ) {
+      return;
     }
-    resetWorker();
+    const replacementGeneration = options.onWasmFault?.(message);
+    if (
+      replacementGeneration !== undefined &&
+      coordinator.replayGenerationAsTypescript(message.generation, replacementGeneration)
+    ) {
+      return;
+    }
+    if (attempt) {
+      rejectAttemptFromWorker(attempt, new GraphwarWasmFault(message.fault.code, message.fault.message));
+    } else {
+      resetWorker();
+    }
   }
 
   /** 统一拒绝挂起任务并丢弃当前 Worker。 */
   function rejectPendingTask(error: Error) {
-    const task = pendingTask;
-    if (!task) {
+    const attempt = pendingAttempt;
+    if (attempt) {
+      rejectAttemptFromWorker(attempt, error);
       return;
     }
-    completeTask(task, () => task.reject(error));
+    activeTask?.fail(error);
     resetWorker();
   }
 
@@ -357,36 +455,14 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
     }
   }
 
-  /** 只向当前 attempt 发布非终态阶段事件。 */
-  function publishStage(task: PendingDetectionTask, stage: GraphwarDetectionWorkerStage) {
-    if (isCurrentTask(task)) {
-      task.onStage?.(stage);
-    }
-  }
-
-  /** 当前 pending task、完整 attempt 与 generation gate 必须同时仍权威。 */
-  function isCurrentTask(task: PendingDetectionTask) {
-    return pendingTask === task && attemptGate.canCommit(task.attempt);
-  }
-
-  /** 先关闭 commit gate，再原子发布 timing/result 或终端 error。 */
-  function completeTask(task: PendingDetectionTask, callback: () => void) {
-    if (!isCurrentTask(task)) {
+  /** Ordinary Worker failures reject only this task and preserve the fixed no-replay matrix. */
+  function rejectAttemptFromWorker(attempt: PendingDetectionAttempt, error: unknown) {
+    if (pendingAttempt !== attempt) {
       return;
     }
-    attemptGate.completeOuterTask(task.attempt);
-    pendingTask = undefined;
-    callback();
-  }
-
-  /** 用户取消或输入替换先撤销 outer task，再结算取消 Promise。 */
-  function cancelTask(task: PendingDetectionTask, callback: () => void) {
-    if (!isCurrentTask(task)) {
-      return;
-    }
-    attemptGate.cancelOuterTask(task.attempt);
-    pendingTask = undefined;
-    callback();
+    pendingAttempt = undefined;
+    attempt.reject(error);
+    resetWorker();
   }
 
   /** 终止当前 Worker；下一次检测会重新懒创建。 */
@@ -397,6 +473,7 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
     worker.terminate();
     worker = undefined;
     workerBackendSlot = undefined;
+    workerConfiguration = undefined;
   }
 
   return {
@@ -405,6 +482,7 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
     detectAuto,
     detectBounds,
     detectObjectsInBounds,
+    replayGenerationAsTypescript: coordinator.replayGenerationAsTypescript,
   };
 }
 
@@ -467,22 +545,39 @@ function detectObjectsInBoundsSynchronously(
   };
 }
 
-/** 复制 Worker 请求外壳；ImageData 应保留原对象，以便继续转移原始 buffer。 */
-function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerRequest): GraphwarDetectionWorkerRequest {
-  if (request.task.type === "detect-bounds-only") {
+/** 无 Worker 时仍从 attempt snapshot 执行完整 TS cold path。 */
+function runDetectionTaskSynchronously(
+  task: GraphwarDetectionWorkerRequest["task"],
+  onStage: (stage: GraphwarDetectionWorkerStage) => void,
+): GraphwarDetectionAttemptResult {
+  if (task.type === "detect-bounds-only") {
+    return { ...detectBoundsSynchronously(task, onStage), taskType: "detect-bounds-only" };
+  }
+  if (task.type === "detect-auto") {
+    return { ...detectAutoSynchronously(task, onStage), taskType: "detect-auto" };
+  }
+  return { ...detectObjectsInBoundsSynchronously(task, onStage), taskType: "detect-bounds" };
+}
+
+/** Master 与 attempt 都持有 owned RGBA；任何 Worker transfer 只会 detach attempt copy。 */
+function cloneGraphwarDetectionTask(
+  task: GraphwarDetectionWorkerRequest["task"],
+): GraphwarDetectionWorkerRequest["task"] {
+  const imageData = {
+    data: new Uint8ClampedArray(task.imageData.data),
+    height: task.imageData.height,
+    width: task.imageData.width,
+  } as ImageData;
+  if (task.type === "detect-bounds-only") {
     return {
-      attempt: request.attempt,
-      id: request.id,
-      task: {
-        imageData: request.task.imageData,
-        type: "detect-bounds-only",
-      },
+      imageData,
+      type: "detect-bounds-only",
     };
   }
 
-  const soldierSettings = request.task.soldierSettings;
+  const soldierSettings = task.soldierSettings;
   const cloneableSharedInput = {
-    imageData: request.task.imageData,
+    imageData,
     soldierSettings: soldierSettings
       ? {
           candidateTopRatio: soldierSettings.candidateTopRatio,
@@ -491,35 +586,40 @@ function cloneGraphwarDetectionWorkerRequest(request: GraphwarDetectionWorkerReq
         }
       : undefined,
     thresholds: {
-      minArea: request.task.thresholds.minArea,
+      minArea: task.thresholds.minArea,
     },
   };
 
-  if (request.task.type === "detect-auto") {
+  if (task.type === "detect-auto") {
     return {
-      attempt: request.attempt,
-      id: request.id,
-      task: {
-        ...cloneableSharedInput,
-        type: "detect-auto",
-      },
+      ...cloneableSharedInput,
+      type: "detect-auto",
     };
   }
 
   return {
-    attempt: request.attempt,
-    id: request.id,
-    task: {
-      ...cloneableSharedInput,
-      edgeRect: {
-        height: request.task.edgeRect.height,
-        width: request.task.edgeRect.width,
-        x: request.task.edgeRect.x,
-        y: request.task.edgeRect.y,
-      },
-      type: "detect-bounds",
+    ...cloneableSharedInput,
+    edgeRect: {
+      height: task.edgeRect.height,
+      width: task.edgeRect.width,
+      x: task.edgeRect.x,
+      y: task.edgeRect.y,
     },
+    type: "detect-bounds",
   };
+}
+
+/** A reused main Worker is valid only for the exact generation and backend material it was initialized with. */
+function isSameBackendConfiguration(
+  left: GraphwarWorkerBackendConfiguration,
+  right: GraphwarWorkerBackendConfiguration,
+) {
+  return (
+    left.generation === right.generation &&
+    left.backend.type === right.backend.type &&
+    (left.backend.type === "typescript" ||
+      (right.backend.type === "wasm" && left.backend.module === right.backend.module))
+  );
 }
 
 /** 将对象识别内部阶段计时接入 Worker timing 列表。 */

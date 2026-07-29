@@ -328,6 +328,23 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
       sessions.validateSessionIdentity(handle, shardResult.session);
     }
     const orderedMatches = validateAndOrderShardResults(command, shardResults);
+    return resumeTemplatesWithMatches(command, handle, orderedMatches);
+  }
+
+  /** Ordinary child failure discards every shard and asks the main WASM instance to score all candidates. */
+  function resumeTemplatesSerial(handle: GraphwarWasmSessionHandle) {
+    const command = requireActiveCommand(handle);
+    if (command.phase !== "templates-pending") {
+      throw new GraphwarWasmAdapterError("invalid-session-state", "Detection template phase is no longer pending");
+    }
+    return resumeTemplatesWithMatches(command, handle, []);
+  }
+
+  function resumeTemplatesWithMatches(
+    command: Extract<ActiveDetectionCommand, { phase: "templates-pending" }>,
+    handle: GraphwarWasmSessionHandle,
+    orderedMatches: readonly GraphwarWasmDetectionTemplateMatch[],
+  ) {
     try {
       const sessionPointer = sessions.getSessionPointer(handle);
       const packedMatches = orderedMatches.length ? packTemplateMatches(runtime, orderedMatches, command) : undefined;
@@ -505,6 +522,7 @@ export function createGraphwarWasmDetectionController(runtime: GraphwarWasmKerne
     resumeObstacleComponents,
     resumeObstacleMask,
     resumeTemplates,
+    resumeTemplatesSerial,
   };
 }
 

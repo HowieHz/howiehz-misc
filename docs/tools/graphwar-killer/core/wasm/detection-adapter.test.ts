@@ -266,6 +266,42 @@ describe("Graphwar WASM detection bounds", () => {
     }
   });
 
+  it("discards an issued shard batch and recomputes every candidate in the main WASM instance", async () => {
+    const { edgeRect, imageData } = createTemplateCandidateFixture();
+    const settings = { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 4 };
+    const task = {
+      edgeRect,
+      imageData,
+      soldierSettings: settings,
+      thresholds: { minArea: 3 },
+      type: "detect-bounds",
+    } satisfies GraphwarDetectionWorkerTask;
+    const runtime = await createRuntime(module);
+    const controller = createGraphwarWasmDetectionController(runtime);
+    const started = controller.begin({ backendGeneration: 7, requestId: 19, task });
+    const candidates = controller.resumeCandidates(started.handle);
+
+    expect(candidates.shards.length).toBeGreaterThan(1);
+    const templates = controller.resumeTemplatesSerial(started.handle);
+
+    expect(templates.matches.map(({ candidateIndex: _, ...match }) => match)).toEqual(
+      finalizeSoldierTemplateMatches(
+        matchSoldierTemplates(
+          imageData,
+          edgeRect,
+          getGraphwarDetectionScale(edgeRect),
+          collectSoldierTemplateCenterCandidatesForMatching(imageData, edgeRect, settings),
+        ),
+        getGraphwarDetectionScale(edgeRect),
+        settings,
+      ),
+    );
+    expect(templates.edgeRect).toEqual(edgeRect);
+    controller.resumeObstacleMask(started.handle);
+    controller.resumeObstacleComponents(started.handle);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("rejects missing, duplicate, and foreign shard results without polluting the session", async () => {
     const { edgeRect, imageData } = createTemplateCandidateFixture();
     const task = {

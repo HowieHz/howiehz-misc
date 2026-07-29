@@ -13,10 +13,13 @@ import {
 import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import {
-  runGraphwarWasmDetectionTemplateShard,
-  type GraphwarWasmDetectionCandidate,
+  createGraphwarWasmDetectionController,
+  type GraphwarWasmDetectionStageEvent,
+  type GraphwarWasmDetectionTemplateShard,
+  type GraphwarWasmDetectionTemplateShardResult,
 } from "../../core/wasm/detection-adapter";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import type { GraphwarWasmSessionHandle } from "../../core/wasm/session";
 import {
   createGraphwarWorkerBackendRuntime,
   createGraphwarWorkerBackendSlot,
@@ -98,7 +101,7 @@ interface SoldierTemplateWorkerHandle {
   /** 解绑 Worker 事件监听。 */
   cleanup: () => void;
   /** 子 Worker 返回的匹配结果和耗时。 */
-  promise: Promise<{ elapsedMs: number; matches: SoldierMatchCandidate[] }>;
+  promise: Promise<{ candidateIndexes: number[]; elapsedMs: number; matches: SoldierMatchCandidate[] }>;
   /** 实际模板匹配子 Worker。 */
   worker: Worker;
   /** 子 Worker 序号，用于 timing detail。 */
@@ -131,6 +134,8 @@ const backendRuntime = createGraphwarWorkerBackendRuntime({
   postControlMessage: (message) => workerScope.postMessage(message),
   role: "detection-main",
 });
+let wasmDetectionController: ReturnType<typeof createGraphwarWasmDetectionController> | undefined;
+let wasmDetectionRuntime: GraphwarWasmKernelRuntime | undefined;
 
 /** 接收主线程请求，并将异步检测交给统一的协议分派入口。 */
 workerScope.addEventListener("message", (event) => {
@@ -150,8 +155,12 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
       request.attempt,
       { attempt: request.attempt, type: "task" },
       async (backendContext) => {
+        if (backendContext.type === "wasm") {
+          await runWasmDetectionTask(backendContext, requestContext, request.task, timings);
+          return;
+        }
         if (request.task.type === "detect-auto") {
-          await runAutoDetectionTask(backendContext, requestContext, request.task, timings);
+          await runAutoDetectionTask(requestContext, request.task, timings);
           return;
         }
         if (request.task.type === "detect-bounds-only") {
@@ -177,7 +186,6 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
           requestContext,
           {
             result: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
-              backendContext,
               requestContext,
               task.imageData,
               task.edgeRect,
@@ -201,9 +209,209 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
   }
 }
 
+/** WASM backend owns bounds, candidates, template merge, obstacle mask, and component filtering. */
+async function runWasmDetectionTask(
+  backendContext: Extract<GraphwarAlgorithmBackendContext, { type: "wasm" }>,
+  requestContext: GraphwarDetectionRequestContext,
+  task: GraphwarDetectionWorkerTask,
+  timings: GraphwarDetectionWorkerTimingEntry[],
+) {
+  if (!(backendContext.runtime instanceof GraphwarWasmKernelRuntime)) {
+    throw new GraphwarWasmFault("abi", "Detection main Worker received an incompatible WASM runtime");
+  }
+  let controller = wasmDetectionController;
+  if (wasmDetectionRuntime !== backendContext.runtime || !controller) {
+    wasmDetectionRuntime = backendContext.runtime;
+    controller = createGraphwarWasmDetectionController(backendContext.runtime);
+    wasmDetectionController = controller;
+  }
+  const stageStarts = new Map<GraphwarDetectionWorkerStage, { innerTimingStartIndex: number; startedAt: number }>();
+  const warnings: GraphwarDetectionWarning[] = [];
+  let startup =
+    task.type === "detect-bounds"
+      ? startSoldierTemplateWorkers(
+          getGraphwarSoldierDetectionSettings(task.soldierSettings).templateMatchingWorkerCount,
+          requestContext.attempt,
+        )
+      : ({ type: "available", workers: [] } satisfies SoldierTemplateWorkerStartup);
+  let activeHandle: GraphwarWasmSessionHandle | undefined;
+  try {
+    const started = controller.begin({
+      backendGeneration: requestContext.attempt.backendGeneration,
+      requestId: requestContext.id,
+      task,
+    });
+    activeHandle = started.handle;
+    consumeWasmDetectionStageEvents(requestContext, timings, stageStarts, started.stageEvents);
+
+    let objectHandle = started.handle;
+    if (task.type !== "detect-bounds") {
+      const bounds = controller.resumeBounds(started.handle);
+      consumeWasmDetectionStageEvents(
+        requestContext,
+        timings,
+        stageStarts,
+        bounds.type === "complete" ? bounds.result.stageEvents : bounds.stageEvents,
+      );
+      if (bounds.type === "complete") {
+        activeHandle = undefined;
+        if (task.type === "detect-auto" && bounds.result.edgeRect) {
+          throw new GraphwarWasmFault("output", "Completed automatic detection unexpectedly retained bounds");
+        }
+        postSuccess(
+          requestContext,
+          task.type === "detect-auto"
+            ? { result: { edgeRect: undefined }, taskType: "detect-auto" }
+            : { result: { edgeRect: bounds.result.edgeRect }, taskType: "detect-bounds-only" },
+          timings,
+        );
+        return;
+      }
+      objectHandle = bounds.handle;
+      if (task.type !== "detect-auto") {
+        throw new GraphwarWasmFault("output", "Bounds-only WASM detection unexpectedly retained a running session");
+      }
+      startup = startSoldierTemplateWorkers(
+        getGraphwarSoldierDetectionSettings(task.soldierSettings).templateMatchingWorkerCount,
+        requestContext.attempt,
+      );
+    }
+
+    const candidates = controller.resumeCandidates(objectHandle);
+    consumeWasmDetectionStageEvents(requestContext, timings, stageStarts, candidates.stageEvents);
+    if (!candidates.edgeRect) {
+      throw new GraphwarWasmFault("output", "WASM object detection lost its validated bounds");
+    }
+    const templates = await resumeWasmDetectionTemplates(
+      controller,
+      requestContext,
+      task.imageData,
+      candidates.edgeRect,
+      candidates.handle,
+      candidates.shards,
+      startup,
+      timings,
+      warnings,
+    );
+    consumeWasmDetectionStageEvents(requestContext, timings, stageStarts, templates.stageEvents);
+    const obstacleMask = controller.resumeObstacleMask(templates.handle);
+    consumeWasmDetectionStageEvents(requestContext, timings, stageStarts, obstacleMask.stageEvents);
+    const completed = controller.resumeObstacleComponents(obstacleMask.handle);
+    activeHandle = undefined;
+    consumeWasmDetectionStageEvents(requestContext, timings, stageStarts, completed.result.stageEvents);
+    if (stageStarts.size !== 0) {
+      throw new GraphwarWasmFault("output", "Detection WASM stages did not finish");
+    }
+    const objects: GraphwarObjectsDetectionResult = {
+      obstacles: { count: completed.result.obstacleCount, mask: completed.result.obstacleMask },
+      soldiers: createSoldierDetectionBoxes(
+        completed.result.matches.map(({ candidateIndex: _, ...match }) => match),
+        completed.result.edgeRect,
+      ),
+      ...(warnings.length ? { warnings } : {}),
+    };
+    postSuccess(
+      requestContext,
+      task.type === "detect-auto"
+        ? { result: { edgeRect: completed.result.edgeRect, objects }, taskType: "detect-auto" }
+        : { result: objects, taskType: "detect-bounds" },
+      timings,
+    );
+  } catch (error) {
+    if (activeHandle) {
+      try {
+        controller.cancel(activeHandle);
+      } catch {
+        // Adapter faults revoke their own session before surfacing; Worker termination handles the rest.
+      }
+    }
+    throw error;
+  } finally {
+    if (startup.type === "available") {
+      for (const started of startup.workers) {
+        started.cleanupStartupListener();
+        started.worker.terminate();
+      }
+    }
+  }
+}
+
+/** Child Worker orchestration consumes only stable shards emitted by the WASM controller. */
+async function resumeWasmDetectionTemplates(
+  controller: ReturnType<typeof createGraphwarWasmDetectionController>,
+  requestContext: GraphwarDetectionRequestContext,
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  handle: GraphwarWasmSessionHandle,
+  shards: readonly GraphwarWasmDetectionTemplateShard[],
+  startup: SoldierTemplateWorkerStartup,
+  timings: GraphwarDetectionWorkerTimingEntry[],
+  warnings: GraphwarDetectionWarning[],
+) {
+  if (shards.length === 0 || (startup.type === "available" && startup.workers.length === 0)) {
+    recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
+      mode: "serial",
+      type: "template-matching-mode",
+      workerCount: 1,
+    });
+    return measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-serial" }, () =>
+      controller.resumeTemplatesSerial(handle),
+    );
+  }
+  if (startup.type === "failed") {
+    warnings.push({ code: "template-matching-worker-fallback", message: startup.error.message });
+    recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
+      mode: "parallel-fallback",
+      type: "template-matching-mode",
+      workerCount: startup.requestedWorkerCount,
+    });
+    return measureDetectionDetail(
+      timings,
+      "matching-soldier-templates",
+      { type: "template-matching-fallback-serial" },
+      () => controller.resumeTemplatesSerial(handle),
+    );
+  }
+  try {
+    const shardResults = await runWasmTemplateWorkerTasks(
+      requestContext,
+      imageData,
+      edgeRect,
+      handle,
+      shards,
+      startup.workers,
+      timings,
+    );
+    recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
+      mode: "parallel",
+      type: "template-matching-mode",
+      workerCount: shards.length,
+    });
+    return controller.resumeTemplates(handle, shardResults);
+  } catch (error) {
+    if (isGraphwarWasmFault(error)) {
+      throw error;
+    }
+    warnings.push({
+      code: "template-matching-worker-fallback",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    recordDetectionTimingDetail(timings, "matching-soldier-templates", 0, {
+      mode: "parallel-fallback",
+      type: "template-matching-mode",
+      workerCount: shards.length,
+    });
+    return measureDetectionDetail(
+      timings,
+      "matching-soldier-templates",
+      { type: "template-matching-fallback-serial" },
+      () => controller.resumeTemplatesSerial(handle),
+    );
+  }
+}
+
 /** 执行自动检测任务，只有识别到平面边界后才继续对象检测。 */
 async function runAutoDetectionTask(
-  backendContext: GraphwarAlgorithmBackendContext,
   requestContext: GraphwarDetectionRequestContext,
   task: Extract<GraphwarDetectionWorkerTask, { type: "detect-auto" }>,
   timings: GraphwarDetectionWorkerTimingEntry[],
@@ -222,7 +430,6 @@ async function runAutoDetectionTask(
       result: {
         edgeRect,
         objects: await detectGraphwarObjectsInBoundsWithTemplateWorkers(
-          backendContext,
           requestContext,
           task.imageData,
           edgeRect,
@@ -239,7 +446,6 @@ async function runAutoDetectionTask(
 
 /** 在已知边界内识别士兵和障碍，并允许模板匹配并行化。 */
 async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
-  backendContext: GraphwarAlgorithmBackendContext,
   requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
@@ -264,7 +470,6 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
     );
     matches = await measureDetectionStageAsync(timings, "matching-soldier-templates", async () => {
       const matched = await matchSoldierTemplatesWithOptionalWorkers(
-        backendContext,
         requestContext,
         imageData,
         edgeRect,
@@ -296,7 +501,6 @@ async function detectGraphwarObjectsInBoundsWithTemplateWorkers(
 
 /** 根据设置选择串行或多 Worker 模板匹配，失败时降级为串行。 */
 async function matchSoldierTemplatesWithOptionalWorkers(
-  backendContext: GraphwarAlgorithmBackendContext,
   requestContext: GraphwarDetectionRequestContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
@@ -307,7 +511,7 @@ async function matchSoldierTemplatesWithOptionalWorkers(
   warnings: GraphwarDetectionWarning[],
 ) {
   if (candidates.length <= 1) {
-    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "serial", 1);
+    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "serial", 1);
   }
   if (startup.type === "failed") {
     warnings.push({ code: "template-matching-worker-fallback", message: startup.error.message });
@@ -316,11 +520,11 @@ async function matchSoldierTemplatesWithOptionalWorkers(
       type: "template-matching-mode",
       workerCount: startup.requestedWorkerCount,
     });
-    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "fallback", 1);
+    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "fallback", 1);
   }
   const startedWorkers = startup.workers;
   if (startedWorkers.length === 0) {
-    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "serial", 1);
+    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "serial", 1);
   }
 
   const laneCount = Math.min(startedWorkers.length, candidates.length);
@@ -354,13 +558,12 @@ async function matchSoldierTemplatesWithOptionalWorkers(
       type: "template-matching-mode",
       workerCount: laneCount,
     });
-    return matchSoldierTemplatesSerial(backendContext, imageData, edgeRect, scale, candidates, timings, "fallback", 1);
+    return matchSoldierTemplatesSerial(imageData, edgeRect, scale, candidates, timings, "fallback", 1);
   }
 }
 
 /** 在当前线程执行模板匹配，并记录串行或 fallback 模式。 */
 function matchSoldierTemplatesSerial(
-  backendContext: GraphwarAlgorithmBackendContext,
   imageData: ImageData,
   edgeRect: BoundsRect,
   scale: number,
@@ -384,25 +587,78 @@ function matchSoldierTemplatesSerial(
       if (candidates.length === 0) {
         return [];
       }
-      if (backendContext.type === "typescript") {
-        return matchSoldierTemplates(imageData, edgeRect, scale, candidates);
-      }
-      if (!(backendContext.runtime instanceof GraphwarWasmKernelRuntime)) {
-        throw new GraphwarWasmFault("abi", "Detection main Worker received an incompatible WASM runtime");
-      }
-      return runGraphwarWasmDetectionTemplateShard(backendContext.runtime, {
-        candidates: candidates.map(
-          (candidate, candidateIndex) =>
-            ({
-              ...candidate,
-              candidateIndex,
-            }) satisfies GraphwarWasmDetectionCandidate,
-        ),
-        edgeRect,
-        imageData,
-      }).map(({ candidateIndex: _, ...match }) => match);
+      return matchSoldierTemplates(imageData, edgeRect, scale, candidates);
     },
   );
+}
+
+/** Dispatches the exact controller-issued shard batch and reconstructs candidate-bound WASM results. */
+async function runWasmTemplateWorkerTasks(
+  requestContext: GraphwarDetectionRequestContext,
+  imageData: ImageData,
+  edgeRect: BoundsRect,
+  session: GraphwarWasmSessionHandle,
+  shards: readonly GraphwarWasmDetectionTemplateShard[],
+  startedWorkers: readonly StartedSoldierTemplateWorker[],
+  timings: GraphwarDetectionWorkerTimingEntry[],
+): Promise<GraphwarWasmDetectionTemplateShardResult[]> {
+  const handles: { handle: SoldierTemplateWorkerHandle; shard: GraphwarWasmDetectionTemplateShard }[] = [];
+  try {
+    measureDetectionDetail(timings, "matching-soldier-templates", { type: "template-matching-dispatch" }, () => {
+      for (const shard of shards) {
+        const started = startedWorkers[shard.id - 1];
+        if (!started) {
+          throw new Error(`Template worker ${shard.id} was not started`);
+        }
+        const firstCandidate = shard.candidates[0];
+        if (!firstCandidate) {
+          throw new Error(`Template worker ${shard.id} received an empty shard`);
+        }
+        handles.push({
+          handle: createSoldierTemplateWorkerHandle(
+            started,
+            requestContext.attempt,
+            session,
+            {
+              candidates: [...shard.candidates],
+              candidateStart: firstCandidate.candidateIndex,
+              imageData: new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height),
+              workerIndex: shard.id,
+            },
+            edgeRect,
+            getGraphwarDetectionScale(edgeRect),
+          ),
+          shard,
+        });
+      }
+    });
+
+    return await Promise.all(
+      handles.map(async ({ handle: workerHandle, shard }) => {
+        const result = await workerHandle.promise;
+        recordDetectionTimingDetail(timings, "matching-soldier-templates", result.elapsedMs, {
+          type: "template-matching-worker",
+          workerIndex: workerHandle.workerIndex,
+        });
+        return {
+          id: shard.id,
+          matches: result.matches.map((match, index) => ({
+            ...match,
+            candidateIndex: result.candidateIndexes[index],
+          })),
+          session,
+        };
+      }),
+    );
+  } finally {
+    for (const { handle: workerHandle } of handles) {
+      workerHandle.cleanup();
+    }
+    for (const started of startedWorkers) {
+      started.cleanupStartupListener();
+      started.worker.terminate();
+    }
+  }
 }
 
 /** 分发模板候选到子 Worker，并汇总成功结果或失败原因。 */
@@ -575,7 +831,11 @@ function createSoldierTemplateWorkerHandle(
 ): SoldierTemplateWorkerHandle {
   const { worker } = started;
   let cleanup: (() => void) | undefined;
-  const promise = new Promise<{ elapsedMs: number; matches: SoldierMatchCandidate[] }>((resolve, reject) => {
+  const promise = new Promise<{
+    candidateIndexes: number[];
+    elapsedMs: number;
+    matches: SoldierMatchCandidate[];
+  }>((resolve, reject) => {
     started.cleanupStartupListener();
     if (started.startupError) {
       reject(started.startupError);
@@ -622,13 +882,18 @@ function createSoldierTemplateWorkerHandle(
         return;
       }
       if (
+        response.matches.length !== request.candidates.length ||
         response.candidateIndexes.length !== response.matches.length ||
         response.candidateIndexes.some((candidateIndex, index) => candidateIndex !== request.candidateStart + index)
       ) {
         reject(new Error(`Worker ${task.workerIndex}: returned inconsistent candidate identities`));
         return;
       }
-      resolve({ elapsedMs: response.elapsedMs, matches: response.matches });
+      resolve({
+        candidateIndexes: response.candidateIndexes,
+        elapsedMs: response.elapsedMs,
+        matches: response.matches,
+      });
     };
     /** 将结构化克隆失败转换为当前 lane 的失败结果。 */
     const handleMessageError = () => {
@@ -668,6 +933,32 @@ function createSoldierTemplateWorkerHandle(
 /** Nested Module clone failure keeps the parent instance usable and therefore remains ordinary fallback. */
 function normalizeNestedTemplateWorkerFailure(error: Error): Error {
   return isGraphwarWasmFault(error) && error.code === "module-clone" ? new Error(error.message) : error;
+}
+
+/** WASM phase markers are the sole source of stage publication and top-level phase timing. */
+function consumeWasmDetectionStageEvents(
+  requestContext: GraphwarDetectionRequestContext,
+  timings: GraphwarDetectionWorkerTimingEntry[],
+  stageStarts: Map<GraphwarDetectionWorkerStage, { innerTimingStartIndex: number; startedAt: number }>,
+  events: readonly GraphwarWasmDetectionStageEvent[],
+) {
+  for (const event of events) {
+    if (event.phase === "start") {
+      if (stageStarts.has(event.stage)) {
+        throw new GraphwarWasmFault("output", `Detection WASM stage ${event.stage} started twice`);
+      }
+      stageStarts.set(event.stage, { innerTimingStartIndex: timings.length, startedAt: nowMs() });
+      postStage(requestContext, event.stage);
+      continue;
+    }
+    const started = stageStarts.get(event.stage);
+    if (!started) {
+      throw new GraphwarWasmFault("output", `Detection WASM stage ${event.stage} ended before it started`);
+    }
+    const innerTimings = timings.splice(started.innerTimingStartIndex);
+    timings.push({ elapsedMs: nowMs() - started.startedAt, stage: event.stage }, ...innerTimings);
+    stageStarts.delete(event.stage);
+  }
 }
 
 /** 通知主线程当前检测阶段，便于页面显示进度。 */

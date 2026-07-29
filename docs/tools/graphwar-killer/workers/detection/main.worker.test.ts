@@ -13,7 +13,19 @@ import type {
 
 const objectMocks = vi.hoisted(() => ({
   collectCandidates: vi.fn(),
+  controller: {
+    begin: vi.fn(),
+    cancel: vi.fn(),
+    resumeCandidates: vi.fn(),
+    resumeBounds: vi.fn(),
+    resumeObstacleComponents: vi.fn(),
+    resumeObstacleMask: vi.fn(),
+    resumeTemplates: vi.fn(),
+    resumeTemplatesSerial: vi.fn(),
+  },
   createBoxes: vi.fn(),
+  createController: vi.fn(),
+  detectPlayArea: vi.fn(),
   detectObstacles: vi.fn(),
   finalizeMatches: vi.fn(),
   getScale: vi.fn(),
@@ -24,6 +36,7 @@ const objectMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../core/wasm/detection-adapter", () => ({
+  createGraphwarWasmDetectionController: objectMocks.createController,
   runGraphwarWasmDetectionTemplateShard: objectMocks.runWasmShard,
 }));
 
@@ -37,7 +50,7 @@ vi.mock("../../detection/objects", () => ({
   collectSoldierTemplateCenterCandidatesForMatching: objectMocks.collectCandidates,
   createSoldierDetectionBoxes: objectMocks.createBoxes,
   detectGraphwarObstaclesInBounds: objectMocks.detectObstacles,
-  detectGraphwarPlayArea: vi.fn(),
+  detectGraphwarPlayArea: objectMocks.detectPlayArea,
   finalizeSoldierTemplateMatches: objectMocks.finalizeMatches,
   getGraphwarDetectionScale: objectMocks.getScale,
   getGraphwarSoldierDetectionSettings: objectMocks.getSettings,
@@ -102,7 +115,8 @@ const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarDete
 let handleMessage:
   | ((event: MessageEvent<GraphwarBackendControlMessage | GraphwarDetectionWorkerRequest>) => void)
   | undefined;
-let laneBehavior: "module-clone" | "ordinary-failure" | "stale-success" | "typed-fault" = "ordinary-failure";
+let laneBehavior: "module-clone" | "ordinary-failure" | "stale-success" | "success" | "typed-fault" =
+  "ordinary-failure";
 
 beforeAll(async () => {
   Object.defineProperty(globalThis, "ImageData", { configurable: true, value: FakeImageData });
@@ -146,6 +160,7 @@ beforeEach(() => {
     { isMirrored: true, votes: 1, x: 2, y: 2 },
   ]);
   objectMocks.createBoxes.mockReturnValue([]);
+  objectMocks.createController.mockReturnValue(objectMocks.controller);
   objectMocks.detectObstacles.mockReturnValue({ count: 0, mask: new Uint8Array(770 * 450) });
   objectMocks.finalizeMatches.mockReturnValue([]);
   objectMocks.getScale.mockReturnValue(1);
@@ -157,6 +172,75 @@ beforeEach(() => {
   objectMocks.matchTemplates.mockReset();
   objectMocks.reportWasmFault.mockReset();
   objectMocks.runWasmShard.mockReset();
+  for (const method of Object.values(objectMocks.controller)) {
+    method.mockReset();
+  }
+  const session = { backendGeneration: 1, nonce: 1, requestId: 7, taskType: "detection" };
+  const edgeRect = { height: 10, width: 10, x: 0, y: 0 };
+  const candidates = [
+    { candidateIndex: 0, isMirrored: false, votes: 2, x: 1, y: 1 },
+    { candidateIndex: 1, isMirrored: true, votes: 1, x: 2, y: 2 },
+  ];
+  objectMocks.controller.begin.mockReturnValue({
+    edgeRect,
+    handle: session,
+    stageEvents: [{ phase: "start", stage: "collecting-soldier-candidates" }],
+    taskType: "detect-bounds",
+    type: "running",
+  });
+  objectMocks.controller.resumeCandidates.mockReturnValue({
+    candidates,
+    edgeRect,
+    handle: session,
+    shards: candidates.map((candidate, index) => ({ candidates: [candidate], id: index + 1 })),
+    stageEvents: [
+      { phase: "end", stage: "collecting-soldier-candidates" },
+      { phase: "start", stage: "matching-soldier-templates" },
+    ],
+    taskType: "detect-bounds",
+    type: "waiting-template-shards",
+  });
+  objectMocks.controller.resumeBounds.mockReturnValue({
+    result: {
+      edgeRect: undefined,
+      stageEvents: [{ phase: "end", stage: "detecting-bounds" }],
+      taskType: "detect-bounds-only",
+    },
+    type: "complete",
+  });
+  objectMocks.controller.resumeTemplatesSerial.mockReturnValue({
+    edgeRect,
+    handle: session,
+    matches: [],
+    stageEvents: [
+      { phase: "end", stage: "matching-soldier-templates" },
+      { phase: "start", stage: "building-obstacle-mask" },
+    ],
+    taskType: "detect-bounds",
+    type: "running",
+  });
+  objectMocks.controller.resumeObstacleMask.mockReturnValue({
+    edgeRect,
+    handle: session,
+    matches: [],
+    stageEvents: [
+      { phase: "end", stage: "building-obstacle-mask" },
+      { phase: "start", stage: "filtering-obstacle-components" },
+    ],
+    taskType: "detect-bounds",
+    type: "running",
+  });
+  objectMocks.controller.resumeObstacleComponents.mockReturnValue({
+    result: {
+      edgeRect,
+      matches: [],
+      obstacleCount: 0,
+      obstacleMask: new Uint8Array(770 * 450),
+      stageEvents: [{ phase: "end", stage: "filtering-obstacle-components" }],
+      taskType: "detect-bounds",
+    },
+    type: "complete",
+  });
   objectMocks.matchTemplates.mockImplementation(() => {
     expect(FakeTemplateWorker.instances.every((worker) => worker.isTerminated)).toBe(true);
     return [];
@@ -179,8 +263,22 @@ describe("Detection template Worker failure handling", () => {
     await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
     expect(FakeTemplateWorker.instances).toHaveLength(4);
     expect(FakeTemplateWorker.instances.every((worker) => worker.isTerminated)).toBe(true);
-    expect(objectMocks.runWasmShard).toHaveBeenCalledOnce();
+    expect(objectMocks.controller.resumeTemplatesSerial).toHaveBeenCalledOnce();
     expect(objectMocks.matchTemplates).not.toHaveBeenCalled();
+    expect(objectMocks.collectCandidates).not.toHaveBeenCalled();
+    expect(objectMocks.detectObstacles).not.toHaveBeenCalled();
+    expect(getSuccessResponse()?.timings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: { mode: "parallel-fallback", type: "template-matching-mode", workerCount: 2 },
+          stage: "matching-soldier-templates",
+        }),
+        expect.objectContaining({
+          detail: { type: "template-matching-fallback-serial" },
+          stage: "matching-soldier-templates",
+        }),
+      ]),
+    );
   });
 
   it("fails fast on a typed child fault while another lane never responds", async () => {
@@ -199,7 +297,7 @@ describe("Detection template Worker failure handling", () => {
       {
         context: {
           attempt,
-          session: { backendGeneration: 1, nonce: 8, requestId: 7, taskType: "detection" },
+          session: { backendGeneration: 1, nonce: 1, requestId: 7, taskType: "detection" },
           shardId: 1,
           type: "template-shard",
         },
@@ -219,8 +317,50 @@ describe("Detection template Worker failure handling", () => {
     dispatchDetectionRequest();
 
     await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
-    expect(objectMocks.runWasmShard).toHaveBeenCalledOnce();
+    expect(objectMocks.controller.resumeTemplatesSerial).toHaveBeenCalledOnce();
     expect(postMessage.mock.calls.some(([message]) => message.type === "wasm-fault")).toBe(false);
+    expect(getSuccessResponse()?.timings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: { mode: "parallel-fallback", type: "template-matching-mode", workerCount: 2 },
+          stage: "matching-soldier-templates",
+        }),
+        expect.objectContaining({
+          detail: { type: "template-matching-fallback-serial" },
+          stage: "matching-soldier-templates",
+        }),
+      ]),
+    );
+  });
+
+  it("records main-WASM serial template scoring time", async () => {
+    objectMocks.controller.resumeCandidates.mockReturnValue({
+      candidates: [],
+      edgeRect: { height: 10, width: 10, x: 0, y: 0 },
+      handle: { backendGeneration: 1, nonce: 1, requestId: 7, taskType: "detection" },
+      shards: [],
+      stageEvents: [
+        { phase: "end", stage: "collecting-soldier-candidates" },
+        { phase: "start", stage: "matching-soldier-templates" },
+      ],
+      taskType: "detect-bounds",
+      type: "waiting-template-shards",
+    });
+    dispatchDetectionRequest();
+
+    await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
+    expect(getSuccessResponse()?.timings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: { mode: "serial", type: "template-matching-mode", workerCount: 1 },
+          stage: "matching-soldier-templates",
+        }),
+        expect.objectContaining({
+          detail: { type: "template-matching-serial" },
+          stage: "matching-soldier-templates",
+        }),
+      ]),
+    );
   });
 
   it("rejects stale template success identity before main-WASM fallback", async () => {
@@ -228,8 +368,76 @@ describe("Detection template Worker failure handling", () => {
     dispatchDetectionRequest();
 
     await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
-    expect(objectMocks.runWasmShard).toHaveBeenCalledOnce();
+    expect(objectMocks.controller.resumeTemplatesSerial).toHaveBeenCalledOnce();
     expect(postMessage.mock.calls.some(([message]) => message.type === "wasm-fault")).toBe(false);
+  });
+
+  it.each(["detect-bounds-only", "detect-auto"] as const)(
+    "runs %s bounds phases through the WASM controller without TS detection",
+    async (taskType) => {
+      objectMocks.controller.begin.mockReturnValue({
+        handle: { backendGeneration: 1, nonce: 2, requestId: 9, taskType: "detection" },
+        stageEvents: [{ phase: "start", stage: "detecting-bounds" }],
+        taskType,
+        type: "running",
+      });
+      objectMocks.controller.resumeBounds.mockReturnValue({
+        result: {
+          edgeRect: undefined,
+          stageEvents: [{ phase: "end", stage: "detecting-bounds" }],
+          taskType,
+        },
+        type: "complete",
+      });
+      dispatch({
+        attempt,
+        id: 9,
+        task:
+          taskType === "detect-auto"
+            ? {
+                imageData: new FakeImageData(new Uint8ClampedArray(400), 10, 10) as ImageData,
+                soldierSettings: { candidateTopRatio: 1, maximumSoldierCount: 40, templateMatchingWorkerCount: 2 },
+                thresholds: { minArea: 1 },
+                type: taskType,
+              }
+            : {
+                imageData: new FakeImageData(new Uint8ClampedArray(400), 10, 10) as ImageData,
+                type: taskType,
+              },
+      });
+
+      await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
+      expect(objectMocks.controller.resumeBounds).toHaveBeenCalledOnce();
+      expect(objectMocks.detectPlayArea).not.toHaveBeenCalled();
+      expect(objectMocks.collectCandidates).not.toHaveBeenCalled();
+      expect(FakeTemplateWorker.instances).toHaveLength(0);
+      expect(FakeTemplateWorker.instances.every((worker) => worker.isTerminated)).toBe(true);
+    },
+  );
+
+  it("returns every successful child shard to the WASM controller", async () => {
+    laneBehavior = "success";
+    objectMocks.controller.resumeTemplates.mockImplementation((_handle, shardResults) => {
+      expect(shardResults.map((result: { id: number }) => result.id)).toEqual([1, 2]);
+      return (
+        objectMocks.controller.resumeTemplatesSerial.mock.results[0]?.value ?? {
+          edgeRect: { height: 10, width: 10, x: 0, y: 0 },
+          handle: { backendGeneration: 1, nonce: 1, requestId: 7, taskType: "detection" },
+          matches: [],
+          stageEvents: [
+            { phase: "end", stage: "matching-soldier-templates" },
+            { phase: "start", stage: "building-obstacle-mask" },
+          ],
+          taskType: "detect-bounds",
+          type: "running",
+        }
+      );
+    });
+    dispatchDetectionRequest();
+
+    await vi.waitFor(() => expect(postMessage.mock.calls.some(([message]) => message.type === "success")).toBe(true));
+    expect(objectMocks.controller.resumeTemplates).toHaveBeenCalledOnce();
+    expect(objectMocks.controller.resumeTemplatesSerial).not.toHaveBeenCalled();
   });
 });
 
@@ -300,7 +508,7 @@ class FakeTemplateWorker {
       );
       return;
     }
-    if (message.id !== 1) {
+    if (message.id !== 1 && laneBehavior !== "success") {
       return;
     }
     if (laneBehavior === "ordinary-failure") {
@@ -316,6 +524,31 @@ class FakeTemplateWorker {
           id: message.id,
           matches: [],
           session: { ...message.session, nonce: message.session.nonce + 1 },
+          type: "success",
+        }),
+      );
+      return;
+    }
+    if (laneBehavior === "success") {
+      queueMicrotask(() =>
+        this.emit({
+          attempt: message.attempt,
+          candidateIndexes: message.candidates.map((_, index) => message.candidateStart + index),
+          elapsedMs: 0,
+          id: message.id,
+          matches: message.candidates.map((candidate) => ({
+            fixedScore: 0,
+            foregroundScore: 0,
+            isMirrored: candidate.isMirrored,
+            playerScore: 0,
+            score: 0,
+            signatureScore: 0,
+            sourceCenterX: candidate.x,
+            sourceCenterY: candidate.y,
+            templateName: "stub",
+            votes: candidate.votes,
+          })),
+          session: message.session,
           type: "success",
         }),
       );
@@ -377,6 +610,14 @@ function dispatchDetectionRequest() {
       type: "detect-bounds",
     },
   });
+}
+
+function getSuccessResponse() {
+  return postMessage.mock.calls
+    .map(([message]) => message)
+    .find(
+      (message): message is Extract<GraphwarDetectionWorkerResponse, { type: "success" }> => message.type === "success",
+    );
 }
 
 function restoreGlobal(name: "ImageData" | "Worker" | "self", descriptor: PropertyDescriptor | undefined) {

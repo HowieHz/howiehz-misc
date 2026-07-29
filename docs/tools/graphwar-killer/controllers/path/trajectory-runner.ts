@@ -4,7 +4,7 @@ import {
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
   type GraphwarWorkerBackendConfiguration,
-  GraphwarWasmFault,
+  type GraphwarWorkerBackendSelection,
 } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { nowMs } from "../../core/time";
@@ -43,6 +43,8 @@ export interface GraphwarTrajectoryRunResult {
 export interface GraphwarTrajectoryRunnerOptions {
   /** 当前 runner 生命周期内每个新槽共用的 backend generation 与 module。 */
   backendConfiguration?: GraphwarWorkerBackendConfiguration;
+  /** 页面 composition root 的动态选择；loading 任务在此 promise 上等待。 */
+  createBackendSelection?: () => GraphwarWorkerBackendSelection;
   /** 测试注入点；页面默认创建专用 module Worker。 */
   createWorker?: () => Worker;
   /** 端到端计时入口。 */
@@ -83,14 +85,24 @@ const WORKER_SLOT_TARGET = 2;
  * ready，浏览器会排队消息，因此这里不承诺完全消除冷启动等待。
  */
 export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunnerOptions = {}) {
+  if (options.backendConfiguration && options.createBackendSelection) {
+    throw new TypeError("Trajectory runner cannot combine fixed and dynamic backend selection");
+  }
   const attemptGate = createGraphwarBackendAttemptGate();
-  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  let backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  const createBackendSelection =
+    options.createBackendSelection ??
+    (() => ({
+      generation: backendConfiguration.generation,
+      promise: Promise.resolve(backendConfiguration),
+    }));
   const createWorker = options.createWorker ?? createDefaultTrajectoryWorker;
   const now = options.now ?? nowMs;
   const workerSlots: TrajectoryWorkerSlot[] = [];
   let isClosed = false;
   let currentTask: PendingTrajectoryTask | undefined;
   let nextRequestId = 1;
+  let nextRunToken = 1;
   let isWorkerFallbackActive = false;
 
   /** 固定输入快照并启动 latest-wins 主轨迹任务。 */
@@ -101,6 +113,8 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
 
     cancelCurrentTask();
+    const runToken = nextRunToken;
+    nextRunToken += 1;
     // PostMessage 不能克隆 Vue reactive proxy；进入 runner 时统一固定为本次任务的纯数据快照。
     let taskInput: GraphwarTrajectoryCalculationInput;
     try {
@@ -110,28 +124,43 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
         normalizeError(error, "Graphwar trajectory input could not be cloned"),
       );
     }
-    const requestId = nextRequestId;
-    nextRequestId += 1;
-    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
-
-    return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
-      const task: PendingTrajectoryTask = {
-        attempt,
-        id: requestId,
-        input: taskInput,
-        reject,
-        resolve,
-        isSettled: false,
-        startedAt,
-        workerFailureCount: 0,
-      };
-      currentTask = task;
-      if (isWorkerFallbackActive) {
-        void runOnMainThread(task);
-        return;
+    const startWithConfiguration = (configuration: GraphwarWorkerBackendConfiguration) => {
+      if (isClosed || runToken !== nextRunToken - 1) {
+        throw new GraphwarTrajectoryCancelledError();
       }
-      startWorkerTask(task);
-    });
+      if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
+        for (const slot of [...workerSlots]) {
+          terminateWorkerSlot(slot);
+        }
+        backendConfiguration = configuration;
+        isWorkerFallbackActive = false;
+      }
+      const requestId = nextRequestId;
+      nextRequestId += 1;
+      const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
+
+      return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
+        const task: PendingTrajectoryTask = {
+          attempt,
+          id: requestId,
+          input: taskInput,
+          reject,
+          resolve,
+          isSettled: false,
+          startedAt,
+          workerFailureCount: 0,
+        };
+        currentTask = task;
+        if (isWorkerFallbackActive) {
+          void runOnMainThread(task);
+          return;
+        }
+        startWorkerTask(task);
+      });
+    };
+    return options.createBackendSelection
+      ? createBackendSelection().promise.then(startWithConfiguration)
+      : startWithConfiguration(backendConfiguration);
   }
 
   /** 取消权威任务；忙碌 Worker 必须硬终止，避免过期 Step 计算继续占用 CPU。 */
@@ -314,8 +343,29 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
     const task = slot.activeTask;
     terminateWorkerSlot(slot);
-    if (task && isCurrentTask(task)) {
-      completeTask(task, () => task.reject(new GraphwarWasmFault(message.fault.code, message.fault.message)));
+    void replayAfterWasmFault(task ?? currentTask, message);
+  }
+
+  /** 保留同一个 outer task，从原始输入切换到 TS cold attempt；standby fault 也必须撤销旧 generation。 */
+  async function replayAfterWasmFault(
+    task: PendingTrajectoryTask | undefined,
+    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+  ) {
+    if (!task || !isCurrentTask(task)) {
+      return;
+    }
+    for (const workerSlot of [...workerSlots]) {
+      terminateWorkerSlot(workerSlot);
+    }
+    attemptGate.cancelOuterTask(task.attempt);
+    const fallbackGeneration = Math.max(message.generation + 1, backendConfiguration.generation + 1);
+    const fallbackConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration);
+    backendConfiguration = fallbackConfiguration;
+    task.attempt = attemptGate.beginOuterTask(fallbackGeneration);
+    task.workerFailureCount = 0;
+    isWorkerFallbackActive = false;
+    if (isCurrentTask(task)) {
+      startWorkerTask(task);
     }
   }
 
@@ -442,6 +492,18 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     close,
     run,
   };
+}
+
+function areBackendConfigurationsEqual(
+  left: GraphwarWorkerBackendConfiguration,
+  right: GraphwarWorkerBackendConfiguration,
+) {
+  return (
+    left.generation === right.generation &&
+    left.backend.type === right.backend.type &&
+    (left.backend.type === "typescript" ||
+      (right.backend.type === "wasm" && left.backend.module === right.backend.module))
+  );
 }
 
 /** 创建页面默认使用的主轨迹 module Worker。 */

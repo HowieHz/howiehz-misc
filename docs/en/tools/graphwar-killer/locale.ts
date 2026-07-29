@@ -1077,6 +1077,15 @@ export const graphwarKillerLocale = {
         workerCountAriaLabel: "Number of geometry pathfinding Workers",
         workerCountTitle: "Set the number of pathfinding workers; default 4, range 1 to 128",
       },
+      runtime: {
+        heading: "Runtime",
+        wasmAcceleration: "WASM acceleration (experimental)",
+        wasmAccelerationTitle:
+          "Prefer WASM for recognition, formulas, trajectories, and pathfinding; fall back to TypeScript when unavailable. Resets on refresh",
+        loading: "Loading…",
+        ready: "WASM ready",
+        degraded: "⚠ Degraded",
+      },
       recognition: {
         candidateTopRatio: "Candidate keep ratio",
         candidateTopRatioAriaLabel: "Soldier template candidate keep ratio",

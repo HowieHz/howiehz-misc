@@ -41,7 +41,7 @@ describe("Graphwar main trajectory runner", () => {
     runner.close();
   });
 
-  it("reports an idle standby WASM fault without routing it through task retry", async () => {
+  it("replays the active task after an idle standby WASM fault", async () => {
     const workers: FakeWorker[] = [];
     const onWasmFault = vi.fn();
     const module = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
@@ -62,8 +62,10 @@ describe("Graphwar main trajectory runner", () => {
 
     expect(onWasmFault).toHaveBeenCalledOnce();
     expect(workers[1].terminated).toBe(true);
-    expect(workers[0].requests).toHaveLength(1);
-    workers[0].respond(workerOutcome);
+    expect(workers[0].terminated).toBe(true);
+    const replayWorker = workers.find((worker) => worker.requests[0]?.attempt.backendGeneration === 5);
+    expect(replayWorker?.requests[0]?.attempt.backendGeneration).toBe(5);
+    replayWorker?.respond(workerOutcome);
     await expect(result).resolves.toMatchObject({ outcome: workerOutcome });
     runner.close();
   });

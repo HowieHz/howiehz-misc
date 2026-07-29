@@ -1,5 +1,6 @@
 import { computed, ref, watch, type Ref } from "vue";
 
+import type { GraphwarWorkerBackendSelection } from "../../core/algorithm-backend";
 import { imageToGraphPoint, normalizePathPoint, pixelPointsEqual } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type {
@@ -31,6 +32,7 @@ export { GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM };
 
 /** 实时点击预览控制器读取的页面状态和算法依赖。 */
 interface GraphwarLiveClickPreviewOptions {
+  createBackendSelection?: () => GraphwarWorkerBackendSelection;
   /** 坐标映射应复用页面当前标定；bounds 无效时预览保持空结果。 */
   geometry: {
     boundsRect: ReadonlyRef<BoundsRect>;
@@ -160,6 +162,7 @@ export function useGraphwarLiveClickPreview(
   const pointerPoint = ref<PixelPoint>();
   const pointerPathPointIndex = ref<number>();
   const runner = createGraphwarLiveClickPreviewRunner({
+    createBackendSelection: options.createBackendSelection,
     workerCount: options.runtime.workerCount,
   });
   let activeRenderContext: GraphwarLiveClickPreviewRenderContext | undefined;

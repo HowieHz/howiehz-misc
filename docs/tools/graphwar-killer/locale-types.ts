@@ -578,6 +578,14 @@ export interface GraphwarKillerLocale {
         workerCountAriaLabel: string;
         workerCountTitle: string;
       };
+      runtime: {
+        heading: string;
+        wasmAcceleration: string;
+        wasmAccelerationTitle: string;
+        loading: string;
+        ready: string;
+        degraded: string;
+      };
       recognition: {
         candidateTopRatio: string;
         candidateTopRatioAriaLabel: string;

@@ -4,6 +4,7 @@ import {
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
   type GraphwarWorkerBackendConfiguration,
+  type GraphwarWorkerBackendSelection,
 } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { createGraphPoint, type ReadonlyValue as ReadonlyRef } from "../../core/types";
@@ -32,6 +33,7 @@ export function isGraphwarLiveClickPreviewCancelledError(error: unknown) {
 interface PendingLiveClickPreviewTask {
   attempt: GraphwarBackendAttemptIdentity;
   id: number;
+  input: GraphwarLiveClickPreviewRenderInput;
   reject: (reason?: unknown) => void;
   resolve: (value: GraphwarLiveClickPreviewRenderResult) => void;
   isSettled: boolean;
@@ -41,6 +43,7 @@ interface PendingLiveClickPreviewTask {
 interface GraphwarLiveClickPreviewRunnerOptions {
   /** 当前 preview pool 生命周期内所有懒创建槽共用的 backend 配置。 */
   backendConfiguration?: GraphwarWorkerBackendConfiguration;
+  createBackendSelection?: () => GraphwarWorkerBackendSelection;
   /** 任一 preview slot 的明确 WASM fault，包含没有 active task 的初始化故障。 */
   onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
   /** 已由页面校验/归一化的并行 Worker 数；runner 仍会二次 clamp 作为安全边界。 */
@@ -58,8 +61,11 @@ export const GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM = 16;
 
 /** 创建实时预览 runner；常驻 Worker 并行处理已开始任务，等待槽只保留最新落点。 */
 export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickPreviewRunnerOptions) {
+  if (options.backendConfiguration && options.createBackendSelection) {
+    throw new TypeError("Preview runner cannot combine fixed and dynamic backend selection");
+  }
   const attemptGate = createGraphwarBackendAttemptGate();
-  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  let backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
   const workerSlots: LiveClickPreviewWorkerSlot[] = [];
   let latestSettledRequestId = 0;
   // 单个 runner 内的请求全序号；JS 安全整数空间足够一个浏览器会话使用，不做回绕分支。
@@ -72,36 +78,50 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
   function render(input: GraphwarLiveClickPreviewRenderInput) {
     const requestId = nextRequestId;
     nextRequestId += 1;
-    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
-    return new Promise<GraphwarLiveClickPreviewRenderResult>((resolve, reject) => {
-      const task: PendingLiveClickPreviewTask = {
-        attempt,
-        id: requestId,
-        reject,
-        resolve,
-        isSettled: false,
-      };
-      if (!canUseWorkerPool()) {
-        settleTaskAsResult(task, createGuideOnlyRenderResult());
-        return;
+    const renderWithConfiguration = (configuration: GraphwarWorkerBackendConfiguration) => {
+      if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
+        cancel();
+        for (const slot of [...workerSlots]) {
+          resetWorkerSlot(slot);
+        }
+        backendConfiguration = configuration;
       }
-
       let taskInput: GraphwarLiveClickPreviewRenderInput;
       try {
         taskInput = cloneRenderInput(input);
       } catch (error) {
-        settleTaskAsError(task, error instanceof Error ? error : new Error(String(error)));
-        return;
+        return Promise.reject<GraphwarLiveClickPreviewRenderResult>(
+          error instanceof Error ? error : new Error(String(error)),
+        );
       }
-      if (startTaskIfPossible(task, taskInput)) {
-        return;
-      }
+      const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
+      return new Promise<GraphwarLiveClickPreviewRenderResult>((resolve, reject) => {
+        const task: PendingLiveClickPreviewTask = {
+          attempt,
+          id: requestId,
+          input: taskInput,
+          reject,
+          resolve,
+          isSettled: false,
+        };
+        if (!canUseWorkerPool()) {
+          settleTaskAsResult(task, createGuideOnlyRenderResult());
+          return;
+        }
 
-      // 高频 pointermove 只保留一个等待中的最新输入；已经开始的任务不硬中断。
-      settleTaskAsCancelled(queuedTask);
-      queuedTask = task;
-      queuedTaskInput = taskInput;
-    });
+        if (startTaskIfPossible(task, taskInput)) {
+          return;
+        }
+
+        // 高频 pointermove 只保留一个等待中的最新输入；已经开始的任务不硬中断。
+        settleTaskAsCancelled(queuedTask);
+        queuedTask = task;
+        queuedTaskInput = taskInput;
+      });
+    };
+    return options.createBackendSelection
+      ? options.createBackendSelection().promise.then(renderWithConfiguration)
+      : renderWithConfiguration(backendConfiguration);
   }
 
   /** 尝试为任务获取一个槽位并完成协议投递。 */
@@ -200,7 +220,7 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
         options.onWasmFault?.(message);
         hasInitializationFailure = true;
         if (!isInitializing) {
-          handleWorkerFailure(slot);
+          handleWorkerWasmFault(slot, message);
         }
       },
       role: "live-click-preview",
@@ -273,6 +293,41 @@ export function createGraphwarLiveClickPreviewRunner(options: GraphwarLiveClickP
     }
     workerSlots.length = 0;
     startQueuedTaskIfPossible();
+  }
+
+  /** WASM 故障保留最新预览输入并以 TS backend 重放；普通 Worker 故障仍只显示引导线。 */
+  function handleWorkerWasmFault(
+    slot: LiveClickPreviewWorkerSlot,
+    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+  ) {
+    if (workerSlots.indexOf(slot) < 0) {
+      return;
+    }
+    const activeTasks = workerSlots.flatMap((workerSlot) => (workerSlot.activeTask ? [workerSlot.activeTask] : []));
+    const candidates = [...activeTasks, ...(queuedTask ? [queuedTask] : [])];
+    const replayTask = candidates.sort((left, right) => right.id - left.id)[0];
+    for (const workerSlot of [...workerSlots]) {
+      if (workerSlot.activeTask && workerSlot.activeTask !== replayTask) {
+        settleTaskAsCancelled(workerSlot.activeTask);
+      }
+      resetWorkerSlot(workerSlot);
+    }
+    if (queuedTask && queuedTask !== replayTask) {
+      settleTaskAsCancelled(queuedTask);
+    }
+    queuedTask = undefined;
+    queuedTaskInput = undefined;
+    backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(
+      Math.max(message.generation + 1, backendConfiguration.generation + 1),
+    );
+    canUseWorkers = true;
+    if (replayTask) {
+      attemptGate.cancelOuterTask(replayTask.attempt);
+      replayTask.attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
+      queuedTask = replayTask;
+      queuedTaskInput = replayTask.input;
+      startQueuedTaskIfPossible();
+    }
   }
 
   /** 从等待槽原子取出最新任务，并在有容量时启动它。 */
@@ -417,6 +472,18 @@ function createGuideOnlyRenderResult(): GraphwarLiveClickPreviewRenderResult {
 }
 
 /** 复制标量与点数组，隔离排队期间的界面修改；大型 mask 保留引用，投递时由 structured clone 复制。 */
+function areBackendConfigurationsEqual(
+  left: GraphwarWorkerBackendConfiguration,
+  right: GraphwarWorkerBackendConfiguration,
+) {
+  return (
+    left.generation === right.generation &&
+    left.backend.type === right.backend.type &&
+    (left.backend.type === "typescript" ||
+      (right.backend.type === "wasm" && left.backend.module === right.backend.module))
+  );
+}
+
 function cloneRenderInput(input: GraphwarLiveClickPreviewRenderInput): GraphwarLiveClickPreviewRenderInput {
   const bounds = input.bounds;
   const boundsRect = input.boundsRect;

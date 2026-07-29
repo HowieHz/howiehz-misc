@@ -1,9 +1,11 @@
 import {
   calculateGraphwarTrajectory,
+  calculateGraphwarTrajectoryWithWasm,
   type GraphwarTrajectoryCalculationWorkerRequest,
   type GraphwarTrajectoryCalculationWorkerResponse,
 } from "../../controllers/path/trajectory-calculation";
 import type { GraphwarBackendControlMessage, GraphwarBackendInitializationMessage } from "../../core/algorithm-backend";
+import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../core/worker-backend";
 
 /** 主轨迹 Worker 使用的最小全局作用域接口。 */
@@ -37,7 +39,10 @@ async function runTrajectoryRequest(request: GraphwarTrajectoryCalculationWorker
     backendRuntime,
     request.attempt,
     { attempt: request.attempt, type: "task" },
-    () => calculateGraphwarTrajectory(request.input),
+    (backend) =>
+      backend.type === "wasm" && backend.runtime instanceof GraphwarWasmKernelRuntime
+        ? calculateGraphwarTrajectoryWithWasm(backend.runtime, request.input)
+        : calculateGraphwarTrajectory(request.input),
   );
   if (execution.type === "wasm-fault") {
     return;

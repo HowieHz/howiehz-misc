@@ -54,6 +54,7 @@ import {
   getGraphwarLaunchAngle,
   isGraphwarFormulaConvergenceError,
   sampleGraphwarExpressionTrajectory,
+  sampleGraphwarExpressionTrajectoryWithEvaluator,
   sampleGraphwarTrajectory,
 } from "../simulation/simulator";
 import type {
@@ -3773,6 +3774,37 @@ export function sampleGraphwarExpressionTrajectoryWithStops(options: {
     shouldStop: stopTracker.shouldStop,
     soldierCenter: options.soldierCenter,
   });
+  return stopTracker.createResult(sample);
+}
+
+/** Same stop policy as the public expression sampler, with VM evaluation supplied by a backend adapter. */
+export function sampleGraphwarExpressionTrajectoryWithStopsAndEvaluator(
+  options: {
+    bounds: GraphBounds;
+    boundsRect: BoundsRect;
+    collision?: GraphwarTrajectoryCollisionSettings;
+    collectVisiblePixels?: boolean;
+    equation: EquationMode;
+    expression: string;
+    launchAngleRadians?: number;
+    parser?: GraphwarExpressionParserOptions;
+    soldierCenter: GraphPoint;
+  },
+  evaluateExpression: (x: number, y: number, dy: number) => number,
+): GraphwarTrajectorySampleResult {
+  const stopTracker = createGraphwarTrajectoryStopTracker(options);
+  const sample = sampleGraphwarExpressionTrajectoryWithEvaluator(
+    {
+      bounds: options.bounds,
+      equation: options.equation,
+      expression: options.expression,
+      launchAngleRadians: options.launchAngleRadians,
+      parser: options.parser,
+      shouldStop: stopTracker.shouldStop,
+      soldierCenter: options.soldierCenter,
+    },
+    evaluateExpression,
+  );
   return stopTracker.createResult(sample);
 }
 

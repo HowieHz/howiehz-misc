@@ -1,5 +1,6 @@
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 
+import type { GraphwarBackendControlMessage, GraphwarWorkerBackendSelection } from "../../core/algorithm-backend";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -92,6 +93,9 @@ export interface GraphwarValidatedTrajectorySnapshot {
 
 /** 轨迹结果控制器读取的页面设置、输入和状态依赖。 */
 interface GraphwarTrajectoryResultOptions {
+  /** 页面唯一 backend controller；每次权威任务读取同一 generation selection。 */
+  createBackendSelection?: () => GraphwarWorkerBackendSelection;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
   /** 碰撞采样应使用页面当前障碍和边界收缩配置。 */
   getCollisionSettings: () => GraphwarTrajectoryCollisionSettings | undefined;
   /** 模拟容差无效时不能把缺失碰撞设置误当成“无障碍”。 */
@@ -282,6 +286,8 @@ export function useGraphwarTrajectoryResult(
   const hasTargetMissWarning = computed(() => activeTrajectory.value?.hasTargetMissWarning ?? false);
   const trajectoryCalculationInput = computed(createTrajectoryCalculationInput);
   const runner = createGraphwarTrajectoryRunner({
+    createBackendSelection: options.createBackendSelection,
+    onWasmFault: options.onWasmFault,
     onFallback: (reason) => {
       calculationFallbackReason.value ||= reason;
     },

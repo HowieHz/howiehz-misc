@@ -1,9 +1,15 @@
 import {
   renderGraphwarLiveClickPreview,
+  renderGraphwarLiveClickPreviewWithWasm,
   type GraphwarLiveClickPreviewWorkerRequest,
 } from "../../controllers/stage/live-click-preview-render";
 import type { GraphwarLiveClickPreviewWorkerResponse } from "../../controllers/stage/live-click-preview-render";
-import type { GraphwarBackendControlMessage, GraphwarBackendInitializationMessage } from "../../core/algorithm-backend";
+import {
+  GraphwarWasmFault,
+  type GraphwarBackendControlMessage,
+  type GraphwarBackendInitializationMessage,
+} from "../../core/algorithm-backend";
+import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../core/worker-backend";
 
 /** 实时预览 Worker 使用的最小全局作用域接口。 */
@@ -38,7 +44,15 @@ async function runPreviewRequest(request: GraphwarLiveClickPreviewWorkerRequest)
       backendRuntime,
       request.attempt,
       { attempt: request.attempt, type: "task" },
-      () => renderGraphwarLiveClickPreview(request.input),
+      (backend) => {
+        if (backend.type !== "wasm") {
+          return renderGraphwarLiveClickPreview(request.input);
+        }
+        if (!(backend.runtime instanceof GraphwarWasmKernelRuntime)) {
+          throw new GraphwarWasmFault("abi", "Graphwar live preview Worker received an incompatible WASM runtime");
+        }
+        return renderGraphwarLiveClickPreviewWithWasm(backend.runtime, request.input);
+      },
     );
     if (execution.type === "wasm-fault") {
       return;

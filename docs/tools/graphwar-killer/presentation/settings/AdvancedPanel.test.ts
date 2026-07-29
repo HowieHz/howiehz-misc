@@ -47,6 +47,7 @@ describe("AdvancedPanel", () => {
         obstacleMinAreaText: "8",
         templateMatchingWorkerCountText: "2",
       },
+      runtime: { canToggle: true, isEnabled: false, state: "off" },
       simulator: { shouldParseDerivativeAsY: true, shouldSkipUnknownCharacters: true },
       isSolverSettingsVisible: true,
     };
@@ -126,6 +127,7 @@ describe("AdvancedPanel", () => {
     expect(wrapper.findAll("h3").map((heading) => heading.text())).toEqual([
       graphwarKillerLocale.ui.settings.bounds.heading,
       graphwarKillerLocale.ui.settings.simulator,
+      graphwarKillerLocale.ui.settings.runtime.heading,
     ]);
     expect(
       [

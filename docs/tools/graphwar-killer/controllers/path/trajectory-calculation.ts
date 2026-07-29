@@ -1,5 +1,14 @@
 import { isGraphwarWasmFault, type GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import {
+  runGraphwarWasmExpressionBatch,
+  runGraphwarWasmTrajectory,
+  prepareGraphwarWasmFormulaLaunch,
+} from "../../core/wasm/formula-adapter";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import type { GraphwarWasmStopPolicy } from "../../core/wasm/task-adapter";
+import { parseGraphwarExpressionProgram } from "../../formula/expression/evaluator";
+import { buildFormula } from "../../formula/generation/build";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaMode,
@@ -7,6 +16,7 @@ import {
   GraphwarTrajectoryResolutionError,
   resolveGraphwarTrajectory,
   sampleGraphwarExpressionTrajectoryWithStops,
+  sampleGraphwarExpressionTrajectoryWithStopsAndEvaluator,
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaMode,
   type GraphwarTrajectoryFormulaSettings,
@@ -117,6 +127,190 @@ export function calculateGraphwarTrajectory(
   return input.type === "solver"
     ? calculateSolverTrajectory(input, createGraphwarTrajectoryFormulaMode(input.settings))
     : calculateSimulatorTrajectory(input);
+}
+
+/** Executes solver trajectories and simulator expression arithmetic through the shared WASM adapters. */
+export function calculateGraphwarTrajectoryWithWasm(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarTrajectoryCalculationInput,
+): GraphwarTrajectoryCalculationOutcome {
+  if (input.type !== "solver") {
+    return calculateSimulatorTrajectoryWithWasm(runtime, input);
+  }
+  try {
+    if (input.points.length < 2) {
+      throw new Error("At least two solver points are required.");
+    }
+    const descriptor = {
+      bounds: input.bounds,
+      points: input.points,
+      settings: input.settings,
+      soldierCenter: input.points[0],
+    };
+    const launch = prepareGraphwarWasmFormulaLaunch(runtime, descriptor);
+    if (launch.status !== "success") {
+      return { message: "The WASM solver could not prepare a launch.", ok: false, stage: "formula" };
+    }
+    const target = input.target;
+    const stop: GraphwarWasmStopPolicy = {
+      boundsRect: input.boundsRect,
+      collision: input.collision?.mask
+        ? { boundaryExpansion: input.collision.boundaryExpansion ?? 0, mask: input.collision.mask, type: "mask" }
+        : { type: "none" },
+      continueAfterTargetsUntilGraphX: { type: "none" },
+      orderedTargets: target
+        ? [
+            {
+              // The WASM kernel converts accepted graph points to screenshot pixels before hit testing.
+              center: target.point,
+              radius: target.hitRadiusPixels,
+            },
+          ]
+        : [],
+      qualityPoints: input.points.slice(1, target ? -1 : input.points.length),
+      requiredTargets: [],
+      shouldCollectVisiblePixels: true,
+      shouldStopOnTargetsComplete: false,
+      trackedTargets: [],
+      type: "targets",
+    };
+    const sampled = runGraphwarWasmTrajectory(runtime, { descriptor, start: { type: "cold" }, stop });
+    if (!sampled) {
+      return { message: "The WASM solver returned an invalid launch.", ok: false, stage: "formula" };
+    }
+    const obstacleHitPoint =
+      sampled.obstacle.type === "hit" ? sampled.visiblePixels[sampled.obstacle.sampleIndex] : undefined;
+    const hasTargetMissWarning =
+      target !== undefined &&
+      sampled.targetHitIndex < 0 &&
+      (!obstacleHitPoint || obstacleHitPoint.x >= target.point.x + target.hitRadiusPixels);
+    if (
+      hasTargetMissWarning &&
+      !(input.settings.equation === "ddy" && input.settings.secondOrderLaunchAngleMode === "display-rounded")
+    ) {
+      return createFailureOutcome("trajectory", new Error("The final formula trajectory did not hit its target."));
+    }
+    const warningReason = resolveWasmWarningReason(
+      sampled.stopReason,
+      sampled.targetHitIndex,
+      sampled.obstacle.type === "hit" ? sampled.obstacle.sampleIndex : -1,
+    );
+    const formulaResult = buildFormula(
+      input.points,
+      input.settings.steepness,
+      input.settings.equation,
+      input.settings.algorithm,
+      input.settings.decimalPlaces,
+    );
+    return {
+      ok: true,
+      result: {
+        curvePoints: formatVisibleTrajectoryPoints(
+          sampled.visiblePixels,
+          sampled.obstacle.type === "hit" ? sampled.obstacle.sampleIndex : -1,
+        ),
+        formulaResult,
+        ...(sampled.pathError === undefined ? {} : { pathError: sampled.pathError }),
+        ...(sampled.launchAngleRadians === undefined
+          ? {}
+          : {
+              secondOrderLaunchAngle: {
+                degrees: (sampled.launchAngleRadians * 180) / Math.PI,
+                radians: sampled.launchAngleRadians,
+              },
+            }),
+        ...(hasTargetMissWarning ? { hasTargetMissWarning: true } : {}),
+        ...(warningReason ? { warningReason } : {}),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+          sampled.visiblePixels,
+          sampled.obstacle.type === "hit" ? sampled.obstacle.sampleIndex : -1,
+        ),
+      },
+    };
+  } catch (error) {
+    if (isGraphwarWasmFault(error)) {
+      throw error;
+    }
+    return createFailureOutcome("trajectory", error);
+  }
+}
+
+/** Maps the WASM stop discriminator to the public warning contract without treating normal stops as faults. */
+function resolveWasmWarningReason(
+  stopReason: number,
+  targetHitIndex: number,
+  obstacleHitIndex: number,
+): GraphwarTrajectoryWarningReason | undefined {
+  if (obstacleHitIndex >= 0 && !(targetHitIndex >= 0 && obstacleHitIndex >= targetHitIndex)) {
+    return "obstacle";
+  }
+  if (targetHitIndex >= 0) {
+    return undefined;
+  }
+  if (stopReason === 3) {
+    return "max-steps";
+  }
+  if (stopReason === 4) {
+    return "out-of-bounds";
+  }
+  if (stopReason === 5) {
+    return "too-steep";
+  }
+  if (stopReason === 2) {
+    return "invalid";
+  }
+  return undefined;
+}
+
+/** Runs simulator expression arithmetic through the canonical WASM expression VM while retaining Java step/stop policy. */
+function calculateSimulatorTrajectoryWithWasm(
+  runtime: GraphwarWasmKernelRuntime,
+  input: Extract<GraphwarTrajectoryCalculationInput, { type: "simulator" }>,
+): GraphwarTrajectoryCalculationOutcome {
+  try {
+    const program = parseGraphwarExpressionProgram(input.expression, input.parser);
+    if (!program) {
+      return calculateSimulatorTrajectory(input);
+    }
+    const evaluateExpression = (x: number, y: number, dy: number) => {
+      const values = runGraphwarWasmExpressionBatch(runtime, {
+        program,
+        values: [{ dy, x, y }],
+      });
+      return values[0] ?? Number.NaN;
+    };
+    const sampleResult = sampleGraphwarExpressionTrajectoryWithStopsAndEvaluator(
+      {
+        bounds: input.bounds,
+        boundsRect: input.boundsRect,
+        ...(input.collision ? { collision: input.collision } : {}),
+        collectVisiblePixels: true,
+        equation: input.equation,
+        expression: input.expression,
+        ...(input.launchAngleRadians === undefined ? {} : { launchAngleRadians: input.launchAngleRadians }),
+        ...(input.parser ? { parser: input.parser } : {}),
+        soldierCenter: input.soldierCenter,
+      },
+      evaluateExpression,
+    );
+    const warningReason = resolveWarningReason(sampleResult, -1, sampleResult.obstacleHitIndex);
+    return {
+      ok: true,
+      result: {
+        curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+          sampleResult.visiblePixels,
+          sampleResult.obstacleHitIndex,
+        ),
+        ...(warningReason ? { warningReason } : {}),
+      },
+    };
+  } catch (error) {
+    if (isGraphwarWasmFault(error)) {
+      throw error;
+    }
+    return createFailureOutcome("trajectory", error);
+  }
 }
 
 /** 分阶段解算求解器输入，让公式生成与轨迹模拟异常保留各自的页面错误语义。 */

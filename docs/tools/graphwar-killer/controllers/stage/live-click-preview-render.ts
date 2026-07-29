@@ -1,6 +1,7 @@
 import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, EquationMode, GraphBounds, GraphPoint } from "../../core/types";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaMode,
@@ -10,6 +11,10 @@ import {
   type GraphwarTrajectoryFormulaSettings,
 } from "../../formula/trajectory/sampling";
 import { formatVisibleTrajectoryPoints } from "../../presentation/stage/svg-polyline";
+import {
+  calculateGraphwarTrajectoryWithWasm,
+  type GraphwarTrajectoryCalculationInput,
+} from "../path/trajectory-calculation";
 
 /** 求解器与模拟器实时预览共享的几何和碰撞输入。 */
 interface GraphwarLiveClickPreviewRenderInputBase {
@@ -101,4 +106,38 @@ export function renderGraphwarLiveClickPreview(
     curvePoints: result ? formatVisibleTrajectoryPoints(result.visiblePixels, result.obstacleHitIndex) : "",
     elapsedMs: nowMs() - startedAt,
   };
+}
+
+/** Renders preview trajectories through the same WASM trajectory adapter as authoritative solver/simulator work. */
+export function renderGraphwarLiveClickPreviewWithWasm(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarLiveClickPreviewRenderInput,
+): GraphwarLiveClickPreviewRenderResult {
+  const startedAt = nowMs();
+  const calculationInput: GraphwarTrajectoryCalculationInput =
+    input.type === "expression"
+      ? {
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          ...(input.collision ? { collision: input.collision } : {}),
+          equation: input.equation,
+          expression: input.expression,
+          ...(input.launchAngleRadians === undefined ? {} : { launchAngleRadians: input.launchAngleRadians }),
+          ...(input.parser ? { parser: input.parser } : {}),
+          soldierCenter: input.soldierCenter,
+          type: "simulator",
+        }
+      : {
+          bounds: input.bounds,
+          boundsRect: input.boundsRect,
+          ...(input.collision ? { collision: input.collision } : {}),
+          points: input.points,
+          settings: input.settings,
+          type: "solver",
+        };
+  const outcome = calculateGraphwarTrajectoryWithWasm(runtime, calculationInput);
+  if (!outcome.ok) {
+    return { curvePoints: "", elapsedMs: nowMs() - startedAt };
+  }
+  return { curvePoints: outcome.result.curvePoints, elapsedMs: nowMs() - startedAt };
 }

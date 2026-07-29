@@ -1790,7 +1790,11 @@ describe("Graphwar Killer page settings", () => {
         .get(".graphwar-killer__advanced-settings-panel")
         .findAll("h3")
         .map((heading) => heading.text()),
-    ).toEqual([graphwarKillerLocale.ui.settings.bounds.heading, graphwarKillerLocale.ui.settings.simulator]);
+    ).toEqual([
+      graphwarKillerLocale.ui.settings.bounds.heading,
+      graphwarKillerLocale.ui.settings.simulator,
+      graphwarKillerLocale.ui.settings.runtime.heading,
+    ]);
     wrapper.unmount();
   });
 

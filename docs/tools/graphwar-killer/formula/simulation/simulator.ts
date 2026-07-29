@@ -353,8 +353,14 @@ export function sampleGraphwarExpressionTrajectory(options: SampleGraphwarExpres
   if (!program) {
     return createTrajectorySample([], "invalid");
   }
-  const evaluateExpression = createGraphwarExpressionProgramEvaluator(program);
+  return sampleGraphwarExpressionTrajectoryWithEvaluator(options, createGraphwarExpressionProgramEvaluator(program));
+}
 
+/** Samples an already parsed expression with a caller-owned evaluator (for example the WASM VM). */
+export function sampleGraphwarExpressionTrajectoryWithEvaluator(
+  options: SampleGraphwarExpressionTrajectoryOptions,
+  evaluateExpression: (x: number, y: number, dy: number) => number,
+) {
   if (options.equation === "y") {
     return sampleNormalExpression(options, (x) => evaluateExpression(x, 0, 0));
   }
@@ -484,10 +490,11 @@ function sampleFirstOrderExpression(
   evaluateDY: FirstOrderEvaluator,
 ) {
   const angle = getFirstOrderStartAngle(options.soldierCenter, evaluateDY);
-  const launchPoint = moveFromSoldierCenter(options.soldierCenter, angle);
-  if (!isFinitePoint(launchPoint)) {
-    return createTrajectorySample([], "invalid");
-  }
+  // Java keeps the initial angle-zero launch point when the fixed-point
+  // iteration produces NaN, then lets the first RK4 trial determine the
+  // normal obstacle/non-finite ordering. Preserve that finite evidence here
+  // instead of rejecting the launch before the trajectory boundary.
+  const launchPoint = moveFromSoldierCenter(options.soldierCenter, Number.isNaN(angle) ? 0 : angle);
 
   return sampleByBisection(
     launchPoint,

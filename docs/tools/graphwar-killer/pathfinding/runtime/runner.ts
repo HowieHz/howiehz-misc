@@ -6,6 +6,7 @@ import {
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
   type GraphwarWorkerBackendConfiguration,
+  type GraphwarWorkerBackendSelection,
   GraphwarWasmFault,
 } from "../../core/algorithm-backend";
 import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
@@ -68,6 +69,8 @@ interface PendingPathfindingWorkerTaskBase {
   resolve: (value: GraphwarPathfindingWorkerSuccessResponse["result"]) => void;
   /** 当前请求要求每个一键清图进度都携带累计诊断。 */
   shouldCollectDiagnostics: boolean;
+  /** Immutable request snapshot reused by a typed-fault TS cold replay. */
+  request: Omit<GraphwarPathfindingWorkerRequest, "attempt">;
 }
 
 /** DAG job 集合只和对应 task 分支原子出现，其他请求不能携带这份提交证据。 */
@@ -85,6 +88,7 @@ type PendingPathfindingWorkerTask = PendingPathfindingWorkerTaskBase &
 /** Pathfinding master 与 nested edge Worker 共用的 backend 生命周期注入点。 */
 export interface GraphwarPathfindingRunnerOptions {
   backendConfiguration?: GraphwarWorkerBackendConfiguration;
+  createBackendSelection?: () => GraphwarWorkerBackendSelection;
   onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
 }
 
@@ -96,8 +100,17 @@ export interface GraphwarPathfindingRunnerOptions {
  * 取消直接终止并丢弃 Worker，既能立即停止同步搜索，也避免所有正常搜索为低频取消持续承担分片调度开销；后续请求再按需创建。
  */
 export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunnerOptions = {}) {
+  if (options.backendConfiguration && options.createBackendSelection) {
+    throw new TypeError("Pathfinding runner cannot combine fixed and dynamic backend selection");
+  }
   const attemptGate = createGraphwarBackendAttemptGate();
-  const backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  let backendConfiguration = options.backendConfiguration ?? createGraphwarTypescriptWorkerBackendConfiguration(0);
+  const createBackendSelection =
+    options.createBackendSelection ??
+    (() => ({
+      generation: backendConfiguration.generation,
+      promise: Promise.resolve(backendConfiguration),
+    }));
   let worker: Worker | undefined;
   let workerBackendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot> | undefined;
   let cleanupWorkerListeners: (() => void) | undefined;
@@ -181,58 +194,52 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
   /** 在 master Worker 中执行普通智能寻路几何搜索。 */
   function findRoute(input: GraphwarPathfindingRouteInput, options?: GraphwarPathfindingRunOptions) {
     cancel();
-    const activeWorker = ensureWorker();
-    if (!activeWorker) {
-      return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
-    }
-    return runWorkerTask<GraphwarPathfindingRouteResult>(
-      activeWorker,
-      {
-        id: nextRequestId,
-        task: {
-          input,
-          type: "find-route",
+    return withBackend((activeWorker) =>
+      runWorkerTask<GraphwarPathfindingRouteResult>(
+        activeWorker,
+        {
+          id: nextRequestId,
+          task: {
+            input,
+            type: "find-route",
+          },
         },
-      },
-      options,
+        options,
+      ),
     );
   }
 
   /** 在 master Worker 中执行完整智能寻路，主线程只负责写回结果。 */
   function findSmartPath(input: GraphwarSmartPathfindingPathInput, options?: GraphwarPathfindingRunOptions) {
     cancel();
-    const activeWorker = ensureWorker();
-    if (!activeWorker) {
-      return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
-    }
-    return runWorkerTask<GraphwarSmartPathfindingPathResult>(
-      activeWorker,
-      {
-        id: nextRequestId,
-        task: {
-          ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
-          input,
-          type: "find-smart-path",
+    return withBackend((activeWorker) =>
+      runWorkerTask<GraphwarSmartPathfindingPathResult>(
+        activeWorker,
+        {
+          id: nextRequestId,
+          task: {
+            ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
+            input,
+            type: "find-smart-path",
+          },
         },
-      },
-      options,
+        options,
+      ),
     );
   }
 
   /** 在 master Worker 中建立一键清图 DAG 边。 */
   function buildOneClickClearDagEdges(input: GraphwarOneClickClearDagEdgeBuildRequest) {
     cancel();
-    const activeWorker = ensureWorker();
-    if (!activeWorker) {
-      return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
-    }
-    return runWorkerTask<GraphwarOneClickClearDagEdgeBuildResult>(activeWorker, {
-      id: nextRequestId,
-      task: {
-        input,
-        type: "build-one-click-clear-dag-edges",
-      },
-    });
+    return withBackend((activeWorker) =>
+      runWorkerTask<GraphwarOneClickClearDagEdgeBuildResult>(activeWorker, {
+        id: nextRequestId,
+        task: {
+          input,
+          type: "build-one-click-clear-dag-edges",
+        },
+      }),
+    );
   }
 
   /** 在 master Worker 中执行完整一键清图搜索，避免主线程同步采样卡顿。 */
@@ -241,23 +248,58 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     options?: GraphwarPathfindingRunOptions,
   ) {
     cancel();
-    const activeWorker = ensureWorker();
-    if (!activeWorker) {
-      return Promise.reject(new Error("Graphwar pathfinding worker is unavailable"));
-    }
-    return runWorkerTask<GraphwarOneClickClearPathWorkerResult>(
-      activeWorker,
-      {
-        id: nextRequestId,
-        task: {
-          ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
-          input,
-          shouldReportIncumbents: options?.onIncumbent !== undefined,
-          type: "build-one-click-clear-path",
+    return withBackend((activeWorker) =>
+      runWorkerTask<GraphwarOneClickClearPathWorkerResult>(
+        activeWorker,
+        {
+          id: nextRequestId,
+          task: {
+            ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
+            input,
+            shouldReportIncumbents: options?.onIncumbent !== undefined,
+            type: "build-one-click-clear-path",
+          },
         },
-      },
-      options,
+        options,
+      ),
     );
+  }
+
+  function withBackend<TResult>(task: (worker: Worker) => Promise<TResult>) {
+    const runWithConfiguration = (configuration: GraphwarWorkerBackendConfiguration) => {
+      if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
+        resetWorker();
+        backendConfiguration = configuration;
+      }
+      try {
+        const activeWorker = ensureWorker();
+        if (!activeWorker) {
+          throw new Error("Graphwar pathfinding worker is unavailable");
+        }
+        return task(activeWorker);
+      } catch (error) {
+        if (!(error instanceof GraphwarWasmFault) || backendConfiguration.backend.type !== "wasm") {
+          throw error;
+        }
+        options.onWasmFault?.({
+          fault: error.toDescriptor(),
+          generation: backendConfiguration.generation,
+          role: "pathfinding-master",
+          type: "wasm-fault",
+          context: { type: "initialization" },
+        });
+        resetWorker();
+        backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(backendConfiguration.generation + 1);
+        const fallbackWorker = ensureWorker();
+        if (!fallbackWorker) {
+          throw new Error("Graphwar pathfinding worker is unavailable", { cause: error });
+        }
+        return task(fallbackWorker);
+      }
+    };
+    return options.createBackendSelection
+      ? createBackendSelection().promise.then(runWithConfiguration)
+      : runWithConfiguration(backendConfiguration);
   }
 
   /** 发送单个 Worker 请求，并记录当前等待响应的任务。 */
@@ -269,6 +311,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     nextRequestId += 1;
     const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
     const authoritativeRequest = { ...request, attempt } satisfies GraphwarPathfindingWorkerRequest;
+    const ownedRequest = cloneGraphwarPathfindingWorkerRequest(authoritativeRequest);
     return new Promise<TResult>((resolve, reject) => {
       const taskIdentity =
         request.task.type === "build-one-click-clear-dag-edges"
@@ -285,10 +328,11 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
         reject,
         resolve: resolve as PendingPathfindingWorkerTask["resolve"],
         shouldCollectDiagnostics: options?.shouldCollectDiagnostics === true,
+        request: { id: ownedRequest.id, task: ownedRequest.task },
         ...taskIdentity,
       };
       try {
-        activeWorker.postMessage(cloneGraphwarPathfindingWorkerRequest(authoritativeRequest));
+        activeWorker.postMessage(ownedRequest);
       } catch (error) {
         attemptGate.cancelOuterTask(attempt);
         pendingTask = undefined;
@@ -417,15 +461,34 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
       return;
     }
     options.onWasmFault?.(message);
-    if (pendingTask) {
-      const task = pendingTask;
-      pendingTask = undefined;
-      if (attemptGate.canCommit(task.attempt)) {
-        attemptGate.completeOuterTask(task.attempt);
-      }
-      task.reject(new GraphwarWasmFault(message.fault.code, message.fault.message));
-    }
     resetWorker();
+    if (pendingTask) {
+      void replayAfterWasmFault(pendingTask, message);
+    }
+  }
+
+  /** Typed WASM faults keep the public task alive and rerun its owned request with TS. */
+  async function replayAfterWasmFault(
+    task: PendingPathfindingWorkerTask,
+    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+  ) {
+    if (pendingTask !== task) {
+      return;
+    }
+    attemptGate.cancelOuterTask(task.attempt);
+    const fallbackGeneration = Math.max(message.generation + 1, backendConfiguration.generation + 1);
+    backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration);
+    task.attempt = attemptGate.beginOuterTask(fallbackGeneration);
+    try {
+      const fallbackWorker = ensureWorker();
+      if (!fallbackWorker) {
+        rejectPendingTask(new Error("Graphwar pathfinding worker is unavailable"));
+        return;
+      }
+      fallbackWorker.postMessage(cloneGraphwarPathfindingWorkerRequest({ ...task.request, attempt: task.attempt }));
+    } catch (error) {
+      rejectPendingTask(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   /** 将当前请求的畸形消息作为协议错误拒绝，并丢弃不可信 Worker。 */
@@ -475,6 +538,18 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     findSmartPath,
     findRoute,
   };
+}
+
+function areBackendConfigurationsEqual(
+  left: GraphwarWorkerBackendConfiguration,
+  right: GraphwarWorkerBackendConfiguration,
+) {
+  return (
+    left.generation === right.generation &&
+    left.backend.type === right.backend.type &&
+    (left.backend.type === "typescript" ||
+      (right.backend.type === "wasm" && left.backend.module === right.backend.module))
+  );
 }
 
 /** PostMessage 不能克隆 Vue reactive proxy；runner 边界统一复制成纯数据。 */
@@ -534,6 +609,11 @@ function cloneGraphwarBackendAttemptIdentity(attempt: GraphwarBackendAttemptIden
   };
 }
 
+/** Own binary replay inputs at task admission; later caller mutations cannot alter a cold replay. */
+function cloneUint8Array(value: Uint8Array) {
+  return new Uint8Array(value);
+}
+
 /** 复制普通几何路由输入；大型 mask 保留引用，交由 structured clone 复制。 */
 function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput): GraphwarPathfindingRouteInput {
   return {
@@ -541,7 +621,7 @@ function cloneGraphwarPathfindingRouteInput(input: GraphwarPathfindingRouteInput
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
     isPreviewEnabled: input.isPreviewEnabled,
-    routeMask: input.routeMask,
+    routeMask: cloneUint8Array(input.routeMask),
     routeMaskCacheId: input.routeMaskCacheId,
     routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
@@ -563,11 +643,11 @@ function cloneGraphwarSmartPathfindingPathInput(
     isPreviewEnabled: input.isPreviewEnabled,
     routeMaskCacheId: input.routeMaskCacheId,
     routeMode: input.routeMode,
-    routeObstacleMask: input.routeObstacleMask,
+    routeObstacleMask: cloneUint8Array(input.routeObstacleMask),
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
-    ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+    ...(input.simulationMask ? { simulationMask: cloneUint8Array(input.simulationMask) } : {}),
     simulationMaskCacheId: input.simulationMaskCacheId,
     sourcePath: input.sourcePath.map(clonePixelPoint),
     ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),
@@ -598,7 +678,7 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
       targetPoint: clonePixelPoint(job.targetPoint),
       to: job.to,
     })),
-    routeMask: input.routeMask,
+    routeMask: cloneUint8Array(input.routeMask),
     routeOriginPoint: clonePixelPoint(input.routeOriginPoint),
     routeMode: input.routeMode,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
@@ -632,11 +712,11 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     ...(input.prefixTarget ? { prefixTarget: cloneGraphwarTrajectoryTargetCircle(input.prefixTarget) } : {}),
     routeMaskCacheId: input.routeMaskCacheId,
     routeMode: input.routeMode,
-    routeObstacleMask: input.routeObstacleMask,
+    routeObstacleMask: cloneUint8Array(input.routeObstacleMask),
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
-    ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
+    ...(input.simulationMask ? { simulationMask: cloneUint8Array(input.simulationMask) } : {}),
     simulationMaskCacheId: input.simulationMaskCacheId,
   };
 }
@@ -677,7 +757,9 @@ function cloneGraphwarTrajectoryFormulaSettings(
     ...(settings.formulaPathSteepness === undefined ? {} : { formulaPathSteepness: settings.formulaPathSteepness }),
     steepness: settings.steepness,
     isStepGlitchModeEnabled: settings.isStepGlitchModeEnabled,
-    ...(settings.stepGlitchObstacleMask ? { stepGlitchObstacleMask: settings.stepGlitchObstacleMask } : {}),
+    ...(settings.stepGlitchObstacleMask
+      ? { stepGlitchObstacleMask: cloneUint8Array(settings.stepGlitchObstacleMask) }
+      : {}),
     isStepOverflowProtectionEnabled: settings.isStepOverflowProtectionEnabled,
   };
 }

@@ -1,10 +1,13 @@
 import {
   graphwarBackendAttemptIdentitiesAreEqual,
   graphwarWasmSessionIdentitiesAreEqual,
+  GraphwarWasmFault,
+  type GraphwarAlgorithmBackendContext,
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
   type GraphwarBackendInitializationMessage,
 } from "../../../core/algorithm-backend";
+import { GraphwarWasmKernelRuntime } from "../../../core/wasm/runtime";
 import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../../core/worker-backend";
 /** 一键清图 DAG 边消费者 worker：初始化一次私有上下文，然后按需处理单条边。 */
 import {
@@ -35,6 +38,17 @@ const backendRuntime = createGraphwarWorkerBackendRuntime({
   postControlMessage: (message) => workerScope.postMessage(message),
   role: "one-click-clear-edge",
 });
+
+/** A WASM-selected edge task must fail typed if its runtime cannot satisfy the adapter contract. */
+function getWasmRuntime(backend: GraphwarAlgorithmBackendContext) {
+  if (backend.type !== "wasm") {
+    return undefined;
+  }
+  if (!(backend.runtime instanceof GraphwarWasmKernelRuntime)) {
+    throw new GraphwarWasmFault("abi", "Edge Worker received an incompatible WASM runtime");
+  }
+  return backend.runtime;
+}
 
 /** 一键清图边 Worker 初始化后持有的只读搜索上下文。 */
 type EdgeWorkerContext = GraphwarOneClickClearDagEdgeRouteBuildContext & {
@@ -69,13 +83,14 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
             session: request.session,
             type: "edge-job",
           } as const);
-    await executeGraphwarWorkerTask(backendRuntime, request.attempt, faultContext, async () => {
+    await executeGraphwarWorkerTask(backendRuntime, request.attempt, faultContext, async (backend) => {
       if (request.type === "init") {
         if (context) {
           throw new Error("Edge worker was already initialized");
         }
         const visibilityGraphObstacleData =
           request.context.routeMode === "visibility-graph" ? request.context.visibilityGraphObstacleData : undefined;
+        const wasmRuntime = getWasmRuntime(backend);
         const thetaStarScratch =
           request.context.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
         const sharedContext = {
@@ -89,6 +104,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
           workerIndex: request.context.workerIndex,
           ...(thetaStarScratch ? { thetaStarScratch } : {}),
           ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
+          ...(wasmRuntime ? { wasmRuntime } : {}),
         };
         if (request.context.type === "stateless") {
           context = {

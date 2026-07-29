@@ -1,7 +1,11 @@
 import { pointAdvancesByMinimumAutomaticForwardStep } from "../../core/game/forward-rule";
-import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import { imageToGraphPoint } from "../../core/geometry";
+import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import type { BoundsRect, GraphBounds } from "../../core/types";
+import type { GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
+import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import type { GraphwarPathSearchRuntimePolicy } from "../routing/policy";
 import type { GraphwarStepRouteRuntime } from "../routing/step-route";
 import { createGraphwarStepPathfindingEdgeEvaluator, validateGraphwarStepRoutePath } from "../routing/step-route";
@@ -32,6 +36,10 @@ interface GraphwarOneClickClearDagEdgeRouteBuildContextBase {
   thetaStarScratch?: GraphwarThetaStarScratch;
   /** 与 routeMask 同生命周期的可视图数据；Theta* 模式不需要。 */
   visibilityGraphObstacleData?: GraphwarVisibilityGraphObstacleData;
+  /** Optional coarse WASM route core retained for the edge-session lifetime. */
+  wasmRouteContext?: GraphwarWasmRouteContext;
+  /** Worker-local runtime used to build a short-lived context when an edge has a distinct origin. */
+  wasmRuntime?: GraphwarWasmKernelRuntime;
 }
 
 /** 单边建路的路线选择与 Step runtime 是同一判别联合，不允许出现两种半状态。 */
@@ -65,29 +73,31 @@ export async function buildOneClickClearDagEdgeRoute(
 
   const pathfindingStartedAt = nowMs();
   const route =
-    context.routeMode === "theta-star"
-      ? await buildGraphwarThetaStarPathForMask({
-          bounds: context.bounds,
-          boundsRect: context.boundsRect,
-          boundaryExpansion: context.boundaryExpansion,
-          ...stepRoute?.runtime,
-          routeMask: context.routeMask,
-          routeTolerancePlanePixels: context.routeTolerancePlanePixels,
-          scratch: context.thetaStarScratch,
-          startPoint: job.startPoint,
-          targetPoint: job.targetPoint,
-        })
-      : await buildGraphwarVisibilityGraphPathForMask({
-          bounds: context.bounds,
-          boundsRect: context.boundsRect,
-          boundaryExpansion: context.boundaryExpansion,
-          ...stepRoute?.runtime,
-          routeMask: context.routeMask,
-          routeTolerancePlanePixels: context.routeTolerancePlanePixels,
-          startPoint: job.startPoint,
-          targetPoint: job.targetPoint,
-          visibilityGraphObstacleData: context.visibilityGraphObstacleData,
-        });
+    context.type !== "step-stateful" && (context.wasmRouteContext || context.wasmRuntime)
+      ? findWasmRoute(context.wasmRouteContext, context.wasmRuntime, context, job, stepRoute)
+      : context.routeMode === "theta-star"
+        ? await buildGraphwarThetaStarPathForMask({
+            bounds: context.bounds,
+            boundsRect: context.boundsRect,
+            boundaryExpansion: context.boundaryExpansion,
+            ...stepRoute?.runtime,
+            routeMask: context.routeMask,
+            routeTolerancePlanePixels: context.routeTolerancePlanePixels,
+            scratch: context.thetaStarScratch,
+            startPoint: job.startPoint,
+            targetPoint: job.targetPoint,
+          })
+        : await buildGraphwarVisibilityGraphPathForMask({
+            bounds: context.bounds,
+            boundsRect: context.boundsRect,
+            boundaryExpansion: context.boundaryExpansion,
+            ...stepRoute?.runtime,
+            routeMask: context.routeMask,
+            routeTolerancePlanePixels: context.routeTolerancePlanePixels,
+            startPoint: job.startPoint,
+            targetPoint: job.targetPoint,
+            visibilityGraphObstacleData: context.visibilityGraphObstacleData,
+          });
   const routePathfindingElapsedMs = nowMs() - pathfindingStartedAt;
 
   // 没有至少一段可画路线时不做像素映射；route-map-pixels 只统计实际映射工作。
@@ -162,6 +172,75 @@ export async function buildOneClickClearDagEdgeRoute(
     routeMapPixelsElapsedMs,
     routePathfindingElapsedMs,
   };
+}
+
+/** Maps the coarse WASM route command to this edge's stable pixel endpoints. */
+function findWasmRoute(
+  retainedContext: GraphwarWasmRouteContext | undefined,
+  wasmRuntime: GraphwarWasmKernelRuntime | undefined,
+  context: GraphwarOneClickClearDagEdgeRouteBuildContext,
+  job: GraphwarOneClickClearDagEdgeBuildJob,
+  stepRoute: ReturnType<typeof createOneClickClearStepRouteRuntime> | undefined,
+) {
+  const wasmRouteContext =
+    retainedContext ??
+    (wasmRuntime
+      ? createGraphwarWasmRouteContext(wasmRuntime, {
+          boundaryExpansion: context.boundaryExpansion,
+          bounds: context.bounds,
+          boundsRect: context.boundsRect,
+          friendlySoldierCenters: [],
+          routeOriginPoint: job.startPoint,
+          routeTolerancePlanePixels: 0,
+          simulationTolerancePlanePixels: 0,
+          soldierHitRadiusPixels: 0,
+          sourceMask: context.routeMask,
+        })
+      : undefined);
+  if (!wasmRouteContext) {
+    return undefined;
+  }
+  const shouldDispose = retainedContext === undefined;
+  const start = imagePointToPlaneGridPoint(job.startPoint, context.boundsRect);
+  const target = imagePointToPlaneGridPoint(job.targetPoint, context.boundsRect);
+  const exactStart = imageToGraphPoint(job.startPoint, context.bounds, context.boundsRect);
+  const exactTarget = imageToGraphPoint(job.targetPoint, context.bounds, context.boundsRect);
+  try {
+    if (context.type === "step-stateful" && wasmRouteContext.stepRoute && stepRoute) {
+      const result =
+        context.routeMode === "theta-star"
+          ? wasmRouteContext.stepRoute.findThetaStarPath({
+              exactStart,
+              exactTarget,
+              initialState: {
+                resolvedY: stepRoute.resolvedStartY,
+                routeStateKey: stepRoute.resolvedStartStateKey ?? "0",
+              },
+              start,
+              target,
+            })
+          : wasmRouteContext.stepRoute.findVisibilityGraphPath({
+              exactStart,
+              exactTarget,
+              initialState: {
+                resolvedY: stepRoute.resolvedStartY,
+                routeStateKey: stepRoute.resolvedStartStateKey ?? "0",
+              },
+              start,
+              target,
+            });
+      return result.type === "success" ? [...result.path] : undefined;
+    }
+    const result =
+      context.routeMode === "theta-star"
+        ? wasmRouteContext.findThetaStarPath(start, target)
+        : wasmRouteContext.findVisibilityGraphPath(start, target);
+    return result.type === "success" ? [...result.path] : undefined;
+  } finally {
+    if (shouldDispose) {
+      wasmRouteContext.dispose();
+    }
+  }
 }
 
 /** 把具体 DAG 标签的累计高度适配成两种路由器共用的 Step runtime。 */

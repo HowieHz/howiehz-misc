@@ -1271,6 +1271,53 @@ describe("Graphwar WASM formula Adapter", () => {
         collision: { boundaryExpansion: 0, mask, type: "mask" },
       }),
     });
+    const emptyMaskResult = runGraphwarWasmTrajectory(await createRuntime(), {
+      descriptor,
+      start: { type: "cold" },
+      stop: createTargetStop({
+        collision: {
+          boundaryExpansion: 0,
+          mask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT),
+          type: "mask",
+        },
+      }),
+    });
+    expect(result?.stopReason).toBe(6);
+    expect(result?.obstacle).toEqual({ sampleIndex: 0, type: "hit" });
+    expect(emptyMaskResult?.stopReason).toBe(2);
+    expect(emptyMaskResult?.obstacle).toEqual({ type: "none" });
+    expect(emptyMaskResult?.points.length).toBeGreaterThan(1);
+  });
+
+  it("loads an interior Java-mapped mask cell rather than relying on boundary expansion", async () => {
+    const descriptor = createDescriptor("pchip", "y");
+    const baseline = runGraphwarWasmTrajectory(await createRuntime(), {
+      descriptor,
+      start: { type: "cold" },
+      stop: { type: "natural" },
+    });
+    const launchPoint = baseline?.points[0];
+    expect(launchPoint).toBeDefined();
+    if (!launchPoint) {
+      return;
+    }
+    const pixelX = javaPixelCoordinateForTest(
+      ((launchPoint.x - bounds.minX) / (bounds.maxX - bounds.minX)) * GRAPHWAR_PLANE_LENGTH,
+    );
+    const pixelY = javaPixelCoordinateForTest(
+      ((bounds.maxY - launchPoint.y) / (bounds.maxY - bounds.minY)) * GRAPHWAR_PLANE_HEIGHT,
+    );
+    expect(pixelX).toBeGreaterThan(0);
+    expect(pixelX).toBeLessThan(GRAPHWAR_PLANE_LENGTH);
+    expect(pixelY).toBeGreaterThan(0);
+    expect(pixelY).toBeLessThan(GRAPHWAR_PLANE_HEIGHT);
+    const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    mask[pixelY * GRAPHWAR_PLANE_LENGTH + pixelX] = 1;
+    const result = runGraphwarWasmTrajectory(await createRuntime(), {
+      descriptor,
+      start: { type: "cold" },
+      stop: createTargetStop({ collision: { boundaryExpansion: 0, mask, type: "mask" } }),
+    });
     expect(result?.stopReason).toBe(6);
     expect(result?.obstacle).toEqual({ sampleIndex: 0, type: "hit" });
   });

@@ -26,6 +26,7 @@ import {
   GraphwarWasmAdapterError,
   validateGraphwarWasmEnumValue,
   validateGraphwarWasmFiniteNumber,
+  validateGraphwarWasmMemoryRange,
   validateGraphwarWasmProtectionBits,
   validateGraphwarWasmU32,
   writeGraphwarWasmBytes,
@@ -34,6 +35,7 @@ import {
   type GraphwarWasmArenaMemorySource,
   type GraphwarWasmMemorySlice,
 } from "./abi";
+import { GraphwarWasmKernelRuntime } from "./runtime";
 import {
   getGraphwarWasmFormulaAlgorithmTag,
   getGraphwarWasmFormulaEquationTag,
@@ -45,6 +47,13 @@ import { createGraphwarWasmTrajectoryPhysicalStateFromSamplingState } from "./tr
 
 const STEP_GLITCH_SEGMENT_RECORD_LENGTH = 10;
 const ALLOWED_SIGN_PROTECTION_BITS = 0b1_1111;
+const STEP_GLITCH_COMMAND_CREATE_CONTEXT = 11;
+const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
+const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
+const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
+const STEP_GLITCH_CONTEXT_FLAG_MIRRORED = 1;
+const STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH = 156;
+const STEP_GLITCH_PLANE_CELL_COUNT = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -194,6 +203,17 @@ export type GraphwarWasmStepGlitchCommandPackResult =
   | { input: GraphwarWasmPackedStepGlitchCommandInput; status: "ready" };
 
 export type GraphwarWasmStepGlitchBusinessStatus = "hit" | "invalid-input" | "no-path" | "unsupported";
+
+/** 8B1 geometry test seam retains one raw context without exposing a geometry-only production path. */
+export interface GraphwarWasmStepGlitchGeometryTestContext {
+  copyFarthestFreeX: () => Int16Array;
+  dispose: () => void;
+  isMirrored: boolean;
+}
+
+export type GraphwarWasmStepGlitchGeometryContextCreateResult =
+  | { status: "invalid-input" | "unsupported" }
+  | { context: GraphwarWasmStepGlitchGeometryTestContext; status: "ready" };
 
 /** Optional final replay snapshot remains an explicit result branch, never a detached cache id. */
 export type GraphwarWasmStepGlitchFinalValidationEvidence =
@@ -346,6 +366,197 @@ export function packGraphwarWasmStepGlitchContextInput(
     },
     status: "ready",
   };
+}
+
+/** Creates the retained 8B1 mask-index context below one Adapter-owned arena mark. */
+export function createGraphwarWasmStepGlitchGeometryTestContext(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmStepGlitchContextInput,
+): GraphwarWasmStepGlitchGeometryContextCreateResult {
+  const contextMark = runtime.markArena();
+  let isDisposed = false;
+  try {
+    const packedResult = packGraphwarWasmStepGlitchContextInput(runtime, input, runtime.arenaBase);
+    if (packedResult.status !== "ready") {
+      runtime.resetArena(contextMark);
+      return packedResult;
+    }
+    const packed = packedResult.input;
+    const prefixEvidenceDescriptor = writePrefixEvidenceDescriptor(runtime, packed.prefixEvidence);
+    const inputPointer = runtime.reserveArena(STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH, 4);
+    const inputView = new DataView(runtime.buffer, inputPointer, STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH);
+    inputView.setUint32(0, packed.values.pointer, true);
+    inputView.setUint32(4, packed.values.length, true);
+    inputView.setUint32(8, packed.formulaSettings.values.pointer, true);
+    inputView.setUint32(12, packed.formulaSettings.values.length, true);
+    inputView.setUint32(16, packed.simulationMask.pointer, true);
+    inputView.setUint32(20, packed.simulationMask.length, true);
+    inputView.setUint32(24, packed.sourcePath.x.pointer, true);
+    inputView.setUint32(28, packed.sourcePath.y.pointer, true);
+    inputView.setUint32(32, packed.sourcePath.length, true);
+    inputView.setUint32(36, packed.requiredTargetRecords.pointer, true);
+    inputView.setUint32(40, packed.requiredTargetRecords.length, true);
+    inputView.setUint32(44, prefixEvidenceDescriptor.pointer, true);
+    inputView.setUint32(48, prefixEvidenceDescriptor.length, true);
+
+    const contextPointer = runtime.runRouteTask(
+      STEP_GLITCH_COMMAND_CREATE_CONTEXT,
+      inputPointer,
+      STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH,
+    );
+    const contextRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: contextPointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_CONTEXT_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const contextView = new DataView(contextRange.buffer, contextRange.byteOffset, contextRange.byteLength);
+    const flags = contextView.getUint32(4, true);
+    const isMirrored = (flags & STEP_GLITCH_CONTEXT_FLAG_MIRRORED) !== 0;
+    if (
+      contextView.getUint32(0, true) !== STEP_GLITCH_CONTEXT_MAGIC ||
+      (flags & ~STEP_GLITCH_CONTEXT_FLAG_MIRRORED) !== 0 ||
+      isMirrored !== input.bounds.minX > input.bounds.maxX ||
+      contextView.getUint32(8, true) !== packed.values.pointer ||
+      contextView.getUint32(12, true) !== packed.values.length ||
+      contextView.getUint32(16, true) !== packed.formulaSettings.values.pointer ||
+      contextView.getUint32(20, true) !== packed.formulaSettings.values.length ||
+      contextView.getUint32(24, true) !== packed.simulationMask.pointer ||
+      contextView.getUint32(28, true) !== packed.simulationMask.length ||
+      contextView.getUint32(32, true) !== packed.sourcePath.x.pointer ||
+      contextView.getUint32(36, true) !== packed.sourcePath.y.pointer ||
+      contextView.getUint32(40, true) !== packed.sourcePath.length ||
+      contextView.getUint32(44, true) !== packed.requiredTargetRecords.pointer ||
+      contextView.getUint32(48, true) !== packed.requiredTargetRecords.length ||
+      contextView.getUint32(52, true) !== prefixEvidenceDescriptor.pointer ||
+      contextView.getUint32(56, true) !== prefixEvidenceDescriptor.length
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Graphwar WASM Step-glitch geometry context mutated its retained identity",
+        "output",
+      );
+    }
+    const farthestFreeXPointer = contextView.getUint32(60, true);
+    const farthestFreeXLength = contextView.getUint32(64, true);
+    if (farthestFreeXLength !== STEP_GLITCH_PLANE_CELL_COUNT) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step-glitch geometry context returned an incomplete farthest-free index",
+        "output",
+      );
+    }
+    const assertActive = () => {
+      if (isDisposed) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch geometry context has been disposed",
+          "input",
+        );
+      }
+    };
+    return {
+      context: {
+        copyFarthestFreeX() {
+          assertActive();
+          const range = validateGraphwarWasmMemoryRange(
+            runtime,
+            { length: farthestFreeXLength, pointer: farthestFreeXPointer },
+            { alignment: 2, elementByteLength: 2, minimumPointer: runtime.arenaBase },
+          );
+          const values = new Int16Array(range.buffer, range.byteOffset, farthestFreeXLength).slice();
+          for (const value of values) {
+            if (value < -1 || value >= GRAPHWAR_PLANE_LENGTH) {
+              throw new GraphwarWasmAdapterError(
+                "invalid-session-state",
+                "Graphwar WASM Step-glitch farthest-free index contains an invalid column",
+                "output",
+              );
+            }
+          }
+          return values;
+        },
+        dispose() {
+          assertActive();
+          runtime.resetArena(contextMark);
+          isDisposed = true;
+        },
+        isMirrored,
+      },
+      status: "ready",
+    };
+  } catch (error) {
+    runtime.resetArenaAfterFault(contextMark);
+    throw error;
+  }
+}
+
+/** Serializes every nested 8B0 evidence range once so later raw commands never need TS-side splicing. */
+function writePrefixEvidenceDescriptor(
+  runtime: GraphwarWasmKernelRuntime,
+  evidence: GraphwarWasmPackedStepGlitchPrefixEvidence,
+): GraphwarWasmMemorySlice {
+  const pointer = runtime.reserveArena(STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH, 4);
+  const view = new DataView(runtime.buffer, pointer, STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH);
+  if (evidence.type === "none") {
+    new Uint8Array(runtime.buffer, pointer, STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH).fill(0);
+    return { length: STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH, pointer };
+  }
+
+  const prefix = evidence.formulaEvidence.prefix;
+  const boundary = evidence.formulaEvidence.boundaryState;
+  const maskTag =
+    prefix.settings.mask.type === "none"
+      ? 0
+      : prefix.settings.mask.type === "context-mask"
+        ? 1
+        : prefix.settings.mask.type === "evidence-mask"
+          ? 2
+          : 3;
+  const fields = [
+    1,
+    evidence.identityMask.pointer,
+    evidence.identityMask.length,
+    evidence.values.pointer,
+    evidence.values.length,
+    boundary.type === "state" ? 1 : 0,
+    boundary.type === "state" ? boundary.formulaMaterialsIdentity.pointer : 0,
+    boundary.type === "state" ? boundary.formulaMaterialsIdentity.length : 0,
+    boundary.type === "state" ? boundary.state.pointer : 0,
+    boundary.type === "state" ? boundary.state.length : 0,
+    prefix.initialFormulaPoints.x.pointer,
+    prefix.initialFormulaPoints.y.pointer,
+    prefix.initialFormulaPoints.length,
+    prefix.metadata.pointer,
+    prefix.metadata.length,
+    prefix.points.x.pointer,
+    prefix.points.y.pointer,
+    prefix.points.length,
+    prefix.refinedFormulaPoints.x.pointer,
+    prefix.refinedFormulaPoints.y.pointer,
+    prefix.refinedFormulaPoints.length,
+    prefix.segmentStartPoints.points.x.pointer,
+    prefix.segmentStartPoints.points.y.pointer,
+    prefix.segmentStartPoints.points.length,
+    prefix.segmentStartPoints.presence.pointer,
+    prefix.segmentStartPoints.presence.length,
+    maskTag,
+    prefix.settings.values.pointer,
+    prefix.settings.values.length,
+    prefix.signProtection.pointer,
+    prefix.signProtection.length,
+    prefix.stepGlitchRequirements.pointer,
+    prefix.stepGlitchRequirements.length,
+    prefix.stepGlitchSegments.pointer,
+    prefix.stepGlitchSegments.length,
+    prefix.stepSegmentDeltaYs.values.pointer,
+    prefix.stepSegmentDeltaYs.values.length,
+    prefix.stepSegmentDeltaYs.presence.pointer,
+    prefix.stepSegmentDeltaYs.presence.length,
+  ];
+  for (let index = 0; index < fields.length; index += 1) {
+    view.setUint32(index * 4, fields[index], true);
+  }
+  return { length: STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH, pointer };
 }
 
 /** Packs scan or replay work only after its point/target ranges satisfy the scanner's business contract. */

@@ -324,13 +324,13 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
     let farthest = -1;
     for (let searchX = GRAPHWAR_PLANE_LENGTH - 1; searchX >= 0; searchX -= 1) {
       const planeX = forwardColumnToPlaneColumn(searchX, isMirrored);
-      const blocked =
+      const isBlocked =
         planeX < boundaryExpansion ||
         planeX >= GRAPHWAR_PLANE_LENGTH - boundaryExpansion ||
         row < boundaryExpansion ||
         row >= GRAPHWAR_PLANE_HEIGHT - boundaryExpansion ||
         Boolean(options.simulationMask[row * GRAPHWAR_PLANE_LENGTH + planeX]);
-      if (blocked) {
+      if (isBlocked) {
         farthest = -1;
         continue;
       }

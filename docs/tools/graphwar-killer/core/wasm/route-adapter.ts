@@ -50,11 +50,12 @@ const routeCommand = {
   stepThetaStar: 9,
   stepVisibilityGraph: 10,
 } as const;
-const routeCreateInputByteLength = 48;
+const routeCreateInputByteLength = 52;
 const routeContextByteLength = 264;
 const routeContextMagic = 0x524f_5554;
 const routeContextMirroredFlag = 1;
 const routeContextStepModelFlag = 2;
+const routeContextPreprocessedRouteMaskFlag = 4;
 const routeQueryResultByteLength = 8;
 const routeQueryResultMagic = 0x5152_4f55;
 const routePointInputByteLength = 24;
@@ -176,8 +177,8 @@ export type GraphwarWasmRouteSearchResult =
 /**
  * Creates one long-lived route context below an arena mark.
  *
- * The base mask, friendly circles, canonical route policy, derived masks, summed area, component labels, and boundary
- * edges remain atomically owned until `dispose()` restores the exact mark.
+ * The source-mask identity, canonical route policy, retained masks, summed area, component labels, and boundary edges
+ * remain atomically owned until `dispose()` restores the exact mark.
  */
 export function createGraphwarWasmRouteContext(
   runtime: GraphwarWasmKernelRuntime,
@@ -201,6 +202,7 @@ export function createGraphwarWasmRouteContext(
     inputView.setUint32(36, packed.thetaStarLookaheadColumnOffsets.pointer, true);
     inputView.setUint32(40, packed.thetaStarLookaheadColumnOffsets.length, true);
     inputView.setUint32(44, packed.stepRouteModel?.pointer ?? 0, true);
+    inputView.setUint32(48, input.sourceMaskType === "route" ? 1 : 0, true);
 
     const contextPointer = runtime.runRouteTask(routeCommand.createContext, inputPointer, routeCreateInputByteLength);
     const contextRange = validateGraphwarWasmMemoryRange(
@@ -217,7 +219,10 @@ export function createGraphwarWasmRouteContext(
       );
     }
     const flags = contextView.getUint32(4, true);
-    if ((flags & ~(routeContextMirroredFlag | routeContextStepModelFlag)) !== 0) {
+    if (
+      (flags & ~(routeContextMirroredFlag | routeContextStepModelFlag | routeContextPreprocessedRouteMaskFlag)) !==
+      0
+    ) {
       throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar WASM route context flags are invalid", "output");
     }
     const isMirrored = (flags & routeContextMirroredFlag) !== 0;
@@ -225,6 +230,13 @@ export function createGraphwarWasmRouteContext(
       throw new GraphwarWasmAdapterError(
         "invalid-session-identity",
         "Graphwar WASM route context mirror identity does not match its bounds",
+        "output",
+      );
+    }
+    if (((flags & routeContextPreprocessedRouteMaskFlag) !== 0) !== (input.sourceMaskType === "route")) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Graphwar WASM route context source-mask identity does not match its input",
         "output",
       );
     }
@@ -1868,7 +1880,7 @@ function validateRouteContextIdentity(
     [104, input.routeOriginPoint.x],
     [112, input.routeOriginPoint.y],
     [120, input.routeTolerancePlanePixels],
-    [128, input.simulationTolerancePlanePixels],
+    [128, input.sourceMaskType === "base" ? input.simulationTolerancePlanePixels : 0],
   ];
   if (
     expectedValues.some(([offset, expected]) => !Object.is(contextView.getFloat64(offset, true), expected)) ||

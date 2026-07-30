@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GraphwarWasmFault } from "../../core/algorithm-backend";
 import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imagePointToPlaneGridPoint } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
@@ -22,7 +23,9 @@ import { createGraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 import {
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearCandidate,
+  type GraphwarOneClickClearDagEdgeBuildJob,
   type GraphwarOneClickClearDagEdgeBuildRequest,
+  type GraphwarOneClickClearDagEdgeRoute,
   type GraphwarOneClickClearIncumbent,
 } from "./search";
 
@@ -179,10 +182,7 @@ describe("One-click clear optimization", () => {
       buildDagEdges: async (request) => {
         events.push(`batch:${request.jobs.length}`);
         return {
-          routes: request.jobs.map((job) => ({
-            jobId: job.id,
-            route: [job.startPoint, job.targetPoint],
-          })),
+          routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
           timings: [],
         };
       },
@@ -299,11 +299,13 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({
-            jobId: job.id,
-            route: [job.startPoint, job.targetPoint],
-            ...(algorithm === "step" ? { stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 } } : {}),
-          })),
+          routes: request.jobs.map((job) =>
+            createSuccessfulDagEdgeRoute(
+              job,
+              [job.startPoint, job.targetPoint],
+              algorithm === "step" ? { resolvedStateKey: "0", resolvedY: 0 } : undefined,
+            ),
+          ),
           timings: [],
         }),
         candidates: [candidate],
@@ -378,7 +380,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates,
@@ -447,7 +449,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates: [candidate],
@@ -504,7 +506,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates,
@@ -556,7 +558,7 @@ describe("One-click clear optimization", () => {
       bounds: mutableBounds,
       boundsRect: mutableBoundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates: [candidate],
@@ -604,7 +606,7 @@ describe("One-click clear optimization", () => {
       buildDagEdges: async (request) => {
         leakedRequest = request;
         return {
-          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
           timings: [],
         };
       },
@@ -655,12 +657,11 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          ...(job.targetPoint.x === first.x && job.targetPoint.y === first.y
-            ? { route: [job.startPoint, job.targetPoint] }
-            : {}),
-        })),
+        routes: request.jobs.map((job) =>
+          job.targetPoint.x === first.x && job.targetPoint.y === first.y
+            ? createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])
+            : { jobId: job.id, type: "unreachable" as const },
+        ),
         timings: [],
       }),
       candidates: [
@@ -709,13 +710,14 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          route:
+        routes: request.jobs.map((job) =>
+          createSuccessfulDagEdgeRoute(
+            job,
             job.targetPoint.x === first.x
               ? [job.startPoint, job.targetPoint]
               : [job.startPoint, backward, job.targetPoint],
-        })),
+          ),
+        ),
         timings: [],
       }),
       candidates,
@@ -753,11 +755,12 @@ describe("One-click clear optimization", () => {
       buildDagEdges: async (request) => {
         buildCount += 1;
         return {
-          routes: request.jobs.map((job) => ({
-            jobId: job.id,
-            route: [job.startPoint, job.targetPoint],
-            stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 },
-          })),
+          routes: request.jobs.map((job) =>
+            createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint], {
+              resolvedStateKey: "0",
+              resolvedY: 0,
+            }),
+          ),
           timings: [],
         };
       },
@@ -802,10 +805,9 @@ describe("One-click clear optimization", () => {
       buildDagEdges: async (request) => {
         buildCount += 1;
         return {
-          routes: request.jobs.map((job) => ({
-            jobId: job.id,
-            route: [job.startPoint, backward, job.targetPoint],
-          })),
+          routes: request.jobs.map((job) =>
+            createSuccessfulDagEdgeRoute(job, [job.startPoint, backward, job.targetPoint]),
+          ),
           timings: [],
         };
       },
@@ -957,13 +959,13 @@ describe("One-click clear optimization", () => {
           const startX = imageToGraphPoint(job.startPoint, bounds, boundsRect).x;
           const targetX = imageToGraphPoint(job.targetPoint, bounds, boundsRect).x;
           if ((startX === -20 && targetX === -15) || (startX === -15 && targetX === -10)) {
-            return [{ jobId: job.id, route: [job.startPoint, job.targetPoint] }];
+            return [createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])];
           }
           if (startX === -10 && targetX === -5) {
-            return [{ jobId: job.id, route: [job.startPoint, backward, job.targetPoint] }];
+            return [createSuccessfulDagEdgeRoute(job, [job.startPoint, backward, job.targetPoint])];
           }
           if (startX === -10 && targetX === 0) {
-            return [{ jobId: job.id, route: [job.startPoint, forward, job.targetPoint] }];
+            return [createSuccessfulDagEdgeRoute(job, [job.startPoint, forward, job.targetPoint])];
           }
           return [];
         }),
@@ -1012,11 +1014,12 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({
-            jobId: job.id,
-            route: [job.startPoint, job.targetPoint],
-            stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 },
-          })),
+          routes: request.jobs.map((job) =>
+            createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint], {
+              resolvedStateKey: "0",
+              resolvedY: 0,
+            }),
+          ),
           timings: [],
         }),
         candidates: [candidate],
@@ -1055,7 +1058,7 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
           timings: [],
         }),
         candidates: [candidate],
@@ -1096,7 +1099,7 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
           timings: [],
         }),
         candidates,
@@ -1151,7 +1154,7 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
           timings: [],
         }),
         candidates: [candidate],
@@ -1186,10 +1189,9 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({
-            jobId: job.id,
-            route: [job.startPoint, middle, job.targetPoint],
-          })),
+          routes: request.jobs.map((job) =>
+            createSuccessfulDagEdgeRoute(job, [job.startPoint, middle, job.targetPoint]),
+          ),
           timings: [],
         }),
         candidates: [candidate],
@@ -1229,7 +1231,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id })),
+        routes: request.jobs.map((job) => ({ jobId: job.id, type: "unreachable" as const })),
         timings: [],
       }),
       candidates: [candidate],
@@ -1247,6 +1249,31 @@ describe("One-click clear optimization", () => {
     expect(result).toMatchObject({ type: "failure" });
   });
 
+  it("preserves typed WASM faults while ordinary DAG worker failures remain business results", async () => {
+    const start = toImagePoint(-20, 0);
+    const target = toImagePoint(-10, 0);
+    const candidates = [{ isEnemy: true, hitCenter: target, hitRadius: 4, id: "target" }];
+    const baseOptions = createDagCaptureOptions(start, candidates, []);
+    const fault = new GraphwarWasmFault("abi", "injected DAG route fault");
+
+    await expect(
+      buildGraphwarOneClickClearPath({
+        ...baseOptions,
+        buildDagEdges: async () => {
+          throw fault;
+        },
+      }),
+    ).rejects.toBe(fault);
+
+    const ordinaryFailure = await buildGraphwarOneClickClearPath({
+      ...baseOptions,
+      buildDagEdges: async () => {
+        throw new Error("injected Worker failure");
+      },
+    });
+    expect(ordinaryFailure).toMatchObject({ reason: "pathfinding-worker-failed", type: "failure" });
+  });
+
   it.each([
     { resolvedStateKey: "0", resolvedY: Number.NaN },
     { resolvedStateKey: "invalid", resolvedY: 0 },
@@ -1260,11 +1287,9 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          route: [job.startPoint, job.targetPoint],
-          stepRouteEndState,
-        })),
+        routes: request.jobs.map((job) =>
+          createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint], stepRouteEndState),
+        ),
         timings: [],
       }),
       candidates: [candidate],
@@ -1324,7 +1349,7 @@ describe("One-click clear optimization", () => {
         bounds,
         boundsRect,
         buildDagEdges: async (request) => ({
-          routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+          routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
           timings: [],
         }),
         candidates: [candidate],
@@ -1362,7 +1387,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates,
@@ -1404,7 +1429,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates,
@@ -1441,10 +1466,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          route: [job.startPoint, middle, job.targetPoint],
-        })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, middle, job.targetPoint])),
         timings: [],
       }),
       candidates: [candidate],
@@ -1509,10 +1531,7 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          route: [job.startPoint, middle, job.targetPoint],
-        })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, middle, job.targetPoint])),
         timings: [],
       }),
       candidates: [candidate],
@@ -1573,11 +1592,12 @@ describe("One-click clear optimization", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          route: [job.startPoint, middle, job.targetPoint],
-          stepRouteEndState: { resolvedStateKey: "40000", resolvedY: 4 },
-        })),
+        routes: request.jobs.map((job) =>
+          createSuccessfulDagEdgeRoute(job, [job.startPoint, middle, job.targetPoint], {
+            resolvedStateKey: "40000",
+            resolvedY: 4,
+          }),
+        ),
         timings: [],
       }),
       candidates: [
@@ -1644,4 +1664,20 @@ function createDagCaptureOptions(
 
 function toImagePoint(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+/** Test builders preserve the same atomic route/state relationship as the Worker protocol. */
+function createSuccessfulDagEdgeRoute(
+  job: GraphwarOneClickClearDagEdgeBuildJob,
+  route: PixelPoint[],
+  stepRouteEndState?: { resolvedStateKey: string; resolvedY: number },
+): GraphwarOneClickClearDagEdgeRoute {
+  return job.type === "step-stateful"
+    ? {
+        jobId: job.id,
+        route,
+        stepRouteEndState: stepRouteEndState ?? job.stepRouteStartState,
+        type: job.type,
+      }
+    : { jobId: job.id, route, type: job.type };
 }

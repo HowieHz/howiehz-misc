@@ -28,6 +28,7 @@ import { createGraphPoint, createPixelPoint } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { createGraphwarWasmRouteContext } from "./route-adapter";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
+import type { GraphwarWasmRouteContextInput } from "./task-adapter";
 
 const planeCellCount = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const boundsRect = { height: 450, width: 770, x: 0, y: 0 };
@@ -68,6 +69,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -137,6 +139,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
       stepRouteModel: {
         ...model,
@@ -215,6 +218,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: 0,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask: new Uint8Array(planeCellCount),
         stepRouteModel: {
           ...model,
@@ -302,6 +306,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -428,6 +433,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: routeTolerance,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask,
         stepRouteModel: {
           ...model,
@@ -543,6 +549,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -713,6 +720,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -753,6 +761,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -791,6 +800,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -856,6 +866,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
       stepRouteModel: {
         ...model,
@@ -903,6 +914,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: routeTolerance,
       simulationTolerancePlanePixels: simulationTolerance,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
     });
 
@@ -911,6 +923,46 @@ describe("Graphwar WASM route context", () => {
     expect(context.routeObstacleCount).toBe(countObstacles(expectedRouteMask));
     expect(context.simulationObstacleCount).toBe(countObstacles(expectedSimulationMask));
     context.dispose();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("keeps nonzero visibility contour tolerance for a preprocessed route mask", async () => {
+    const runtime = await createRuntime();
+    const sourceMask = createDeterministicThetaMask(4);
+    const routeTolerancePlanePixels = 4;
+    const routeMask = dilateObstacleMask(sourceMask, routeTolerancePlanePixels);
+    const common = {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels,
+    } as const;
+    const start = { x: 100, y: 225 };
+    const target = { x: 600, y: 225 };
+    const baseContext = createGraphwarWasmRouteContext(runtime, {
+      ...common,
+      friendlySoldierCenters: [],
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 0,
+      sourceMask,
+      sourceMaskType: "base",
+    });
+    const expected = baseContext.findVisibilityGraphPath(start, target, true);
+    const expectedComponentCount = baseContext.routeComponentCount;
+    const expectedBoundaryEdgeCount = baseContext.routeBoundaryEdgeCount;
+    baseContext.dispose();
+
+    const preprocessedContext = createGraphwarWasmRouteContext(runtime, {
+      ...common,
+      sourceMask: routeMask,
+      sourceMaskType: "route",
+    });
+    expect(preprocessedContext.routeMask).toEqual(routeMask);
+    expect(preprocessedContext.routeComponentCount).toBe(expectedComponentCount);
+    expect(preprocessedContext.routeBoundaryEdgeCount).toBe(expectedBoundaryEdgeCount);
+    expect(preprocessedContext.findVisibilityGraphPath(start, target, true)).toEqual(expected);
+    preprocessedContext.dispose();
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -976,6 +1028,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: routeTolerance,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
     });
     const start = { x: 100, y: 225 };
@@ -1070,6 +1123,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: routeTolerance,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask,
       });
       const start = { x: 100, y: 225 };
@@ -1119,6 +1173,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: routeTolerance,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask: createDeterministicThetaMask(fixture),
       });
       const start = { x: 100, y: 225 };
@@ -1158,8 +1213,9 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 1.5,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: createDeterministicThetaMask(4),
-    };
+    } satisfies GraphwarWasmRouteContextInput;
     const context = createGraphwarWasmRouteContext(runtime, input);
     const point = { x: 100, y: 225 };
     const expectedPreviews: unknown[] = [];
@@ -1216,8 +1272,9 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 1.5,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
-    };
+    } satisfies GraphwarWasmRouteContextInput;
     const start = { x: 100, y: 225 };
     const target = { x: 600, y: 225 };
     const context = createGraphwarWasmRouteContext(runtime, input);
@@ -1264,6 +1321,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
     });
     const start = { x: 100, y: 225 };
@@ -1297,6 +1355,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
     });
     const point = { x: 100, y: 225 };
@@ -1342,6 +1401,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: 0,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask: new Uint8Array(planeCellCount),
       }),
     ).toThrow();
@@ -1376,6 +1436,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: 0,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask: new Uint8Array(planeCellCount),
       }),
     ).toThrow();
@@ -1397,6 +1458,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: createDeterministicThetaMask(fixture),
     });
     const start = { x: 100, y: 225 };
@@ -1478,6 +1540,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
     });
     const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
@@ -1509,6 +1572,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask: new Uint8Array(planeCellCount),
     });
     const point = { x: 100, y: 225 };
@@ -1558,6 +1622,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: input.soldierHitRadiusPixels,
+      sourceMaskType: "base",
       sourceMask,
     });
 
@@ -1580,6 +1645,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: Number.MAX_VALUE,
       simulationTolerancePlanePixels: -Number.MAX_VALUE,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
     });
 
@@ -1605,6 +1671,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
     });
 
@@ -1660,6 +1727,7 @@ describe("Graphwar WASM route context", () => {
       routeTolerancePlanePixels: 0,
       simulationTolerancePlanePixels: 0,
       soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
       sourceMask,
     });
 
@@ -1775,6 +1843,7 @@ describe("Graphwar WASM route context", () => {
         routeTolerancePlanePixels: 0,
         simulationTolerancePlanePixels: 0,
         soldierHitRadiusPixels: 7,
+        sourceMaskType: "base",
         sourceMask,
       }),
     ).toThrow(expectedMessage);

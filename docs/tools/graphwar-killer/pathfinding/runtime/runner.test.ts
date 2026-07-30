@@ -163,7 +163,20 @@ describe("Graphwar pathfinding runner incumbents", () => {
 
   it.each([
     { label: "missing", routes: [{ jobId: 1 }] },
+    { label: "duplicate", routes: [{ jobId: 1 }, { jobId: 1 }] },
     { label: "unexpected", routes: [{ jobId: 1 }, { jobId: 2 }, { jobId: 3 }] },
+    {
+      label: "mismatched route policy",
+      routes: [
+        {
+          jobId: 1,
+          route: [createPixelPoint(100, 225), createPixelPoint(150, 225)],
+          stepRouteEndState: { resolvedStateKey: "0", resolvedY: 0 },
+          type: "step-stateful",
+        },
+        { jobId: 2, type: "unreachable" },
+      ],
+    },
   ])("rejects a DAG success response with $label job ids", async ({ routes }) => {
     const runner = createGraphwarPathfindingRunner();
     const resultPromise = runner.buildOneClickClearDagEdges(createDagEdgeInput());
@@ -349,8 +362,22 @@ function createDagEdgeInput(): GraphwarOneClickClearDagEdgeBuildRequest {
     bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     jobs: [
-      { from: -1, id: 1, startPoint: createPixelPoint(100, 225), targetPoint: createPixelPoint(150, 225), to: 0 },
-      { from: 0, id: 2, startPoint: createPixelPoint(150, 225), targetPoint: createPixelPoint(200, 225), to: 1 },
+      {
+        from: -1,
+        id: 1,
+        startPoint: createPixelPoint(100, 225),
+        targetPoint: createPixelPoint(150, 225),
+        to: 0,
+        type: "stateless",
+      },
+      {
+        from: 0,
+        id: 2,
+        startPoint: createPixelPoint(150, 225),
+        targetPoint: createPixelPoint(200, 225),
+        to: 1,
+        type: "stateless",
+      },
     ],
     routeMask: new Uint8Array(770 * 450),
     routeMode: "visibility-graph",

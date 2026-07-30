@@ -13,6 +13,7 @@ import { createGraphwarBackendAttemptGate } from "../../core/backend-attempt";
 import { clonePixelPoint } from "../../core/types";
 import { createGraphwarWorkerBackendSlot } from "../../core/worker-backend";
 import type {
+  GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildResult,
 } from "../one-click-clear/search";
@@ -77,7 +78,7 @@ interface PendingPathfindingWorkerTaskBase {
 type PendingPathfindingWorkerTask = PendingPathfindingWorkerTaskBase &
   (
     | {
-        expectedDagJobIds: ReadonlySet<number>;
+        expectedDagJobTypes: ReadonlyMap<number, GraphwarOneClickClearDagEdgeBuildJob["type"]>;
         taskType: "build-one-click-clear-dag-edges";
       }
     | {
@@ -316,7 +317,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
       const taskIdentity =
         request.task.type === "build-one-click-clear-dag-edges"
           ? {
-              expectedDagJobIds: new Set(request.task.input.jobs.map((job) => job.id)),
+              expectedDagJobTypes: new Map(request.task.input.jobs.map((job) => [job.id, job.type])),
               taskType: request.task.type,
             }
           : { taskType: request.task.type };
@@ -432,11 +433,18 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
       return;
     }
     if (pendingTask.taskType === "build-one-click-clear-dag-edges") {
-      const expectedDagJobIds = pendingTask.expectedDagJobIds;
+      if (response.taskType !== "build-one-click-clear-dag-edges") {
+        rejectPendingProtocolResponse();
+        return;
+      }
+      const expectedDagJobTypes = pendingTask.expectedDagJobTypes;
+      const returnedDagJobIds = new Set(response.result.routes.map((route) => route.jobId));
       if (
-        response.taskType !== "build-one-click-clear-dag-edges" ||
-        response.result.routes.length !== expectedDagJobIds.size ||
-        !response.result.routes.every((route) => expectedDagJobIds.has(route.jobId))
+        returnedDagJobIds.size !== expectedDagJobTypes.size ||
+        !response.result.routes.every((route) => {
+          const expectedType = expectedDagJobTypes.get(route.jobId);
+          return expectedType !== undefined && (route.type === "unreachable" || route.type === expectedType);
+        })
       ) {
         rejectPendingProtocolResponse();
         return;
@@ -663,21 +671,29 @@ function cloneGraphwarOneClickClearDagEdgeBuildRequest(
     boundaryExpansion: input.boundaryExpansion,
     bounds: cloneGraphBounds(input.bounds),
     boundsRect: cloneBoundsRect(input.boundsRect),
-    jobs: input.jobs.map((job) => ({
-      from: job.from,
-      id: job.id,
-      startPoint: clonePixelPoint(job.startPoint),
-      ...(job.stepRouteStartState
+    jobs: input.jobs.map((job) =>
+      job.type === "step-stateful"
         ? {
+            from: job.from,
+            id: job.id,
+            startPoint: clonePixelPoint(job.startPoint),
             stepRouteStartState: {
               resolvedStateKey: job.stepRouteStartState.resolvedStateKey,
               resolvedY: job.stepRouteStartState.resolvedY,
             },
+            targetPoint: clonePixelPoint(job.targetPoint),
+            to: job.to,
+            type: job.type,
           }
-        : {}),
-      targetPoint: clonePixelPoint(job.targetPoint),
-      to: job.to,
-    })),
+        : {
+            from: job.from,
+            id: job.id,
+            startPoint: clonePixelPoint(job.startPoint),
+            targetPoint: clonePixelPoint(job.targetPoint),
+            to: job.to,
+            type: job.type,
+          },
+    ),
     routeMask: cloneUint8Array(input.routeMask),
     routeOriginPoint: clonePixelPoint(input.routeOriginPoint),
     routeMode: input.routeMode,

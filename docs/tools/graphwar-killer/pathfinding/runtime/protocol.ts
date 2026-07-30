@@ -9,12 +9,12 @@ import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
+  GraphwarOneClickClearDagEdgeRoute,
   GraphwarOneClickClearDebugTiming,
   GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
 } from "../one-click-clear/search";
-import type { GraphwarOneClickClearStepRouteState } from "../one-click-clear/step-route-state";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarStepRouteRuntime } from "../routing/step-route";
 import type { GraphwarPathfindingPreview, GraphwarVisibilityGraphObstacleData } from "../routing/visibility-graph";
@@ -208,6 +208,8 @@ interface GraphwarOneClickClearEdgeWorkerInitBase {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   boundaryExpansion: number;
+  /** 与 Step model 身份一起保留的原始路线起点。 */
+  routeOriginPoint: PixelPoint;
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
 }
@@ -216,11 +218,13 @@ interface GraphwarOneClickClearEdgeWorkerInitBase {
 export type GraphwarOneClickClearEdgeWorkerRouteInit =
   | {
       routeMode: "visibility-graph";
-      visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
+      routePreprocessing:
+        | { type: "wasm" }
+        | { type: "typescript"; visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData };
     }
   | {
       routeMode: Exclude<GraphwarPathfindingRouteMode, "visibility-graph">;
-      visibilityGraphObstacleData?: never;
+      routePreprocessing?: never;
     };
 
 type GraphwarOneClickClearEdgeWorkerFormulaInit =
@@ -254,19 +258,13 @@ export type GraphwarOneClickClearEdgeWorkerRequest =
       type: "job";
     };
 
-/** Edge Worker 完成一个 DAG 边 job 后返回的原子结果。 */
-export interface GraphwarOneClickClearEdgeWorkerJobResult {
-  /** 已完成的 DAG job id。 */
-  jobId: number;
+/** Edge Worker 的路径证据与计时来自同一次 DAG 边 job。 */
+export type GraphwarOneClickClearEdgeWorkerJobResult = GraphwarOneClickClearDagEdgeRoute & {
   /** 几何寻路耗时，单位毫秒。 */
   routePathfindingElapsedMs: number;
   /** 平面路径映射到截图像素的耗时，单位毫秒。 */
   routeMapPixelsElapsedMs: number;
-  /** 已映射为截图像素并替换精确首尾点的路线。 */
-  route?: PixelPoint[];
-  /** Step 路线的原子终点状态；ABS 结果省略。 */
-  stepRouteEndState?: GraphwarOneClickClearStepRouteState;
-}
+};
 
 export type GraphwarOneClickClearEdgeWorkerResponse =
   | { attempt: GraphwarBackendAttemptIdentity; type: "ready"; workerIndex: number }

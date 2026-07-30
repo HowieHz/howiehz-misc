@@ -1,4 +1,5 @@
 /** 在当前 Graphwar 路径后追加一键清图路线；几何建路点和弹道命中圈分开建模。 */
+import { isGraphwarWasmFault } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
@@ -127,14 +128,12 @@ export interface GraphwarOneClickClearDebugTiming {
   detail?: GraphwarOneClickClearDebugDetail;
 }
 
-/** 一键清图 DAG 边批量建路 job；按生成顺序合并结果，保证 edge id 稳定。 */
-export interface GraphwarOneClickClearDagEdgeBuildJob {
+/** 一键清图 DAG 边批量建路 job 的共享身份；按生成顺序合并结果，保证 edge id 稳定。 */
+interface GraphwarOneClickClearDagEdgeBuildJobBase {
   /** 稳定 job id。 */
   id: number;
   /** 本边起点的具体 DAG node id；START 使用固定虚拟 node id。 */
   from: number;
-  /** Step 本边开始前的原子公式平台状态；stateless route 建路省略。 */
-  stepRouteStartState?: GraphwarOneClickClearStepRouteState;
   /** 本边起点，截图像素坐标。 */
   startPoint: PixelPoint;
   /** 本边几何建路终点，截图像素坐标。 */
@@ -142,6 +141,13 @@ export interface GraphwarOneClickClearDagEdgeBuildJob {
   /** 目标士兵下标。 */
   to: number;
 }
+
+/** 路由策略与 Step 起点状态必须原子同行，避免跨 Worker 静默降为 stateless route。 */
+export type GraphwarOneClickClearDagEdgeBuildJob = GraphwarOneClickClearDagEdgeBuildJobBase &
+  (
+    | { stepRouteStartState?: never; type: "stateless" }
+    | { stepRouteStartState: GraphwarOneClickClearStepRouteState; type: "step-stateful" }
+  );
 
 /** 一键清图 DAG 边批量建路请求。 */
 export interface GraphwarOneClickClearDagEdgeBuildRequest {
@@ -172,21 +178,25 @@ export interface GraphwarOneClickClearDagEdgeBuildRequest {
 
 /** 一键清图 DAG 边批量建路结果。 */
 export interface GraphwarOneClickClearDagEdgeBuildResult {
-  /** 每个 job 的可用路线；route 为空表示该边不可达。 */
+  /** 每个 job 的原子路线结果；`unreachable` 表示该边不可达。 */
   routes: readonly GraphwarOneClickClearDagEdgeRoute[];
   /** 批量 builder 内部测得的调试耗时。 */
   timings: readonly GraphwarOneClickClearDebugTiming[];
 }
 
-/** 一键清图 DAG 边 job 的路线结果。 */
-export interface GraphwarOneClickClearDagEdgeRoute {
+/** 一键清图 DAG 边 job 的共享结果身份。 */
+interface GraphwarOneClickClearDagEdgeRouteBase {
   /** 对应 job id。 */
   jobId: number;
-  /** Step route 逐段解析后的原子终点状态；stateless route 建路不返回该字段。 */
-  stepRouteEndState?: GraphwarOneClickClearStepRouteState;
-  /** 已按截图像素映射且首尾替换为精确控制点的几何路径。 */
-  route?: PixelPoint[];
 }
+
+/** 路径、路由策略与 Step 终点状态来自同一次建边结果，不允许可达半状态。 */
+export type GraphwarOneClickClearDagEdgeRoute = GraphwarOneClickClearDagEdgeRouteBase &
+  (
+    | { route?: never; stepRouteEndState?: never; type: "unreachable" }
+    | { route: PixelPoint[]; stepRouteEndState?: never; type: "stateless" }
+    | { route: PixelPoint[]; stepRouteEndState: GraphwarOneClickClearStepRouteState; type: "step-stateful" }
+  );
 
 /** 已通过本次最终量化公式模拟、可直接交给 Agent 发射的当前最优方案。 */
 export interface GraphwarOneClickClearIncumbent {
@@ -343,15 +353,20 @@ interface OneClickClearDagEdge {
   verticalVariation: number;
 }
 
-/** 目标及公式平台状态共同确定的 DAG 节点。 */
-interface OneClickClearDagNode {
+/** 所有 DAG 节点共享的稳定目标身份。 */
+interface OneClickClearDagNodeBase {
   /** 稳定 node id；边和 DP 都只引用该 id。 */
   id: number;
-  /** Step 到达该目标后的原子公式平台状态；stateless route 节点不需要状态。 */
-  stepRouteState?: GraphwarOneClickClearStepRouteState;
   /** 本节点对应的目标士兵下标。 */
   targetIndex: number;
 }
+
+/** 节点策略与 Step 平台状态原子同行，DAG 后继不再处理缺状态的 Step 节点。 */
+type OneClickClearDagNode = OneClickClearDagNodeBase &
+  (
+    | { stepRouteState?: never; type: "stateless" }
+    | { stepRouteState: GraphwarOneClickClearStepRouteState; type: "step-stateful" }
+  );
 
 /** 一键清图目标节点、邻接边和目标分层索引。 */
 interface OneClickClearDag {
@@ -660,7 +675,10 @@ async function buildOneClickClearDagPath(
     dag = await measureOneClickClearDebugTimingAsync(options, "build-dag-edges", () =>
       buildOneClickClearDag(context, targets),
     );
-  } catch {
+  } catch (error) {
+    if (isGraphwarWasmFault(error)) {
+      throw error;
+    }
     return createOneClickClearFailure(
       options.isCancelled?.() ? "no-usable-target" : "pathfinding-worker-failed",
       startedAt,
@@ -1033,19 +1051,23 @@ async function buildOneClickClearStatelessDag(
   const options = context.options;
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const edges: OneClickClearDagEdge[] = [];
-  const nodes = targets.map<OneClickClearDagNode>((_, targetIndex) => ({ id: targetIndex, targetIndex }));
+  const nodes = targets.map<Extract<OneClickClearDagNode, { type: "stateless" }>>((_, targetIndex) => ({
+    id: targetIndex,
+    targetIndex,
+    type: "stateless",
+  }));
   const nodesByTargetIndex = nodes.map((node) => [node]);
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
   const jobs = collectOneClickClearStatelessDagEdgeBuildJobs(startPoint, targets, nodes);
   const result = await buildOneClickClearDagEdgeRoutes(context, jobs);
   emitOneClickClearDebugTimings(options, result.timings);
 
-  const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route.route]));
+  const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
   for (const job of jobs) {
     const route = routesByJobId.get(job.id);
     const targetNode = nodes[job.to];
-    if (route && targetNode) {
-      addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, route);
+    if (route?.type === "stateless" && targetNode) {
+      addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, route.route);
     }
   }
 
@@ -1062,7 +1084,7 @@ async function buildOneClickClearStatelessDag(
 function collectOneClickClearStatelessDagEdgeBuildJobs(
   startPoint: PixelPoint,
   targets: readonly OneClickClearTarget[],
-  nodes: readonly OneClickClearDagNode[],
+  nodes: readonly Extract<OneClickClearDagNode, { type: "stateless" }>[],
 ) {
   const jobs: GraphwarOneClickClearDagEdgeBuildJob[] = [];
   for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
@@ -1077,6 +1099,7 @@ function collectOneClickClearStatelessDagEdgeBuildJobs(
       startPoint,
       targetPoint: target.routePoint,
       to: targetIndex,
+      type: "stateless",
     });
   }
 
@@ -1099,6 +1122,7 @@ function collectOneClickClearStatelessDagEdgeBuildJobs(
         startPoint: from.routePoint,
         targetPoint: to.routePoint,
         to: toIndex,
+        type: "stateless",
       });
     }
   }
@@ -1116,9 +1140,10 @@ async function buildOneClickClearStepDag(
 ): Promise<OneClickClearDag> {
   const options = context.options;
   const edges: OneClickClearDagEdge[] = [];
-  const nodes: OneClickClearDagNode[] = [];
-  const nodesByTargetIndex = Array.from({ length: targets.length }, (): OneClickClearDagNode[] => []);
-  const nodesByTargetState = Array.from({ length: targets.length }, (): Map<string, OneClickClearDagNode> => new Map());
+  type StepDagNode = Extract<OneClickClearDagNode, { type: "step-stateful" }>;
+  const nodes: StepDagNode[] = [];
+  const nodesByTargetIndex = Array.from({ length: targets.length }, (): StepDagNode[] => []);
+  const nodesByTargetState = Array.from({ length: targets.length }, (): Map<string, StepDagNode> => new Map());
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const startState = resolveOneClickClearStepStartState(options);
@@ -1136,10 +1161,13 @@ async function buildOneClickClearStepDag(
     const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
     for (const job of jobs) {
       const builtRoute = routesByJobId.get(job.id);
-      const stepRouteEndState = builtRoute?.stepRouteEndState;
-      if (!builtRoute?.route || !isGraphwarOneClickClearStepRouteState(stepRouteEndState)) {
+      if (
+        builtRoute?.type !== "step-stateful" ||
+        !isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
+      ) {
         continue;
       }
+      const stepRouteEndState = builtRoute.stepRouteEndState;
 
       // 状态身份来自打印系数整数累计；浮点 resolvedY 只用于下一段数值计算和调试。
       const stateNodes = nodesByTargetState[job.to];
@@ -1153,6 +1181,7 @@ async function buildOneClickClearStepDag(
           id: nodes.length,
           stepRouteState: stepRouteEndState,
           targetIndex: job.to,
+          type: "step-stateful",
         };
         nodes.push(targetNode);
         targetNodes.push(targetNode);
@@ -1175,6 +1204,7 @@ async function buildOneClickClearStepDag(
       stepRouteStartState: startState,
       targetPoint: target.routePoint,
       to: targetIndex,
+      type: "step-stateful",
     });
     nextJobId += 1;
   }
@@ -1196,9 +1226,6 @@ async function buildOneClickClearStepDag(
       }
       for (const sourceNode of nodesByTargetIndex[sourceTargetIndex] ?? []) {
         const stepRouteStartState = sourceNode.stepRouteState;
-        if (!stepRouteStartState) {
-          continue;
-        }
         for (let targetIndex = layerEnd; targetIndex < targets.length; targetIndex += 1) {
           const target = targets[targetIndex];
           if (!target || !graphXAdvancesStrictly(sourceTarget.sortGraphX, target.sortGraphX)) {
@@ -1211,6 +1238,7 @@ async function buildOneClickClearStepDag(
             stepRouteStartState,
             targetPoint: target.routePoint,
             to: targetIndex,
+            type: "step-stateful",
           });
           nextJobId += 1;
         }
@@ -1261,11 +1289,11 @@ async function buildOneClickClearDagEdgeRoutes(
   const request = createOneClickClearDagEdgeBuildRequest(options, jobs);
   try {
     return snapshotOneClickClearDagEdgeBuildResult(await options.buildDagEdges(request));
-  } catch {
+  } catch (error) {
     if (options.isCancelled?.()) {
       return { routes: [], timings: [] };
     }
-    throw new Error("One-Click Clear pathfinding worker failed");
+    throw error;
   }
 }
 
@@ -1279,21 +1307,29 @@ function createOneClickClearDagEdgeBuildRequest(
     boundaryExpansion: options.boundaryExpansion,
     bounds: { ...options.bounds },
     boundsRect: { ...options.boundsRect },
-    jobs: jobs.map((job) => ({
-      from: job.from,
-      id: job.id,
-      startPoint: clonePixelPoint(job.startPoint),
-      ...(job.stepRouteStartState
+    jobs: jobs.map((job) =>
+      job.type === "step-stateful"
         ? {
+            from: job.from,
+            id: job.id,
+            startPoint: clonePixelPoint(job.startPoint),
             stepRouteStartState: {
               resolvedStateKey: job.stepRouteStartState.resolvedStateKey,
               resolvedY: job.stepRouteStartState.resolvedY,
             },
+            targetPoint: clonePixelPoint(job.targetPoint),
+            to: job.to,
+            type: job.type,
           }
-        : {}),
-      targetPoint: clonePixelPoint(job.targetPoint),
-      to: job.to,
-    })),
+        : {
+            from: job.from,
+            id: job.id,
+            startPoint: clonePixelPoint(job.startPoint),
+            targetPoint: clonePixelPoint(job.targetPoint),
+            to: job.to,
+            type: job.type,
+          },
+    ),
     routeMask: options.routeMask.mask.slice(),
     routeOriginPoint: clonePixelPoint(options.pathPoints[0]),
     routeMode: options.routeMode,
@@ -1314,18 +1350,23 @@ function snapshotOneClickClearDagEdgeBuildResult(
   result: GraphwarOneClickClearDagEdgeBuildResult,
 ): GraphwarOneClickClearDagEdgeBuildResult {
   return {
-    routes: result.routes.map((route) => ({
-      jobId: route.jobId,
-      ...(route.route ? { route: route.route.map(clonePixelPoint) } : {}),
-      ...(route.stepRouteEndState
-        ? {
-            stepRouteEndState: {
-              resolvedStateKey: route.stepRouteEndState.resolvedStateKey,
-              resolvedY: route.stepRouteEndState.resolvedY,
-            },
-          }
-        : {}),
-    })),
+    routes: result.routes.map((route) => {
+      if (route.type === "unreachable") {
+        return { jobId: route.jobId, type: route.type };
+      }
+      if (route.type === "stateless") {
+        return { jobId: route.jobId, route: route.route.map(clonePixelPoint), type: route.type };
+      }
+      return {
+        jobId: route.jobId,
+        route: route.route.map(clonePixelPoint),
+        stepRouteEndState: {
+          resolvedStateKey: route.stepRouteEndState.resolvedStateKey,
+          resolvedY: route.stepRouteEndState.resolvedY,
+        },
+        type: route.type,
+      };
+    }),
     timings: result.timings.map((timing) => ({
       ...(timing.detail ? { detail: { ...timing.detail } } : {}),
       elapsedMs: timing.elapsedMs,

@@ -13,9 +13,14 @@ import {
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
 } from "../../core/game/forward-rule";
-import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
-import { imagePointToPlaneGridPoint, planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import { graphToImagePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
+import {
+  imagePointToPlaneGridPoint,
+  mirrorPlaneGridPoint,
+  planeGridCellCenterToImagePoint,
+} from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, type GraphBounds, type PixelPoint } from "../../core/types";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
@@ -153,10 +158,21 @@ interface MasterRouteMaskCacheEntry {
   summedArea?: GraphwarPlaneMaskSummedArea;
 }
 
-type RouteRuntimeOptions = Pick<
-  GraphwarPathfindingOptions,
-  "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
->;
+/** 一份原子 Step 路由能力同时携带两个等价 backend 的完整输入。 */
+interface RouteRuntimeOptions {
+  typescript: Pick<
+    GraphwarPathfindingOptions,
+    "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
+  >;
+  wasm: {
+    exactStartPoint: PixelPoint;
+    exactTargetPoint: PixelPoint;
+    model: GraphwarStepRouteModel;
+    routeOriginPoint: PixelPoint;
+    resolvedStartStateKey: string;
+    resolvedStartY: number;
+  };
+}
 
 /** Step 路线复用的包络模型和同 mask 前缀和。 */
 interface StepRouteValidationContext {
@@ -169,7 +185,7 @@ interface SmartStepRouteContext extends StepRouteValidationContext {
   /** 已验证 prefix 末端的累计平台高度。 */
   resolvedStartY: number;
   /** 已验证 prefix 末端的 canonical 平台身份。 */
-  resolvedStartStateKey?: string;
+  resolvedStartStateKey: string;
 }
 
 /** Step-glitch job 必须把扫描与最终回放共用的碰撞 mask 绑定到策略生命周期。 */
@@ -197,20 +213,14 @@ interface MasterRouteMaskSourceInput {
 
 /** 一个边 Worker 的就绪、任务与完成状态。 */
 interface EdgeWorkerHandle {
-  /** 子 worker 当前正在处理的 job；失败 fallback 时会补跑所有未完成 job。 */
-  activeJob?: GraphwarOneClickClearDagEdgeBuildJob;
-  /** 当前 job 的 session 内请求号；复用 worker 后用于拒绝迟到结果。 */
-  activeRequestId?: number;
+  /** 当前 job 与 session 内请求号是同一份在途身份；失败 fallback 会整体丢弃。 */
+  activeRequest?: { job: GraphwarOneClickClearDagEdgeBuildJob; requestId: number };
   /** Nested edge Worker 的 backend control slot。 */
   backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   /** 清理事件监听器。 */
   cleanup: () => void;
-  /** 是否已结束并记录耗时。 */
-  isFinished: boolean;
-  /** 是否已发送与当前 session 绑定的完整初始化上下文。 */
-  isInitialized: boolean;
-  /** 是否已完成初始化，可接收 DAG 边 job。 */
-  isReady: boolean;
+  /** 完整初始化从发送到 ready，再到终止只沿单向状态机推进。 */
+  state: "created" | "finished" | "initializing" | "ready";
   /** 子 worker 创建时间。 */
   startedAt: number;
   /** 实际子 worker。 */
@@ -390,28 +400,72 @@ async function findRouteForMask(
           type: "preview",
         })
     : undefined;
-  // Stateful Step searches carry an exact route evaluator/state identity; until the matching WASM session ABI exists,
-  // keep that branch on the complete TypeScript implementation rather than silently dropping the constraint.
-  if (wasmRuntime && runtimeOptions === undefined) {
+  // A Step WASM command is selected only with its complete model and exact initial state; other custom edge evaluators
+  // remain TypeScript-only rather than being silently weakened to stateless geometry.
+  if (wasmRuntime) {
     const wasmContext = createGraphwarWasmRouteContext(wasmRuntime, {
       boundaryExpansion: input.boundaryExpansion,
       bounds: input.bounds,
       boundsRect: input.boundsRect,
-      friendlySoldierCenters: [],
-      routeOriginPoint: imageToGraphPoint(input.startPoint, input.bounds, input.boundsRect),
-      // `routeMask` is already tolerance-derived by the master cache; rebuilding it here would double-dilate.
-      routeTolerancePlanePixels: 0,
-      simulationTolerancePlanePixels: 0,
-      soldierHitRadiusPixels: 0,
+      routeOriginPoint: imageToGraphPoint(
+        runtimeOptions?.wasm.routeOriginPoint ?? input.startPoint,
+        input.bounds,
+        input.boundsRect,
+      ),
+      // `routeMask` 已完成 morphology；真实 tolerance 仍决定 visibility contour 的 RDP epsilon。
+      routeTolerancePlanePixels: input.routeTolerancePlanePixels,
       sourceMask: routeMask,
+      sourceMaskType: "route",
+      ...(runtimeOptions
+        ? {
+            stepRouteModel: {
+              ...runtimeOptions.wasm.model,
+              qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+            },
+          }
+        : {}),
     });
     try {
-      const start = imagePointToPlaneGridPoint(input.startPoint, input.boundsRect);
-      const target = imagePointToPlaneGridPoint(input.targetPoint, input.boundsRect);
-      const result =
-        input.routeMode === "theta-star"
-          ? wasmContext.findThetaStarPath(start, target, input.isPreviewEnabled)
-          : wasmContext.findVisibilityGraphPath(start, target, input.isPreviewEnabled);
+      const isMirrored = !xPlusGoesRight(input.bounds);
+      const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(input.startPoint, input.boundsRect), isMirrored);
+      const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(input.targetPoint, input.boundsRect), isMirrored);
+      const wasmStepRoute = runtimeOptions?.wasm;
+      const retainedStepRoute = wasmContext.stepRoute;
+      let result;
+      if (wasmStepRoute) {
+        if (!retainedStepRoute) {
+          throw new GraphwarWasmFault("abi", "Pathfinding WASM route context did not retain its Step model");
+        }
+        result =
+          input.routeMode === "theta-star"
+            ? retainedStepRoute.findThetaStarPath({
+                exactStart: imageToGraphPoint(wasmStepRoute.exactStartPoint, input.bounds, input.boundsRect),
+                exactTarget: imageToGraphPoint(wasmStepRoute.exactTargetPoint, input.bounds, input.boundsRect),
+                initialState: {
+                  resolvedY: wasmStepRoute.resolvedStartY,
+                  routeStateKey: wasmStepRoute.resolvedStartStateKey,
+                },
+                shouldCollectPreviews: input.isPreviewEnabled,
+                start,
+                target,
+              })
+            : retainedStepRoute.findVisibilityGraphPath({
+                exactStart: imageToGraphPoint(wasmStepRoute.exactStartPoint, input.bounds, input.boundsRect),
+                exactTarget: imageToGraphPoint(wasmStepRoute.exactTargetPoint, input.bounds, input.boundsRect),
+                initialState: {
+                  resolvedY: wasmStepRoute.resolvedStartY,
+                  routeStateKey: wasmStepRoute.resolvedStartStateKey,
+                },
+                shouldCollectPreviews: input.isPreviewEnabled,
+                start,
+                target,
+              });
+      } else {
+        result =
+          input.routeMode === "theta-star"
+            ? wasmContext.findThetaStarPath(start, target, input.isPreviewEnabled)
+            : wasmContext.findVisibilityGraphPath(start, target, input.isPreviewEnabled);
+      }
       for (const preview of result.previews) {
         postPreview?.({
           acceptedEdges: preview.acceptedEdges.map(([from, to]) => [
@@ -425,7 +479,9 @@ async function findRouteForMask(
         });
       }
       return {
-        ...(result.type === "success" ? { path: [...result.path] } : {}),
+        ...(result.type === "success"
+          ? { path: result.path.map((point) => mirrorPlaneGridPoint(point, isMirrored)) }
+          : {}),
         searchElapsedMs: Math.max(0, nowMs() - searchStartedAt),
         visibilityCache: "skipped",
         visibilityCacheElapsedMs: 0,
@@ -440,7 +496,7 @@ async function findRouteForMask(
           bounds: input.bounds,
           boundsRect: input.boundsRect,
           boundaryExpansion: input.boundaryExpansion,
-          ...runtimeOptions,
+          ...runtimeOptions?.typescript,
           onPreview: postPreview,
           routeMask,
           routeTolerancePlanePixels: input.routeTolerancePlanePixels,
@@ -452,7 +508,7 @@ async function findRouteForMask(
           bounds: input.bounds,
           boundsRect: input.boundsRect,
           boundaryExpansion: input.boundaryExpansion,
-          ...runtimeOptions,
+          ...runtimeOptions?.typescript,
           getVisibilityGraphObstacleData: () => {
             const startedAt = nowMs();
             const lookup = getMasterVisibilityGraphObstacleData(input, routeMask);
@@ -562,14 +618,15 @@ async function findSmartPathResult(
         timings,
       };
     }
+    if (prefixValidation.routeStateKey === undefined) {
+      return { failureReason: "route", timings };
+    }
     runtimePolicy = {
       ...pathSearchPolicy,
       runtime: {
         model,
         resolvedStartY: prefixValidation.resolvedEndY,
-        ...(prefixValidation.routeStateKey === undefined
-          ? {}
-          : { resolvedStartStateKey: prefixValidation.routeStateKey }),
+        resolvedStartStateKey: prefixValidation.routeStateKey,
         summedArea: routeMaskLookup.summedArea,
       },
     };
@@ -579,19 +636,27 @@ async function findSmartPathResult(
 
   const routeRuntimeOptions: RouteRuntimeOptions | undefined =
     runtimePolicy.type === "step-stateful"
-      ? createGraphwarStepPathfindingEdgeEvaluator({
-          boundaryInset: input.boundaryExpansion,
-          bounds: input.bounds,
-          boundsRect: input.boundsRect,
-          exactStartPoint: startPoint,
-          exactTargetPoint: input.targetPoint,
-          model: runtimePolicy.runtime.model,
-          resolvedStartY: runtimePolicy.runtime.resolvedStartY,
-          ...(runtimePolicy.runtime.resolvedStartStateKey === undefined
-            ? {}
-            : { resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey }),
-          summedArea: runtimePolicy.runtime.summedArea,
-        })
+      ? {
+          typescript: createGraphwarStepPathfindingEdgeEvaluator({
+            boundaryInset: input.boundaryExpansion,
+            bounds: input.bounds,
+            boundsRect: input.boundsRect,
+            exactStartPoint: startPoint,
+            exactTargetPoint: input.targetPoint,
+            model: runtimePolicy.runtime.model,
+            resolvedStartY: runtimePolicy.runtime.resolvedStartY,
+            resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey,
+            summedArea: runtimePolicy.runtime.summedArea,
+          }),
+          wasm: {
+            exactStartPoint: startPoint,
+            exactTargetPoint: input.targetPoint,
+            model: runtimePolicy.runtime.model,
+            routeOriginPoint,
+            resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey,
+            resolvedStartY: runtimePolicy.runtime.resolvedStartY,
+          },
+        }
       : undefined;
 
   const routeResult = await findRouteForMask(
@@ -1354,12 +1419,11 @@ function createOneClickClearDagEdgeSession(
 
   /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
   const finishWorker = (handle: EdgeWorkerHandle) => {
-    if (handle.isFinished) {
+    if (handle.state === "finished") {
       return;
     }
-    handle.isFinished = true;
-    handle.activeJob = undefined;
-    handle.activeRequestId = undefined;
+    handle.state = "finished";
+    handle.activeRequest = undefined;
     handle.cleanup();
     handle.worker.terminate();
     workerTimings.push({
@@ -1387,6 +1451,8 @@ function createOneClickClearDagEdgeSession(
     for (const handle of handles) {
       finishWorker(handle);
     }
+    serialRouteContext?.wasmRouteContext?.dispose();
+    serialRouteContext = undefined;
     return workerTimings.splice(0);
   };
 
@@ -1498,7 +1564,7 @@ function createOneClickClearDagEdgeSession(
   /** 向空闲且就绪的 edge Worker 分配当前批次的下一个 job。 */
   const assignNextJob = (handle: EdgeWorkerHandle) => {
     const batch = activeBatch;
-    if (state !== "running" || !batch || batch.isSettled || handle.isFinished || !handle.isReady || handle.activeJob) {
+    if (state !== "running" || !batch || batch.isSettled || handle.state !== "ready" || handle.activeRequest) {
       return;
     }
     const job = batch.jobs[batch.nextJobIndex];
@@ -1510,8 +1576,7 @@ function createOneClickClearDagEdgeSession(
 
     const requestId = nextRequestId;
     nextRequestId += 1;
-    handle.activeJob = job;
-    handle.activeRequestId = requestId;
+    handle.activeRequest = { job, requestId };
     try {
       handle.worker.postMessage({
         attempt,
@@ -1521,8 +1586,7 @@ function createOneClickClearDagEdgeSession(
         type: "job",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
-      handle.activeJob = undefined;
-      handle.activeRequestId = undefined;
+      handle.activeRequest = undefined;
       switchToSerialFallback();
     }
   };
@@ -1534,16 +1598,15 @@ function createOneClickClearDagEdgeSession(
     result: GraphwarOneClickClearEdgeWorkerJobResult,
   ) => {
     const batch = activeBatch;
-    const activeJob = handle.activeJob;
+    const activeRequest = handle.activeRequest;
     if (state !== "running" || !batch || batch.isSettled) {
       return;
     }
     if (
-      !activeJob ||
-      handle.activeRequestId !== requestId ||
-      activeJob.id !== result.jobId ||
-      (result.route !== undefined && activeJob.stepRouteStartState !== undefined) !==
-        (result.stepRouteEndState !== undefined)
+      !activeRequest ||
+      activeRequest.requestId !== requestId ||
+      activeRequest.job.id !== result.jobId ||
+      (result.type !== "unreachable" && result.type !== activeRequest.job.type)
     ) {
       switchToSerialFallback();
       return;
@@ -1553,8 +1616,7 @@ function createOneClickClearDagEdgeSession(
     batch.totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
     batch.totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
     batch.routesByJobId.set(result.jobId, createOneClickClearDagEdgeRoute(result));
-    handle.activeJob = undefined;
-    handle.activeRequestId = undefined;
+    handle.activeRequest = undefined;
     assignNextJob(handle);
     resolveParallelBatch(batch);
   };
@@ -1588,7 +1650,7 @@ function createOneClickClearDagEdgeSession(
           return false;
         }
         const activeHandle = handles.find((candidate) => candidate.worker === worker);
-        return message.context.type === "edge-session" || message.context.jobId === activeHandle?.activeJob?.id;
+        return message.context.type === "edge-session" || message.context.jobId === activeHandle?.activeRequest?.job.id;
       },
       worker,
     });
@@ -1599,17 +1661,15 @@ function createOneClickClearDagEdgeSession(
     const handle: EdgeWorkerHandle = {
       backendSlot,
       cleanup: () => cleanup(),
-      isFinished: false,
-      isInitialized: false,
-      isReady: false,
       startedAt: nowMs(),
+      state: "created",
       worker,
       workerIndex,
     };
     /** 将 edge Worker 响应路由到就绪、失败或 job 结算流程。 */
     const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
       const response = event.data;
-      if (handle.isFinished) {
+      if (handle.state === "finished") {
         return;
       }
       if (handle.backendSlot.handleMessage(response)) {
@@ -1624,7 +1684,11 @@ function createOneClickClearDagEdgeSession(
         return;
       }
       if (response.type === "ready") {
-        handle.isReady = true;
+        if (handle.state !== "initializing") {
+          switchToSerialFallback();
+          return;
+        }
+        handle.state = "ready";
         assignNextJob(handle);
         return;
       }
@@ -1653,10 +1717,10 @@ function createOneClickClearDagEdgeSession(
 
   /** 将同一条消息中的 mask 与共享 cache 原子发送，structured clone 会保留二者的引用绑定。 */
   const initializeEdgeWorkerHandle = (handle: EdgeWorkerHandle, init: GraphwarOneClickClearEdgeWorkerSharedInit) => {
-    if (handle.isFinished || handle.isInitialized) {
+    if (handle.state !== "created") {
       return;
     }
-    handle.isInitialized = true;
+    handle.state = "initializing";
     try {
       handle.worker.postMessage({
         attempt,
@@ -1710,7 +1774,11 @@ function createOneClickClearDagEdgeSession(
          * 4 Workers 重复扫描 mask。2026-07-28 同一真实 mask、40 条 Step edge 的热态交错测试
          * 各 56 次：结果均为 38 条可达，中位数约 278.9ms 降到 276.0ms，均值约改善 1.0%。
          */
-        sharedInit ??= prepareGraphwarOneClickClearEdgeWorkerSharedInit(input, pathSearchPolicy);
+        sharedInit ??= prepareGraphwarOneClickClearEdgeWorkerSharedInit(
+          input,
+          pathSearchPolicy,
+          wasmRuntime !== undefined,
+        );
       } catch {
         switchToSerialFallback();
         return;
@@ -1764,16 +1832,22 @@ function createOneClickClearDagEdgeSession(
 function prepareGraphwarOneClickClearEdgeWorkerSharedInit(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
   policy: OneClickClearDagEdgePolicy,
+  isWasmBackend: boolean,
 ): GraphwarOneClickClearEdgeWorkerSharedInit {
   const routeInit = (
     policy.routeMode === "visibility-graph"
       ? {
           routeMode: policy.routeMode,
-          visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
-            bounds: input.bounds,
-            routeMask: input.routeMask,
-            routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-          }),
+          routePreprocessing: isWasmBackend
+            ? ({ type: "wasm" } as const)
+            : ({
+                type: "typescript",
+                visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+                  bounds: input.bounds,
+                  routeMask: input.routeMask,
+                  routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+                }),
+              } as const),
         }
       : { routeMode: policy.routeMode }
   ) satisfies GraphwarOneClickClearEdgeWorkerRouteInit;
@@ -1781,6 +1855,7 @@ function prepareGraphwarOneClickClearEdgeWorkerSharedInit(
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     boundaryExpansion: input.boundaryExpansion,
+    routeOriginPoint: input.routeOriginPoint,
     routeMask: input.routeMask,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     ...routeInit,
@@ -1820,7 +1895,7 @@ function createOneClickClearSerialRouteContext(
     throw new Error("Step-glitch does not build ordinary DAG edges");
   }
   const visibilityGraphObstacleData =
-    pathSearchPolicy.routeMode === "visibility-graph"
+    !wasmRuntime && pathSearchPolicy.routeMode === "visibility-graph"
       ? createGraphwarVisibilityGraphObstacleData({
           bounds: input.bounds,
           routeMask: input.routeMask,
@@ -1844,17 +1919,14 @@ function createOneClickClearSerialRouteContext(
       ...pathSearchPolicy,
       ...(wasmRuntime
         ? {
-            wasmRuntime,
             wasmRouteContext: createGraphwarWasmRouteContext(wasmRuntime, {
               boundaryExpansion: input.boundaryExpansion,
               bounds: input.bounds,
               boundsRect: input.boundsRect,
-              friendlySoldierCenters: [],
               routeOriginPoint: imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect),
-              routeTolerancePlanePixels: 0,
-              simulationTolerancePlanePixels: 0,
-              soldierHitRadiusPixels: 0,
+              routeTolerancePlanePixels: input.routeTolerancePlanePixels,
               sourceMask: input.routeMask,
+              sourceMaskType: "route",
             }),
           }
         : {}),
@@ -1875,6 +1947,23 @@ function createOneClickClearSerialRouteContext(
       routeMask: input.routeMask,
       summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
     },
+    ...(wasmRuntime
+      ? {
+          wasmRouteContext: createGraphwarWasmRouteContext(wasmRuntime, {
+            boundaryExpansion: input.boundaryExpansion,
+            bounds: input.bounds,
+            boundsRect: input.boundsRect,
+            routeOriginPoint: imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect),
+            routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+            sourceMask: input.routeMask,
+            sourceMaskType: "route",
+            stepRouteModel: {
+              ...model,
+              qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+            },
+          }),
+        }
+      : {}),
   };
 }
 
@@ -1929,21 +2018,32 @@ function createOneClickClearDagEdgeBuildResult(
 }
 
 /** 并行完成顺序不稳定；最终始终按提交 jobs 顺序合并。 */
-function collectOneClickClearDagEdgeBatchRoutes(batch: OneClickClearDagEdgeBatch) {
-  return batch.jobs.map((job) => batch.routesByJobId.get(job.id) ?? { jobId: job.id });
+function collectOneClickClearDagEdgeBatchRoutes(batch: OneClickClearDagEdgeBatch): GraphwarOneClickClearDagEdgeRoute[] {
+  return batch.jobs.map((job) => {
+    const route = batch.routesByJobId.get(job.id);
+    if (!route) {
+      throw new Error("One-Click Clear DAG edge batch is missing a completed job result");
+    }
+    return route;
+  });
 }
 
-/** 把单边 worker 结果合并回 DAG 边结果；默认没有 route 表示不可达边，jobId 仍用于稳定匹配边。 */
+/** 去掉 Worker timing 后保留同一个原子 DAG 边结果。 */
 function createOneClickClearDagEdgeRoute(
-  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "route" | "stepRouteEndState">,
+  result: GraphwarOneClickClearEdgeWorkerJobResult,
 ): GraphwarOneClickClearDagEdgeRoute {
-  return result.route
-    ? {
-        jobId: result.jobId,
-        route: result.route,
-        ...(result.stepRouteEndState ? { stepRouteEndState: result.stepRouteEndState } : {}),
-      }
-    : { jobId: result.jobId };
+  if (result.type === "unreachable") {
+    return { jobId: result.jobId, type: result.type };
+  }
+  if (result.type === "stateless") {
+    return { jobId: result.jobId, route: result.route, type: result.type };
+  }
+  return {
+    jobId: result.jobId,
+    route: result.route,
+    stepRouteEndState: result.stepRouteEndState,
+    type: result.type,
+  };
 }
 
 /** 将 master 响应发送到主线程。 */

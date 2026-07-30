@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vit
 
 import type { GraphwarBackendAttemptIdentity, GraphwarBackendControlMessage } from "../../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../../core/game/constants";
+import { createPixelPoint } from "../../../core/types";
 import {
   createGraphwarStepRouteModel,
   createGraphwarStepRouteSummedArea,
@@ -69,9 +70,9 @@ describe("One-Click Clear edge Worker initialization", () => {
     expectTypeOf<StatefulInit["stepRouteRuntime"]>().toEqualTypeOf<GraphwarStepRouteRuntime>();
     expectTypeOf<StatelessInit["stepRouteRuntime"]>().toEqualTypeOf<undefined>();
     expectTypeOf<
-      VisibilityGraphInit["visibilityGraphObstacleData"]
+      Extract<VisibilityGraphInit["routePreprocessing"], { type: "typescript" }>["visibilityGraphObstacleData"]
     >().toEqualTypeOf<GraphwarVisibilityGraphObstacleData>();
-    expectTypeOf<ThetaStarInit["visibilityGraphObstacleData"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<ThetaStarInit["routePreprocessing"]>().toEqualTypeOf<undefined>();
   });
 
   it("rejects a mismatched Step runtime and a second init", async () => {
@@ -131,6 +132,7 @@ function createContext() {
     bounds,
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     boundaryExpansion: 0,
+    routeOriginPoint: createPixelPoint(100, 225),
     routeMask,
     routeMode: "visibility-graph",
     routeTolerancePlanePixels: 2,
@@ -140,11 +142,14 @@ function createContext() {
       summedArea: createGraphwarStepRouteSummedArea(routeMask),
     },
     type: "step-stateful",
-    visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
-      bounds,
-      routeMask,
-      routeTolerancePlanePixels: 2,
-    }),
+    routePreprocessing: {
+      type: "typescript",
+      visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+        bounds,
+        routeMask,
+        routeTolerancePlanePixels: 2,
+      }),
+    },
     workerIndex: 1,
   } satisfies GraphwarOneClickClearEdgeWorkerInit;
 }

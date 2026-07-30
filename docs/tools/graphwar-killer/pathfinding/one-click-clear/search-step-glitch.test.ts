@@ -228,7 +228,12 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
   };
 });
 
-import { buildGraphwarOneClickClearPath, type GraphwarOneClickClearIncumbent } from "./search";
+import {
+  buildGraphwarOneClickClearPath,
+  type GraphwarOneClickClearDagEdgeBuildJob,
+  type GraphwarOneClickClearDagEdgeRoute,
+  type GraphwarOneClickClearIncumbent,
+} from "./search";
 
 const bounds: GraphBounds = { maxX: -4, maxY: 10, minX: -12, minY: -10 };
 const boundsRect: BoundsRect = {
@@ -656,7 +661,7 @@ describe("Step glitch one-click-clear target retries", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({ jobId: job.id, route: [job.startPoint, job.targetPoint] })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint])),
         timings: [],
       }),
       candidates,
@@ -697,10 +702,7 @@ describe("Step glitch one-click-clear target retries", () => {
       bounds,
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.map((job) => ({
-          jobId: job.id,
-          route: [job.startPoint, middle, job.targetPoint],
-        })),
+        routes: request.jobs.map((job) => createSuccessfulDagEdgeRoute(job, [job.startPoint, middle, job.targetPoint])),
         timings: [],
       }),
       candidates: [candidate],
@@ -776,6 +778,15 @@ function createEmptyMask() {
 
 function toPixel(x: number, y: number) {
   return graphToImagePoint(createGraphPoint(x, y), bounds, boundsRect);
+}
+
+function createSuccessfulDagEdgeRoute(
+  job: GraphwarOneClickClearDagEdgeBuildJob,
+  route: PixelPoint[],
+): GraphwarOneClickClearDagEdgeRoute {
+  return job.type === "step-stateful"
+    ? { jobId: job.id, route, stepRouteEndState: job.stepRouteStartState, type: job.type }
+    : { jobId: job.id, route, type: job.type };
 }
 
 /** 将测试命中圆心投影到生产分配器使用的最近原生列，y 保持真实中心。 */

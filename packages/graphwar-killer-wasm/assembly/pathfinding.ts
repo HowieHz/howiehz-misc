@@ -1071,6 +1071,10 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   const lookaheadPointer = load<u32>(inputPointer + Layout.ROUTE_CREATE_LOOKAHEAD_POINTER_OFFSET);
   const lookaheadLength = load<u32>(inputPointer + Layout.ROUTE_CREATE_LOOKAHEAD_LENGTH_OFFSET);
   const stepModelPointer = load<u32>(inputPointer + Layout.ROUTE_CREATE_STEP_MODEL_POINTER_OFFSET);
+  const inputFlags = load<u32>(inputPointer + Layout.ROUTE_CREATE_FLAGS_OFFSET);
+  if ((inputFlags & ~Layout.ROUTE_CREATE_FLAG_PREPROCESSED_ROUTE_MASK) != 0) trap();
+  const isRouteMaskPreprocessed =
+    (inputFlags & Layout.ROUTE_CREATE_FLAG_PREPROCESSED_ROUTE_MASK) != 0;
   const cellCount = getPlaneCellCount();
   if (
     sourceMaskLength != cellCount ||
@@ -1185,6 +1189,7 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   if (minX == maxX || minY == maxY || rectWidth <= 0 || rectHeight <= 0 || boundaryExpansion < 0 || soldierHitRadius < 0) {
     trap();
   }
+  if (isRouteMaskPreprocessed && (friendlyCount != 0 || simulationTolerance != 0 || soldierHitRadius != 0)) trap();
   let friendlyIndex: u32 = 0;
   while (friendlyIndex < friendlyCount) {
     if (
@@ -1194,19 +1199,25 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
     friendlyIndex += 1;
   }
 
-  fillFriendlySoldierAreas(
-    sourceMaskPointer,
-    friendlyXPointer,
-    friendlyYPointer,
-    friendlyCount,
-    rectX,
-    rectY,
-    rectWidth,
-    rectHeight,
-    soldierHitRadius,
-  );
-  const routeMaskPointer = createToleranceMask(sourceMaskPointer, routeTolerance);
-  const simulationMaskPointer = createToleranceMask(sourceMaskPointer, simulationTolerance);
+  if (!isRouteMaskPreprocessed) {
+    fillFriendlySoldierAreas(
+      sourceMaskPointer,
+      friendlyXPointer,
+      friendlyYPointer,
+      friendlyCount,
+      rectX,
+      rectY,
+      rectWidth,
+      rectHeight,
+      soldierHitRadius,
+    );
+  }
+  const routeMaskPointer = isRouteMaskPreprocessed
+    ? createToleranceMask(sourceMaskPointer, 0)
+    : createToleranceMask(sourceMaskPointer, routeTolerance);
+  const simulationMaskPointer = isRouteMaskPreprocessed
+    ? createToleranceMask(sourceMaskPointer, 0)
+    : createToleranceMask(sourceMaskPointer, simulationTolerance);
   const isMirrored = minX > maxX;
   const boundaryInset = normalizeBoundaryInset(boundaryExpansion);
   const summedAreaPointer = createSummedArea(routeMaskPointer);
@@ -1310,7 +1321,8 @@ function createRouteContext(inputPointer: u32, inputByteLength: u32): u32 {
   store<u32>(
     contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET,
     (isMirrored ? Layout.ROUTE_CONTEXT_FLAG_MIRRORED : 0) |
-      (stepModelPointer != 0 ? Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL : 0),
+      (stepModelPointer != 0 ? Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL : 0) |
+      (isRouteMaskPreprocessed ? Layout.ROUTE_CONTEXT_FLAG_PREPROCESSED_ROUTE_MASK : 0),
   );
   store<u32>(contextPointer + Layout.ROUTE_CONTEXT_ROUTE_MASK_POINTER_OFFSET, routeMaskPointer);
   store<u32>(contextPointer + Layout.ROUTE_CONTEXT_ROUTE_MASK_LENGTH_OFFSET, cellCount);
@@ -1415,7 +1427,13 @@ function requireRouteContext(pointer: u32): void {
   const flags = load<u32>(pointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET);
   const stepModelPointer = load<u32>(pointer + Layout.ROUTE_CONTEXT_STEP_MODEL_POINTER_OFFSET);
   if (
-    (flags & ~(Layout.ROUTE_CONTEXT_FLAG_MIRRORED | Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL)) != 0 ||
+    (flags &
+      ~(
+        Layout.ROUTE_CONTEXT_FLAG_MIRRORED |
+        Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL |
+        Layout.ROUTE_CONTEXT_FLAG_PREPROCESSED_ROUTE_MASK
+      )) !=
+      0 ||
     ((flags & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) != 0) != (stepModelPointer != 0)
   ) trap();
 }

@@ -7,6 +7,9 @@ import {
   type GraphwarBackendControlMessage,
   type GraphwarBackendInitializationMessage,
 } from "../../../core/algorithm-backend";
+import { imageToGraphPoint } from "../../../core/geometry";
+import { graphwarToolDefaults } from "../../../core/tool/defaults";
+import { createGraphwarWasmRouteContext } from "../../../core/wasm/route-adapter";
 import { GraphwarWasmKernelRuntime } from "../../../core/wasm/runtime";
 import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../../core/worker-backend";
 /** 一键清图 DAG 边消费者 worker：初始化一次私有上下文，然后按需处理单条边。 */
@@ -50,6 +53,11 @@ function getWasmRuntime(backend: GraphwarAlgorithmBackendContext) {
   return backend.runtime;
 }
 
+/** Algorithm identity mismatches are ABI faults only for an effective WASM task. */
+function createEdgeWorkerAlgorithmIdentityError(isWasmBackend: boolean, message: string) {
+  return isWasmBackend ? new GraphwarWasmFault("abi", message) : new Error(message);
+}
+
 /** 一键清图边 Worker 初始化后持有的只读搜索上下文。 */
 type EdgeWorkerContext = GraphwarOneClickClearDagEdgeRouteBuildContext & {
   /** Master request attempt that owns every init/job/result in this child Worker. */
@@ -88,9 +96,52 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
         if (context) {
           throw new Error("Edge worker was already initialized");
         }
-        const visibilityGraphObstacleData =
-          request.context.routeMode === "visibility-graph" ? request.context.visibilityGraphObstacleData : undefined;
         const wasmRuntime = getWasmRuntime(backend);
+        const visibilityGraphObstacleData =
+          request.context.routeMode === "visibility-graph" && request.context.routePreprocessing.type === "typescript"
+            ? request.context.routePreprocessing.visibilityGraphObstacleData
+            : undefined;
+        if (
+          request.context.routeMode === "visibility-graph" &&
+          (request.context.routePreprocessing.type === "wasm") !== (wasmRuntime !== undefined)
+        ) {
+          throw createEdgeWorkerAlgorithmIdentityError(
+            wasmRuntime !== undefined,
+            "Edge worker visibility preprocessing does not match its algorithm backend",
+          );
+        }
+        if (
+          request.context.type === "step-stateful" &&
+          request.context.stepRouteRuntime.routeMask !== request.context.routeMask
+        ) {
+          throw createEdgeWorkerAlgorithmIdentityError(
+            wasmRuntime !== undefined,
+            "Step-stateful runtime does not match its route mask",
+          );
+        }
+        const wasmRouteContext = wasmRuntime
+          ? createGraphwarWasmRouteContext(wasmRuntime, {
+              boundaryExpansion: request.context.boundaryExpansion,
+              bounds: request.context.bounds,
+              boundsRect: request.context.boundsRect,
+              routeOriginPoint: imageToGraphPoint(
+                request.context.routeOriginPoint,
+                request.context.bounds,
+                request.context.boundsRect,
+              ),
+              routeTolerancePlanePixels: request.context.routeTolerancePlanePixels,
+              sourceMask: request.context.routeMask,
+              sourceMaskType: "route",
+              ...(request.context.type === "step-stateful"
+                ? {
+                    stepRouteModel: {
+                      ...request.context.stepRouteRuntime.model,
+                      qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+                    },
+                  }
+                : {}),
+            })
+          : undefined;
         const thetaStarScratch =
           request.context.routeMode === "theta-star" ? createGraphwarThetaStarScratch() : undefined;
         const sharedContext = {
@@ -104,7 +155,7 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
           workerIndex: request.context.workerIndex,
           ...(thetaStarScratch ? { thetaStarScratch } : {}),
           ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
-          ...(wasmRuntime ? { wasmRuntime } : {}),
+          ...(wasmRouteContext ? { wasmRouteContext } : {}),
         };
         if (request.context.type === "stateless") {
           context = {
@@ -113,9 +164,6 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
             type: request.context.type,
           };
         } else {
-          if (request.context.stepRouteRuntime.routeMask !== request.context.routeMask) {
-            throw new Error("Step-stateful runtime does not match its route mask");
-          }
           context = {
             ...sharedContext,
             routeMode: request.context.routeMode,
@@ -141,8 +189,11 @@ async function handleRequest(request: GraphwarOneClickClearEdgeWorkerRequest) {
       if (!graphwarWasmSessionIdentitiesAreEqual(request.session, activeContext.session)) {
         throw new Error("Edge worker job session does not match its initialized session");
       }
-      if ((request.job.stepRouteStartState !== undefined) !== (activeContext.type === "step-stateful")) {
-        throw new Error("Edge worker job route state does not match its initialized policy");
+      if (request.job.type !== activeContext.type) {
+        throw createEdgeWorkerAlgorithmIdentityError(
+          backend.type === "wasm",
+          "Edge worker job route policy does not match its initialized policy",
+        );
       }
       postResponse({
         attempt: request.attempt,

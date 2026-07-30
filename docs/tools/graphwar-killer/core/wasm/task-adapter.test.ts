@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { parseGraphwarExpressionProgram } from "../../formula/expression/evaluator";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
@@ -22,6 +22,7 @@ import {
   packGraphwarWasmRgbaImage,
   packGraphwarWasmRouteContextInput,
   packGraphwarWasmStopPolicy,
+  type GraphwarWasmRouteContextInput,
 } from "./task-adapter";
 
 class TestGraphwarWasmArena {
@@ -49,6 +50,21 @@ class TestGraphwarWasmArena {
 }
 
 describe("Graphwar WASM task Adapter", () => {
+  it("keeps base-mask preprocessing out of the preprocessed route-mask state", () => {
+    type BaseMaskInput = Extract<GraphwarWasmRouteContextInput, { sourceMaskType: "base" }>;
+    type PreprocessedRouteMaskInput = Extract<GraphwarWasmRouteContextInput, { sourceMaskType: "route" }>;
+
+    expectTypeOf<BaseMaskInput>().toHaveProperty("friendlySoldierCenters");
+    expectTypeOf<BaseMaskInput>().toHaveProperty("simulationTolerancePlanePixels");
+    expectTypeOf<BaseMaskInput>().toHaveProperty("soldierHitRadiusPixels");
+    expectTypeOf<PreprocessedRouteMaskInput["friendlySoldierCenters"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<PreprocessedRouteMaskInput["simulationTolerancePlanePixels"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<PreprocessedRouteMaskInput["soldierHitRadiusPixels"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<
+      Omit<BaseMaskInput, "sourceMaskType"> & { sourceMaskType: "route" }
+    >().not.toMatchTypeOf<GraphwarWasmRouteContextInput>();
+  });
+
   it("packs the canonical expression program without reparsing", () => {
     const arena = new TestGraphwarWasmArena();
     const program = parseGraphwarExpressionProgram("x / y^2");
@@ -209,6 +225,7 @@ describe("Graphwar WASM task Adapter", () => {
         simulationTolerancePlanePixels: 1.5,
         soldierHitRadiusPixels: 7,
         sourceMask: routeMask,
+        sourceMaskType: "base",
       },
       8,
     );
@@ -227,8 +244,22 @@ describe("Graphwar WASM task Adapter", () => {
       simulationTolerancePlanePixels: -1,
       soldierHitRadiusPixels: 7,
       sourceMask: routeMask,
+      sourceMaskType: "base",
     });
     expect(copyGraphwarWasmFloat64Values(arena, mirrored.context, 8)[0]).toBe(25);
+    const preprocessed = packGraphwarWasmRouteContextInput(arena, {
+      boundaryExpansion: 1,
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      boundsRect: { height: 450, width: 770, x: 10, y: 20 },
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 4,
+      sourceMask: routeMask,
+      sourceMaskType: "route",
+    });
+    expect([...copyGraphwarWasmFloat64Values(arena, preprocessed.context, 8)]).toEqual([
+      -25, 25, -15, 15, 10, 20, 770, 450, 1, 4, 0, 100, 225, 0,
+    ]);
+    expect(preprocessed.friendlySoldierCenters.length).toBe(0);
 
     const jobs = packGraphwarWasmPathfindingGeometryJobs(
       arena,

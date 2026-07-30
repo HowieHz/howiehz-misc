@@ -161,20 +161,37 @@ export type GraphwarWasmPackedDetectionInput =
       type: "detect-bounds";
     };
 
-/** WASM route context 的原子静态输入；基础 mask、友军与两类容差在同一次命令写入。 */
-export interface GraphwarWasmRouteContextInput {
+/** WASM route context 的共享静态输入；source mask、预处理身份与路由参数在同一次命令写入。 */
+interface GraphwarWasmRouteContextInputBase {
   boundaryExpansion: number;
   bounds: { maxX: number; maxY: number; minX: number; minY: number };
   boundsRect: { height: number; width: number; x: number; y: number };
-  friendlySoldierCenters: readonly GraphwarWasmPoint[];
   routeOriginPoint: GraphwarWasmPoint;
   routeTolerancePlanePixels: number;
-  simulationTolerancePlanePixels: number;
-  soldierHitRadiusPixels: number;
   sourceMask: Uint8Array;
   /** Step state and numerical settings are one optional capability of the retained route context. */
   stepRouteModel?: GraphwarWasmStepRouteModelInput;
 }
+
+/** 基础 mask 与它的全部 morphology 输入必须原子同行。 */
+interface GraphwarWasmBaseMaskRouteContextInput extends GraphwarWasmRouteContextInputBase {
+  friendlySoldierCenters: readonly GraphwarWasmPoint[];
+  simulationTolerancePlanePixels: number;
+  soldierHitRadiusPixels: number;
+  sourceMaskType: "base";
+}
+
+/** 已处理 route mask 不再携带任何会重复修改 mask 的输入；真实 route tolerance 仅保留 contour 身份。 */
+interface GraphwarWasmPreprocessedRouteContextInput extends GraphwarWasmRouteContextInputBase {
+  friendlySoldierCenters?: never;
+  simulationTolerancePlanePixels?: never;
+  soldierHitRadiusPixels?: never;
+  sourceMaskType: "route";
+}
+
+export type GraphwarWasmRouteContextInput =
+  | GraphwarWasmBaseMaskRouteContextInput
+  | GraphwarWasmPreprocessedRouteContextInput;
 
 /** Canonical Step route model consumed directly by the WASM edge evaluator. */
 export interface GraphwarWasmStepRouteModelInput {
@@ -569,6 +586,10 @@ export function packGraphwarWasmRouteContextInput(
   if (minX === maxX || minY === maxY) {
     throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar route bounds must span both axes", "input");
   }
+  if (input.sourceMaskType !== "base" && input.sourceMaskType !== "route") {
+    throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar route source mask type is invalid", "input");
+  }
+  const isBaseMask = input.sourceMaskType === "base";
   const context = new Float64Array([
     minX,
     maxX,
@@ -580,10 +601,16 @@ export function packGraphwarWasmRouteContextInput(
     validatePositiveFiniteNumber(input.boundsRect.height, "boundsRect.height"),
     validateNonNegativeFiniteNumber(input.boundaryExpansion, "boundaryExpansion"),
     validateGraphwarWasmFiniteNumber(input.routeTolerancePlanePixels, "routeTolerancePlanePixels", "input"),
-    validateGraphwarWasmFiniteNumber(input.simulationTolerancePlanePixels, "simulationTolerancePlanePixels", "input"),
+    isBaseMask
+      ? validateGraphwarWasmFiniteNumber(
+          input.simulationTolerancePlanePixels,
+          "simulationTolerancePlanePixels",
+          "input",
+        )
+      : 0,
     validateGraphwarWasmFiniteNumber(input.routeOriginPoint.x, "routeOriginPoint.x", "input"),
     validateGraphwarWasmFiniteNumber(input.routeOriginPoint.y, "routeOriginPoint.y", "input"),
-    validateNonNegativeFiniteNumber(input.soldierHitRadiusPixels, "soldierHitRadiusPixels"),
+    isBaseMask ? validateNonNegativeFiniteNumber(input.soldierHitRadiusPixels, "soldierHitRadiusPixels") : 0,
   ]);
   const stepRouteModel = input.stepRouteModel;
   let packedStepRouteModel: GraphwarWasmMemorySlice | undefined;
@@ -632,7 +659,11 @@ export function packGraphwarWasmRouteContextInput(
   }
   return {
     context: writeGraphwarWasmFloat64Values(arena, context, minimumPointer),
-    friendlySoldierCenters: packGraphwarWasmPointSoA(arena, input.friendlySoldierCenters, minimumPointer),
+    friendlySoldierCenters: packGraphwarWasmPointSoA(
+      arena,
+      isBaseMask ? input.friendlySoldierCenters : [],
+      minimumPointer,
+    ),
     routePolicy: writeGraphwarWasmFloat64Values(arena, createGraphwarRoutePolicyData(), minimumPointer),
     sourceMask: packGraphwarPlaneMask(arena, input.sourceMask, minimumPointer),
     ...(packedStepRouteModel === undefined ? {} : { stepRouteModel: packedStepRouteModel }),

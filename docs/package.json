@@ -30,8 +30,8 @@
     "pagefind": "^1.5.2",
     "vite": "^8.1.5",
     "vitepress": "2.0.0-alpha.18",
-    "vitepress-plugin-group-icons": "^1.7.5",
-    "vitepress-plugin-pagefind": "^0.4.23",
+    "vitepress-plugin-group-icons": "^1.7.6",
+    "vitepress-plugin-pagefind": "^0.4.24",
     "vitepress-plugin-rss": "^0.4.4",
     "vitest": "^4.1.10"
   },

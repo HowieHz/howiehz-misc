@@ -48,6 +48,9 @@ import {
   type GraphwarWasmFormulaInputDescriptor,
   type GraphwarWasmStopPolicy,
 } from "./task-adapter";
+import type { GraphwarWasmTrajectoryPhysicalState } from "./trajectory-state-adapter";
+
+export type { GraphwarWasmTrajectoryPhysicalState } from "./trajectory-state-adapter";
 
 const EXPRESSION_INPUT_BYTE_LENGTH = 36;
 const FORMULA_INPUT_BYTE_LENGTH = 176;
@@ -196,21 +199,6 @@ export interface GraphwarWasmTrajectoryResult {
 export type GraphwarWasmTrajectoryStopReason = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 type GraphwarWasmIdentityHash = readonly [number, number, number, number];
-
-export type GraphwarWasmTrajectoryPhysicalState =
-  | {
-      currentPoint: GraphPoint;
-      equation: "dy" | "y";
-      previousPoint?: GraphPoint;
-      sampleIndex: number;
-    }
-  | {
-      currentDy: number;
-      currentPoint: GraphPoint;
-      equation: "ddy";
-      previous?: { dy: number; point: GraphPoint };
-      sampleIndex: number;
-    };
 
 /** Owned continuation atom; hashes bind the physical state to every formula and stop-policy dependency. */
 export interface GraphwarWasmTrajectoryContinuationEvidence {

@@ -1,6 +1,7 @@
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { imageToGraphPoint, pixelPointsEqual } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
+import { createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
 import { graphwarByteArraysEqual } from "../../formula/trajectory/final-replay-snapshot";
@@ -48,12 +49,20 @@ import { createGraphwarWasmTrajectoryPhysicalStateFromSamplingState } from "./tr
 const STEP_GLITCH_SEGMENT_RECORD_LENGTH = 10;
 const ALLOWED_SIGN_PROTECTION_BITS = 0b1_1111;
 const STEP_GLITCH_COMMAND_CREATE_CONTEXT = 11;
+const STEP_GLITCH_COMMAND_TRACE_FRONTIER = 12;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
 const STEP_GLITCH_CONTEXT_FLAG_MIRRORED = 1;
 const STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH = 156;
 const STEP_GLITCH_PLANE_CELL_COUNT = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
+const STEP_GLITCH_TRACE_INPUT_BYTE_LENGTH = 48;
+const STEP_GLITCH_TRACE_RESULT_BYTE_LENGTH = 40;
+const STEP_GLITCH_TRACE_MAGIC = 0x5347_5452;
+const STEP_GLITCH_TRACE_BATCH_BYTE_LENGTH = 24;
+const STEP_GLITCH_TRACE_WINDOW_BYTE_LENGTH = 32;
+const STEP_GLITCH_TRACE_ROW_BYTE_LENGTH = 20;
+const STEP_GLITCH_TRACE_CANDIDATE_BYTE_LENGTH = 56;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -209,6 +218,53 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   copyFarthestFreeX: () => Int16Array;
   dispose: () => void;
   isMirrored: boolean;
+  traceGateFrontier: (
+    input: GraphwarWasmStepGlitchGeometryFrontierInput,
+  ) => GraphwarWasmStepGlitchGeometryFrontierTrace;
+}
+
+export interface GraphwarWasmStepGlitchGeometryFrontierInput {
+  acceptedPoint: GraphPoint;
+  firstBlockedSearchX: number;
+  row: number;
+  target: GraphPoint;
+  targetRow: number;
+}
+
+export interface GraphwarWasmStepGlitchGeometryFrontierTrace {
+  batches: readonly {
+    backoffColumns: number;
+    canUseMonotonicBackoffPruning: boolean;
+    searchX: number;
+    sharedWindowSearchX: number | undefined;
+    windowCount: number;
+    windowStart: number;
+  }[];
+  candidates: readonly {
+    backoffColumns: number;
+    controlPoint: PixelPoint;
+    controlX: number;
+    decimalPlaces: number;
+    expansionOrdinal: number;
+    row: number;
+    startX: number;
+    windowOrdinal: number;
+  }[];
+  firstBlockedSearchX: number;
+  rows: readonly {
+    farthestX: number;
+    row: number;
+    startDeltaY: number;
+    targetDeltaY: number;
+    usableWindowBatchMask: number;
+  }[];
+  windows: readonly {
+    controlX: number;
+    decimalPlaces: number;
+    searchX: number;
+    startX: number;
+    windowOrdinal: number;
+  }[];
 }
 
 export type GraphwarWasmStepGlitchGeometryContextCreateResult =
@@ -481,11 +537,260 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
           isDisposed = true;
         },
         isMirrored,
+        traceGateFrontier(input) {
+          assertActive();
+          return traceGraphwarWasmStepGlitchGeometryFrontier(runtime, contextPointer, input);
+        },
       },
       status: "ready",
     };
   } catch (error) {
     runtime.resetArenaAfterFault(contextMark);
+    throw error;
+  }
+}
+
+function traceGraphwarWasmStepGlitchGeometryFrontier(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  input: GraphwarWasmStepGlitchGeometryFrontierInput,
+): GraphwarWasmStepGlitchGeometryFrontierTrace {
+  const integers = [input.firstBlockedSearchX, input.row, input.targetRow];
+  if (
+    !integers.every(Number.isInteger) ||
+    input.firstBlockedSearchX < -0x8000_0000 ||
+    input.firstBlockedSearchX > 0x7fff_ffff ||
+    input.row < 0 ||
+    input.row >= GRAPHWAR_PLANE_HEIGHT ||
+    input.targetRow < 0 ||
+    input.targetRow >= GRAPHWAR_PLANE_HEIGHT ||
+    !Number.isFinite(input.acceptedPoint.x) ||
+    !Number.isFinite(input.acceptedPoint.y) ||
+    !Number.isFinite(input.target.x) ||
+    !Number.isFinite(input.target.y)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch frontier input is outside the scanner geometry domain",
+      "input",
+    );
+  }
+
+  const commandMark = runtime.markArena();
+  try {
+    const inputPointer = runtime.reserveArena(STEP_GLITCH_TRACE_INPUT_BYTE_LENGTH, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, STEP_GLITCH_TRACE_INPUT_BYTE_LENGTH);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setInt32(4, input.firstBlockedSearchX, true);
+    inputView.setInt32(8, input.targetRow, true);
+    inputView.setInt32(12, input.row, true);
+    inputView.setFloat64(16, input.acceptedPoint.x, true);
+    inputView.setFloat64(24, input.acceptedPoint.y, true);
+    inputView.setFloat64(32, input.target.x, true);
+    inputView.setFloat64(40, input.target.y, true);
+    const resultPointer = runtime.runRouteTask(
+      STEP_GLITCH_COMMAND_TRACE_FRONTIER,
+      inputPointer,
+      STEP_GLITCH_TRACE_INPUT_BYTE_LENGTH,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: resultPointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_TRACE_RESULT_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    const batchPointer = resultView.getUint32(4, true);
+    const batchCount = resultView.getUint32(8, true);
+    const windowPointer = resultView.getUint32(12, true);
+    const windowCount = resultView.getUint32(16, true);
+    const rowPointer = resultView.getUint32(20, true);
+    const rowCount = resultView.getUint32(24, true);
+    const firstBlockedSearchX = resultView.getInt32(28, true);
+    const candidatePointer = resultView.getUint32(32, true);
+    const candidateCount = resultView.getUint32(36, true);
+    if (
+      resultView.getUint32(0, true) !== STEP_GLITCH_TRACE_MAGIC ||
+      batchCount > 3 ||
+      windowCount > 33 ||
+      rowCount > GRAPHWAR_PLANE_HEIGHT ||
+      candidateCount > rowCount * windowCount ||
+      firstBlockedSearchX !== input.firstBlockedSearchX
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step-glitch frontier returned an invalid result header",
+        "output",
+      );
+    }
+    const batchRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: batchCount, pointer: batchPointer },
+      { alignment: 4, elementByteLength: STEP_GLITCH_TRACE_BATCH_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const windowRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: windowCount, pointer: windowPointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_TRACE_WINDOW_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const rowRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: rowCount, pointer: rowPointer },
+      { alignment: 4, elementByteLength: STEP_GLITCH_TRACE_ROW_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const candidateRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: candidateCount, pointer: candidatePointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_TRACE_CANDIDATE_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const batchView = new DataView(batchRange.buffer, batchRange.byteOffset, batchRange.byteLength);
+    let previousBackoffColumns = 0;
+    let expectedWindowStart = 0;
+    const batches = Array.from({ length: batchCount }, (_, index) => {
+      const offset = index * STEP_GLITCH_TRACE_BATCH_BYTE_LENGTH;
+      const backoffColumns = batchView.getInt32(offset, true);
+      const searchX = batchView.getInt32(offset + 4, true);
+      const sharedWindowSearchXValue = batchView.getInt32(offset + 8, true);
+      const canPruneValue = batchView.getInt32(offset + 12, true);
+      const windowStart = batchView.getUint32(offset + 16, true);
+      const batchWindowCount = batchView.getUint32(offset + 20, true);
+      if (
+        backoffColumns <= previousBackoffColumns ||
+        backoffColumns > 3 ||
+        searchX < 0 ||
+        searchX >= GRAPHWAR_PLANE_LENGTH ||
+        sharedWindowSearchXValue < -1 ||
+        sharedWindowSearchXValue >= GRAPHWAR_PLANE_LENGTH ||
+        (canPruneValue !== 0 && canPruneValue !== 1) ||
+        batchWindowCount === 0 ||
+        windowStart !== expectedWindowStart ||
+        windowStart + batchWindowCount > windowCount
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch frontier returned an invalid batch",
+          "output",
+        );
+      }
+      previousBackoffColumns = backoffColumns;
+      expectedWindowStart += batchWindowCount;
+      return {
+        backoffColumns,
+        canUseMonotonicBackoffPruning: canPruneValue === 1,
+        searchX,
+        sharedWindowSearchX: sharedWindowSearchXValue < 0 ? undefined : sharedWindowSearchXValue,
+        windowCount: batchWindowCount,
+        windowStart,
+      };
+    });
+    if (expectedWindowStart !== windowCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step-glitch frontier returned disjoint window batches",
+        "output",
+      );
+    }
+    const windowView = new DataView(windowRange.buffer, windowRange.byteOffset, windowRange.byteLength);
+    const windows = Array.from({ length: windowCount }, (_, index) => {
+      const offset = index * STEP_GLITCH_TRACE_WINDOW_BYTE_LENGTH;
+      const startX = windowView.getFloat64(offset, true);
+      const controlX = windowView.getFloat64(offset + 8, true);
+      const searchX = windowView.getInt32(offset + 16, true);
+      const decimalPlaces = windowView.getInt32(offset + 20, true);
+      const windowOrdinal = windowView.getInt32(offset + 24, true);
+      if (
+        !Number.isFinite(startX) ||
+        !Number.isFinite(controlX) ||
+        searchX < 0 ||
+        searchX >= GRAPHWAR_PLANE_LENGTH ||
+        decimalPlaces < 0 ||
+        decimalPlaces > 15 ||
+        windowOrdinal < 0 ||
+        windowOrdinal > 10
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch frontier returned an invalid window",
+          "output",
+        );
+      }
+      return { controlX, decimalPlaces, searchX, startX, windowOrdinal };
+    });
+    const rowView = new DataView(rowRange.buffer, rowRange.byteOffset, rowRange.byteLength);
+    const rows = Array.from({ length: rowCount }, (_, index) => {
+      const offset = index * STEP_GLITCH_TRACE_ROW_BYTE_LENGTH;
+      const farthestX = rowView.getInt32(offset, true);
+      const row = rowView.getInt32(offset + 4, true);
+      const targetDeltaY = rowView.getInt32(offset + 8, true);
+      const startDeltaY = rowView.getInt32(offset + 12, true);
+      const usableWindowBatchMask = rowView.getInt32(offset + 16, true);
+      if (
+        farthestX < 0 ||
+        farthestX >= GRAPHWAR_PLANE_LENGTH ||
+        row < 0 ||
+        row >= GRAPHWAR_PLANE_HEIGHT ||
+        targetDeltaY < 0 ||
+        targetDeltaY >= GRAPHWAR_PLANE_HEIGHT ||
+        startDeltaY < 0 ||
+        startDeltaY >= GRAPHWAR_PLANE_HEIGHT ||
+        usableWindowBatchMask < 0 ||
+        usableWindowBatchMask > 0b111
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch frontier returned an invalid landing row",
+          "output",
+        );
+      }
+      return { farthestX, row, startDeltaY, targetDeltaY, usableWindowBatchMask };
+    });
+    const candidateView = new DataView(candidateRange.buffer, candidateRange.byteOffset, candidateRange.byteLength);
+    const candidates = Array.from({ length: candidateCount }, (_, index) => {
+      const offset = index * STEP_GLITCH_TRACE_CANDIDATE_BYTE_LENGTH;
+      const row = candidateView.getInt32(offset, true);
+      const backoffColumns = candidateView.getInt32(offset + 4, true);
+      const windowOrdinal = candidateView.getInt32(offset + 8, true);
+      const decimalPlaces = candidateView.getInt32(offset + 12, true);
+      const startX = candidateView.getFloat64(offset + 16, true);
+      const controlX = candidateView.getFloat64(offset + 24, true);
+      const controlPointX = candidateView.getFloat64(offset + 32, true);
+      const controlPointY = candidateView.getFloat64(offset + 40, true);
+      const expansionOrdinal = candidateView.getUint32(offset + 48, true);
+      if (
+        row < 0 ||
+        row >= GRAPHWAR_PLANE_HEIGHT ||
+        backoffColumns < 1 ||
+        backoffColumns > 3 ||
+        windowOrdinal < 0 ||
+        windowOrdinal > 10 ||
+        decimalPlaces < 0 ||
+        decimalPlaces > 15 ||
+        !Number.isFinite(startX) ||
+        !Number.isFinite(controlX) ||
+        !Number.isFinite(controlPointX) ||
+        !Number.isFinite(controlPointY) ||
+        expansionOrdinal !== index
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch frontier returned an invalid candidate",
+          "output",
+        );
+      }
+      return {
+        backoffColumns,
+        controlPoint: createPixelPoint(controlPointX, controlPointY),
+        controlX,
+        decimalPlaces,
+        expansionOrdinal,
+        row,
+        startX,
+        windowOrdinal,
+      };
+    });
+    runtime.resetArena(commandMark);
+    return { batches, candidates, firstBlockedSearchX, rows, windows };
+  } catch (error) {
+    runtime.resetArenaAfterFault(commandMark);
     throw error;
   }
 }

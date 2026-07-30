@@ -6,9 +6,11 @@ import {
 } from "../../formula/trajectory/sampling";
 import {
   createGraphwarStepGlitchPrefixEvidence,
+  createGraphwarStepGlitchGeometryFrontierTraceForTest,
   createGraphwarStepGlitchScanMaskIndex,
 } from "../../pathfinding/routing/step-glitch-scan";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
+import { imageToGraphPoint } from "../geometry";
 import { createGraphPoint, createPixelPoint } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
@@ -170,6 +172,136 @@ describe("Graphwar WASM Step-glitch retained geometry context", () => {
     ).toThrowError();
     expect(runtime.arenaCursor).toBe(initialCursor);
   });
+
+  it.each([
+    { bounds: { maxX: 12, maxY: 10, minX: 4, minY: -10 }, isMirrored: false, name: "direct" },
+    { bounds: { maxX: 4, maxY: 10, minX: 12, minY: -10 }, isMirrored: true, name: "mirrored" },
+  ])("matches stable B-1/B-2/B-3 frontier ordering for $name coordinates", async ({ bounds, isMirrored }) => {
+    const mask = new Uint8Array(planeCellCount);
+    setForwardMaskCell(mask, 700, 200, isMirrored);
+    setForwardMaskCell(mask, 650, 199, isMirrored);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = createFrontierInput(bounds, isMirrored, 300);
+    const expected = createGraphwarStepGlitchGeometryFrontierTraceForTest(createPrefixOptions(bounds, mask, 0), input);
+
+    expect(contextResult.context.traceGateFrontier(input)).toEqual(expected);
+    expect(expected.batches.map((batch) => batch.backoffColumns)).toEqual([1, 2, 3]);
+    expect(expected.batches.map((batch) => batch.windowCount)).toEqual([11, 11, 11]);
+    expect(expected.windows.filter((window) => window.windowOrdinal === 0)).toHaveLength(3);
+    expect(expected.rows[0]?.row).toBe(201);
+    expect(expected.rows.findIndex((row) => row.row === 202)).toBeLessThan(
+      expected.rows.findIndex((row) => row.row === 198),
+    );
+    const rowTieTrace = contextResult.context.traceGateFrontier({ ...input, row: 200, targetRow: 200 });
+    expect(rowTieTrace.rows.findIndex((row) => row.row === 198)).toBeLessThan(
+      rowTieTrace.rows.findIndex((row) => row.row === 202),
+    );
+    contextResult.context.dispose();
+  });
+
+  it("matches low-precision per-window lookup and duplicate suppression", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(
+      runtime,
+      createContextInput(bounds, mask, 0, false, 0),
+    );
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = createFrontierInput(bounds, false, 300);
+    const expected = createGraphwarStepGlitchGeometryFrontierTraceForTest(
+      createPrefixOptions(bounds, mask, 0, 0),
+      input,
+    );
+    const actual = contextResult.context.traceGateFrontier(input);
+
+    expect(actual).toEqual(expected);
+    expect(actual.windows.length).toBeLessThanOrEqual(33);
+    expect(actual.batches.some((batch) => batch.sharedWindowSearchX === undefined)).toBe(true);
+    for (const batch of actual.batches) {
+      const windows = actual.windows.slice(batch.windowStart, batch.windowStart + batch.windowCount);
+      expect(new Set(windows.map((window) => window.controlX)).size).toBe(windows.length);
+    }
+    contextResult.context.dispose();
+  });
+
+  it("queries B-2 lazily and prunes a row only after its B-1 candidates", async () => {
+    const bounds = { maxX: 770, maxY: 225, minX: 0, minY: -225 };
+    const mask = new Uint8Array(planeCellCount);
+    setForwardMaskCell(mask, 298, 250, false);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = createFrontierInput(bounds, false, 300);
+    const expected = createGraphwarStepGlitchGeometryFrontierTraceForTest(createPrefixOptions(bounds, mask, 0), input);
+    const actual = contextResult.context.traceGateFrontier(input);
+
+    expect(actual).toEqual(expected);
+    expect(actual.rows.find((row) => row.row === 250)?.usableWindowBatchMask).toBe(1);
+    expect(
+      actual.candidates
+        .filter((candidate) => candidate.row === 250)
+        .every((candidate) => candidate.backoffColumns === 1),
+    ).toBe(true);
+    contextResult.context.dispose();
+  });
+
+  it("returns one normal empty trace when no blocked frontier can be expanded", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = createFrontierInput(bounds, false, 0);
+
+    expect(contextResult.context.traceGateFrontier(input)).toEqual({
+      batches: [],
+      candidates: [],
+      firstBlockedSearchX: 0,
+      rows: [],
+      windows: [],
+    });
+    contextResult.context.dispose();
+  });
+
+  it("rejects malformed trace output without invalidating the retained context", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 12) {
+        new DataView(runtime.buffer).setUint32(resultPointer, 0, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() => contextResult.context.traceGateFrontier(createFrontierInput(bounds, false, 300))).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(contextResult.context.copyFarthestFreeX()).toHaveLength(planeCellCount);
+    contextResult.context.dispose();
+  });
 });
 
 function createContextInput(
@@ -177,16 +309,9 @@ function createContextInput(
   mask: Uint8Array,
   simulationBoundaryExpansion: number,
   hasPrefixEvidence = false,
+  decimalPlaces = 4,
 ) {
-  const settings = {
-    algorithm: "step" as const,
-    decimalPlaces: 4,
-    equation: "dy" as const,
-    isStepGlitchModeEnabled: true,
-    isStepOverflowProtectionEnabled: true,
-    steepness: 67,
-    stepGlitchObstacleMask: mask,
-  };
+  const settings = createSettings(mask, decimalPlaces);
   const sourcePath = [createPixelPoint(96, 225), createPixelPoint(337, 225)];
   const prefixTarget = { center: sourcePath[1], radius: 12 };
   const graphPoints = [createGraphPoint(-11, 0), createGraphPoint(-8.5, 0)];
@@ -221,6 +346,61 @@ function createContextInput(
     simulationMask: mask,
     sourcePath,
   });
+}
+
+function createSettings(mask: Uint8Array, decimalPlaces: number) {
+  return {
+    algorithm: "step" as const,
+    decimalPlaces,
+    equation: "dy" as const,
+    isStepGlitchModeEnabled: true,
+    isStepOverflowProtectionEnabled: true,
+    steepness: 67,
+    stepGlitchObstacleMask: mask,
+  };
+}
+
+function createPrefixOptions(
+  bounds: { maxX: number; maxY: number; minX: number; minY: number },
+  mask: Uint8Array,
+  simulationBoundaryExpansion: number,
+  decimalPlaces = 4,
+) {
+  return {
+    bounds,
+    boundsRect,
+    formulaMode: createGraphwarTrajectoryFormulaMode(createSettings(mask, decimalPlaces)),
+    simulationBoundaryExpansion,
+    simulationMask: mask,
+    sourcePath: [createPixelPoint(96, 225), createPixelPoint(337, 225)],
+  };
+}
+
+function createFrontierInput(
+  bounds: { maxX: number; maxY: number; minX: number; minY: number },
+  isMirrored: boolean,
+  firstBlockedSearchX: number,
+) {
+  const graphXAtBoundary = (searchBoundaryX: number) => {
+    const planeBoundaryX = isMirrored ? GRAPHWAR_PLANE_LENGTH - searchBoundaryX : searchBoundaryX;
+    return imageToGraphPoint(
+      createPixelPoint((planeBoundaryX / GRAPHWAR_PLANE_LENGTH) * boundsRect.width, boundsRect.y),
+      bounds,
+      boundsRect,
+    ).x;
+  };
+  return {
+    acceptedPoint: createGraphPoint(graphXAtBoundary(100), 0),
+    firstBlockedSearchX,
+    row: 220,
+    target: createGraphPoint(graphXAtBoundary(600), 0),
+    targetRow: 200,
+  };
+}
+
+function setForwardMaskCell(mask: Uint8Array, forwardX: number, row: number, isMirrored: boolean) {
+  const planeX = isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - forwardX : forwardX;
+  mask[row * GRAPHWAR_PLANE_LENGTH + planeX] = 1;
 }
 
 function createMask() {

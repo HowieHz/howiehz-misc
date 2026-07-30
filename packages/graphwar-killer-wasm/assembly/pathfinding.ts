@@ -14,7 +14,7 @@ import {
 } from "./formula-step-resolution";
 import { commitArena, markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
 import * as Layout from "./pathfinding-layout";
-import { createStepGlitchGeometryContext } from "./step-glitch";
+import { createStepGlitchGeometryContext, traceStepGlitchGeometryFrontier } from "./step-glitch";
 
 const ROUTE_POLICY_VALUE_COUNT: u32 = 12;
 const THETA_STAR_LOOKAHEAD_OFFSET_COUNT: u32 = 8;
@@ -5908,6 +5908,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   }
   if (command == Layout.STEP_GLITCH_COMMAND_CREATE_CONTEXT) {
     return createStepGlitchGeometryContext(inputPointer, inputByteLength);
+  }
+  if (command == Layout.STEP_GLITCH_COMMAND_TRACE_FRONTIER) {
+    return traceStepGlitchGeometryFrontier(inputPointer, inputByteLength);
   }
   trap();
   return 0;

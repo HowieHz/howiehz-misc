@@ -233,6 +233,7 @@ interface ScanGateWindow {
   /** 右门所在的原生列；公式精度为 0 或 1 时，左门量化偏移可能让不同宽度落到不同列。 */
   searchX: number;
   startX: number;
+  windowOrdinal: number;
 }
 
 /** 按一个回退距离分组的 11 档 gate 宽度；原版像素固定，但低公式精度时仍可能跨列。 */
@@ -242,7 +243,7 @@ interface ScanGateWindowBatch {
   /** 共享的右门列；为 undefined 时，低精度量化让门宽跨列，使用旧的逐窗口 fallback。 */
   sharedWindowSearchX: number | undefined;
   /** 只有右门仍位于预期回退列时，才能使用“跳过剩余更远批次”的单调性规则。 */
-  usesMonotonicBackoffPruning: boolean;
+  canUseMonotonicBackoffPruning: boolean;
   /** 所有宽度共享右门列时实际查询的原生列；跨列时仅作为 fallback 提示。 */
   searchX: number;
   windows: ScanGateWindow[];
@@ -254,6 +255,31 @@ interface ScanGateRows {
   rows: ScanLandingRow[];
   state: ScanState;
   windowBatches: ScanGateWindowBatch[];
+}
+
+/** Stable single-frontier geometry exposed only for the WASM differential seam. */
+export interface GraphwarStepGlitchGeometryFrontierTrace {
+  batches: readonly {
+    backoffColumns: number;
+    canUseMonotonicBackoffPruning: boolean;
+    searchX: number;
+    sharedWindowSearchX: number | undefined;
+    windowCount: number;
+    windowStart: number;
+  }[];
+  candidates: readonly {
+    backoffColumns: number;
+    controlPoint: PixelPoint;
+    controlX: number;
+    decimalPlaces: number;
+    expansionOrdinal: number;
+    row: number;
+    startX: number;
+    windowOrdinal: number;
+  }[];
+  firstBlockedSearchX: number;
+  rows: readonly ScanLandingRow[];
+  windows: readonly ScanGateWindow[];
 }
 
 /** 迭代 DFS 工作项；扫描器不会通过候选状态递归调用自身。 */
@@ -666,7 +692,7 @@ function scanPreparedGraphwarStepGlitchPath(
           if (windowBatch.backoffColumns > 1) {
             if (
               windowBatch.sharedWindowSearchX !== undefined &&
-              windowBatch.usesMonotonicBackoffPruning &&
+              windowBatch.canUseMonotonicBackoffPruning &&
               getFarthestFreeX(maskIndex, windowBatch.searchX, row.row) < item.scan.firstBlockedSearchX
             ) {
               rowIndex += 1;
@@ -995,7 +1021,11 @@ function createGateRowScan(
     }
 
     const windows: ScanGateWindow[] = [];
-    for (const window of glitchWindows) {
+    for (let windowOrdinal = 0; windowOrdinal < glitchWindows.length; windowOrdinal += 1) {
+      const window = glitchWindows[windowOrdinal];
+      if (!window) {
+        continue;
+      }
       const gateDecimalPlaces = Math.max(leftGateDecimalPlaces, window.decimalPlaces);
       // L 与 width 已按 gateDecimalPlaces 表示；就近量化只清理 binary 加法残差，不移动窗口方向。
       const controlX = roundToDecimalPlaces(leftGateX + window.width, gateDecimalPlaces);
@@ -1015,6 +1045,7 @@ function createGateRowScan(
         decimalPlaces: gateDecimalPlaces,
         searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.isMirrored),
         startX: leftGateX,
+        windowOrdinal,
       });
     }
     if (windows.length > 0) {
@@ -1027,7 +1058,7 @@ function createGateRowScan(
         backoffColumns,
         searchX: sharedWindowSearchX === undefined ? searchX : Math.min(sharedWindowSearchX, firstBlockedSearchX),
         sharedWindowSearchX,
-        usesMonotonicBackoffPruning: sharedWindowSearchX === searchX,
+        canUseMonotonicBackoffPruning: sharedWindowSearchX === searchX,
         windows,
       });
     }
@@ -1048,7 +1079,7 @@ function createGateRowScan(
     if (firstWindowBatch?.backoffColumns === 1) {
       if (
         firstWindowBatch.sharedWindowSearchX !== undefined &&
-        firstWindowBatch.usesMonotonicBackoffPruning &&
+        firstWindowBatch.canUseMonotonicBackoffPruning &&
         getFarthestFreeX(maskIndex, firstWindowBatch.searchX, row) < firstBlockedSearchX
       ) {
         // B-1 不能到达 B 时，按列连续可达性可知所有更远回退列也不可能绕过 B-1。
@@ -1074,6 +1105,105 @@ function createGateRowScan(
       left.row - right.row,
   );
   return rows.length > 0 ? { firstBlockedSearchX, rows, state, windowBatches } : undefined;
+}
+
+/** Returns the real TS scanner's stable geometry without executing a replay candidate. */
+export function createGraphwarStepGlitchGeometryFrontierTraceForTest(
+  options: GraphwarStepGlitchPrefixOptions,
+  input: {
+    acceptedPoint: GraphPoint;
+    firstBlockedSearchX: number;
+    row: number;
+    target: GraphPoint;
+    targetRow: number;
+  },
+): GraphwarStepGlitchGeometryFrontierTrace {
+  const maskIndex = getCompatibleMaskIndex(options, Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)));
+  const scan = createGateRowScan(
+    {
+      acceptedPoint: input.acceptedPoint,
+      path: [],
+      row: input.row,
+      searchX: input.firstBlockedSearchX,
+      stepGlitchXWindows: [],
+    },
+    input.firstBlockedSearchX,
+    input.target,
+    input.targetRow,
+    options,
+    maskIndex,
+  );
+  if (!scan) {
+    return { batches: [], candidates: [], firstBlockedSearchX: input.firstBlockedSearchX, rows: [], windows: [] };
+  }
+  const windows: ScanGateWindow[] = [];
+  const batches = scan.windowBatches.map((batch) => {
+    const windowStart = windows.length;
+    windows.push(...batch.windows);
+    return {
+      backoffColumns: batch.backoffColumns,
+      canUseMonotonicBackoffPruning: batch.canUseMonotonicBackoffPruning,
+      searchX: batch.searchX,
+      sharedWindowSearchX: batch.sharedWindowSearchX,
+      windowCount: batch.windows.length,
+      windowStart,
+    };
+  });
+  const candidates: GraphwarStepGlitchGeometryFrontierTrace["candidates"][number][] = [];
+  for (const row of scan.rows) {
+    let shouldSkipRow = false;
+    for (const batch of scan.windowBatches) {
+      const batchBit = 1 << (batch.backoffColumns - 1);
+      if ((row.usableWindowBatchMask & batchBit) === 0) {
+        if (batch.backoffColumns <= 1) {
+          continue;
+        }
+        if (
+          batch.sharedWindowSearchX !== undefined &&
+          batch.canUseMonotonicBackoffPruning &&
+          getFarthestFreeX(maskIndex, batch.searchX, row.row) < scan.firstBlockedSearchX
+        ) {
+          shouldSkipRow = true;
+          break;
+        }
+        row.usableWindowBatchMask |= batchBit;
+      }
+      for (const window of batch.windows) {
+        if (batch.sharedWindowSearchX === undefined) {
+          const farthestX = getFarthestFreeX(maskIndex, Math.min(window.searchX, scan.firstBlockedSearchX), row.row);
+          if (farthestX < Math.max(window.searchX, scan.firstBlockedSearchX)) {
+            continue;
+          }
+        } else if (row.farthestX < window.searchX) {
+          continue;
+        }
+        const controlPoint = createControlPointForFormulaEndX(
+          window.controlX,
+          input.target.x,
+          row.row,
+          options,
+          window.decimalPlaces,
+        );
+        if (!controlPoint) {
+          continue;
+        }
+        candidates.push({
+          backoffColumns: batch.backoffColumns,
+          controlPoint,
+          controlX: window.controlX,
+          decimalPlaces: window.decimalPlaces,
+          expansionOrdinal: candidates.length,
+          row: row.row,
+          startX: window.startX,
+          windowOrdinal: window.windowOrdinal,
+        });
+      }
+    }
+    if (shouldSkipRow) {
+      continue;
+    }
+  }
+  return { batches, candidates, firstBlockedSearchX: scan.firstBlockedSearchX, rows: scan.rows, windows };
 }
 
 /** 查询指定行从 searchX 开始连续可通行区的最右列。 */

@@ -5,6 +5,7 @@ import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants
 import { requireArenaRange, reserveArena } from "./memory";
 import * as Layout from "./step-glitch-layout";
 import { runTrajectoryRequest } from "./trajectory";
+import * as TrajectoryLayout from "./trajectory-layout";
 
 @inline
 function trap(): void {
@@ -20,17 +21,33 @@ export function replayStepGlitchTrajectoryForTest(inputPointer: u32, inputByteLe
 export function prepareStepGlitchCandidateFormulaForTest(inputPointer: u32, inputByteLength: u32): u32 {
   if (inputByteLength != Layout.STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH) trap();
   requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
-  const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_CONTEXT_POINTER_OFFSET);
+  if (load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_RESERVED_OFFSET) != 0) trap();
+  return runPrepareLaunch(
+    buildStepGlitchCandidateFormulaInput(
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_CONTEXT_POINTER_OFFSET),
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_X_POINTER_OFFSET),
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_Y_POINTER_OFFSET),
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_COUNT_OFFSET),
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_POINTER_OFFSET),
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_COUNT_OFFSET),
+      load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_MODE_OFFSET),
+    ),
+  );
+}
+
+/** Constructs the one canonical formula request shared by launch-only and real scanner replay commands. */
+function buildStepGlitchCandidateFormulaInput(
+  contextPointer: u32,
+  pathXPointer: u32,
+  pathYPointer: u32,
+  pointCount: u32,
+  windowPointer: u32,
+  windowCount: u32,
+  windowMode: u32,
+): u32 {
   requireStepGlitchContext(contextPointer);
-  const pathXPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_X_POINTER_OFFSET);
-  const pathYPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_Y_POINTER_OFFSET);
-  const pointCount = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_COUNT_OFFSET);
   const sourceCount = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET);
-  if (
-    pointCount < 2 ||
-    pointCount < sourceCount ||
-    load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_RESERVED_OFFSET) != 0
-  ) trap();
+  if (pointCount < 2 || pointCount < sourceCount) trap();
   requireElementRange(pathXPointer, pointCount, sizeof<f64>(), sizeof<f64>());
   requireElementRange(pathYPointer, pointCount, sizeof<f64>(), sizeof<f64>());
   const sourceXPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET);
@@ -49,9 +66,6 @@ export function prepareStepGlitchCandidateFormulaForTest(inputPointer: u32, inpu
   }
 
   const segmentCount = pointCount - 1;
-  const windowMode = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_MODE_OFFSET);
-  const windowPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_POINTER_OFFSET);
-  const windowCount = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_COUNT_OFFSET);
   if (windowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC) {
     if (windowPointer != 0 || windowCount != 0) trap();
   } else if (windowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_EXPLICIT) {
@@ -134,7 +148,235 @@ export function prepareStepGlitchCandidateFormulaForTest(inputPointer: u32, inpu
   store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_POINTER_OFFSET, load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_POINTER_OFFSET));
   store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_BYTE_LENGTH_OFFSET, load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_LENGTH_OFFSET));
   store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_QUALITY_TARGET_PLANE_PIXELS_OFFSET, loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_QUALITY_TARGET_PLANE_PIXELS_INDEX));
-  return runPrepareLaunch(formulaInputPointer);
+  return formulaInputPointer;
+}
+
+function validateStepGlitchTargetRecords(pointer: u32, targetCount: u32): void {
+  if (targetCount > u32.MAX_VALUE / 3) trap();
+  const valueCount = targetCount * 3;
+  requireElementRange(pointer, valueCount, sizeof<f64>(), sizeof<f64>());
+  let targetIndex: u32 = 0;
+  while (targetIndex < targetCount) {
+    const recordPointer = pointer + targetIndex * 3 * sizeof<f64>();
+    if (
+      !isFiniteValue(load<f64>(recordPointer)) ||
+      !isFiniteValue(load<f64>(recordPointer + sizeof<f64>())) ||
+      !isFiniteValue(load<f64>(recordPointer + 2 * sizeof<f64>())) ||
+      load<f64>(recordPointer + 2 * sizeof<f64>()) < 0
+    ) trap();
+    targetIndex += 1;
+  }
+}
+
+/** Replays one cold scanner candidate through the shared trajectory core and applies scanner hit semantics. */
+export function replayStepGlitchCandidateForTest(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.STEP_GLITCH_REPLAY_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<f64>());
+  const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_CONTEXT_POINTER_OFFSET);
+  requireStepGlitchContext(contextPointer);
+  const targetRecordPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_TARGET_POINTER_OFFSET);
+  const orderedTargetCount = load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_TARGET_COUNT_OFFSET);
+  const controlX = load<f64>(inputPointer + Layout.STEP_GLITCH_REPLAY_CONTROL_X_OFFSET);
+  if (!isFiniteValue(controlX) || load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_RESERVED_OFFSET) != 0) trap();
+  validateStepGlitchTargetRecords(targetRecordPointer, orderedTargetCount);
+
+  const requiredTargetValueCount = load<u32>(
+    contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET,
+  );
+  if (requiredTargetValueCount % 3 != 0) trap();
+  const requiredTargetCount = requiredTargetValueCount / 3;
+  if (orderedTargetCount > u32.MAX_VALUE - requiredTargetCount) trap();
+  const combinedTargetCount = orderedTargetCount + requiredTargetCount;
+  const combinedTargetPointer = combinedTargetCount == 0
+    ? 0
+    : reserveArena(combinedTargetCount * 3 * sizeof<f64>(), sizeof<f64>());
+  if (orderedTargetCount != 0) {
+    memory.copy(combinedTargetPointer, targetRecordPointer, orderedTargetCount * 3 * sizeof<f64>());
+  }
+  if (requiredTargetCount != 0) {
+    memory.copy(
+      combinedTargetPointer + orderedTargetCount * 3 * sizeof<f64>(),
+      load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_POINTER_OFFSET),
+      requiredTargetValueCount * sizeof<f64>(),
+    );
+  }
+
+  const trajectoryInputPointer = reserveArena(TrajectoryLayout.TRAJECTORY_INPUT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(trajectoryInputPointer, 0, TrajectoryLayout.TRAJECTORY_INPUT_BYTE_LENGTH);
+  const formulaInputPointer = buildStepGlitchCandidateFormulaInput(
+    contextPointer,
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_X_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_Y_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_COUNT_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_COUNT_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_MODE_OFFSET),
+  );
+  memory.copy(
+    trajectoryInputPointer,
+    formulaInputPointer,
+    TrajectoryLayout.TRAJECTORY_INPUT_FORMULA_BYTE_LENGTH,
+  );
+  const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_STOP_TYPE_OFFSET,
+    TrajectoryLayout.TRAJECTORY_INPUT_STOP_TYPE_TARGETS,
+  );
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_FLAGS_OFFSET,
+    TrajectoryLayout.TRAJECTORY_INPUT_FLAG_HAS_CONTINUE_GRAPH_X |
+      TrajectoryLayout.TRAJECTORY_INPUT_FLAG_COLLECT_VISIBLE_PIXELS,
+  );
+  store<f64>(trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_STOP_X_OFFSET, controlX);
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_MASK_POINTER_OFFSET,
+    load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_POINTER_OFFSET),
+  );
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_MASK_BYTE_LENGTH_OFFSET,
+    load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_LENGTH_OFFSET),
+  );
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_ORDERED_TARGET_COUNT_OFFSET,
+    orderedTargetCount,
+  );
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_REQUIRED_TARGET_COUNT_OFFSET,
+    requiredTargetCount,
+  );
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_TARGET_RECORD_POINTER_OFFSET,
+    combinedTargetPointer,
+  );
+  store<u32>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_BOUNDARY_EXPANSION_OFFSET,
+    <u32>loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_BOUNDARY_EXPANSION_INDEX),
+  );
+  store<f64>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_BOUNDS_RECT_X_OFFSET,
+    loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_X_INDEX),
+  );
+  store<f64>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_BOUNDS_RECT_Y_OFFSET,
+    loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_Y_INDEX),
+  );
+  store<f64>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_BOUNDS_RECT_WIDTH_OFFSET,
+    loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_WIDTH_INDEX),
+  );
+  store<f64>(
+    trajectoryInputPointer + TrajectoryLayout.TRAJECTORY_INPUT_BOUNDS_RECT_HEIGHT_OFFSET,
+    loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX),
+  );
+
+  const trajectoryResultPointer = runTrajectoryRequest(
+    trajectoryInputPointer,
+    TrajectoryLayout.TRAJECTORY_INPUT_BYTE_LENGTH,
+  );
+  const launchStatus = load<i32>(
+    trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET,
+  );
+  const pointCount = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_POINT_COUNT_OFFSET);
+  const targetHitIndex = load<i32>(
+    trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET,
+  );
+  const requiredHitIndex = load<i32>(
+    trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_REQUIRED_TARGETS_HIT_INDEX_OFFSET,
+  );
+  const obstacleHitIndex = load<i32>(
+    trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET,
+  );
+  const reachedOrderedTargetCount = load<u32>(
+    trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_REACHED_ORDERED_TARGET_COUNT_OFFSET,
+  );
+  const reachedRequiredTargetCount = load<u32>(
+    trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+  );
+  let acceptedPointIndex: i32 = -1;
+  if (launchStatus == TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_SUCCESS) {
+    const lastSafeIndex = obstacleHitIndex >= 0 ? obstacleHitIndex - 1 : <i32>pointCount - 1;
+    const completionIndex = NativeMath.max(<f64>targetHitIndex, <f64>requiredHitIndex);
+    const hasHitTargets =
+      reachedOrderedTargetCount >= orderedTargetCount && reachedRequiredTargetCount >= requiredTargetCount;
+    const isTargetCompletionSafe =
+      combinedTargetCount == 0 || (completionIndex >= 0 && completionIndex <= <f64>lastSafeIndex);
+    if (hasHitTargets && isTargetCompletionSafe) {
+      const pointXPointer = load<u32>(
+        trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_POINT_X_POINTER_OFFSET,
+      );
+      let pointIndex = targetHitIndex > 0 ? targetHitIndex : 0;
+      while (pointIndex < <i32>pointCount && (obstacleHitIndex < 0 || pointIndex < obstacleHitIndex)) {
+        if (load<f64>(pointXPointer + <u32>pointIndex * sizeof<f64>()) >= controlX) {
+          acceptedPointIndex = pointIndex;
+          break;
+        }
+        pointIndex += 1;
+      }
+    }
+  }
+
+  const replayResultPointer = reserveArena(Layout.STEP_GLITCH_REPLAY_RESULT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(replayResultPointer, 0, Layout.STEP_GLITCH_REPLAY_RESULT_BYTE_LENGTH);
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_MAGIC_OFFSET, Layout.STEP_GLITCH_REPLAY_RESULT_MAGIC);
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET,
+    acceptedPointIndex >= 0
+      ? Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_HIT
+      : Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_MISS,
+  );
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_TRAJECTORY_POINTER_OFFSET,
+    trajectoryResultPointer,
+  );
+  store<i32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_LAUNCH_STATUS_OFFSET, launchStatus);
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET,
+    reachedOrderedTargetCount,
+  );
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET,
+    reachedRequiredTargetCount,
+  );
+  store<i32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STOP_REASON_OFFSET, load<i32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_STOP_REASON_OFFSET));
+  store<i32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_TARGET_HIT_INDEX_OFFSET, targetHitIndex);
+  store<i32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REQUIRED_HIT_INDEX_OFFSET, requiredHitIndex);
+  store<i32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_OBSTACLE_HIT_INDEX_OFFSET, obstacleHitIndex);
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_POINT_COUNT_OFFSET, pointCount);
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_RK4_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_RK4_STEP_COUNT_OFFSET));
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BISECTION_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_BISECTION_COUNT_OFFSET));
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_MIN_STEP_JUMP_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_MIN_STEP_JUMP_COUNT_OFFSET));
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_SAMPLE_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET));
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REPLAY_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_REPLAY_COUNT_OFFSET));
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PROTECTION_POINTER_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PROTECTION_POINTER_OFFSET));
+  store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PROTECTION_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PROTECTION_COUNT_OFFSET));
+
+  if (launchStatus == TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_SUCCESS) {
+    const pointXPointer = load<u32>(
+      trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_POINT_X_POINTER_OFFSET,
+    );
+    const pointYPointer = load<u32>(
+      trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_POINT_Y_POINTER_OFFSET,
+    );
+    if (acceptedPointIndex >= 0) {
+      store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_FLAG_OFFSET, 1);
+      store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET, load<f64>(pointXPointer + <u32>acceptedPointIndex * sizeof<f64>()));
+      store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET, load<f64>(pointYPointer + <u32>acceptedPointIndex * sizeof<f64>()));
+    }
+    if (obstacleHitIndex >= 0) {
+      store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET, 1);
+      store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET, load<f64>(pointXPointer + <u32>obstacleHitIndex * sizeof<f64>()));
+      store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET, load<f64>(pointYPointer + <u32>obstacleHitIndex * sizeof<f64>()));
+    }
+    store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_CURRENT_X_OFFSET, load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_CURRENT_X_OFFSET));
+    store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_CURRENT_Y_OFFSET, load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_CURRENT_Y_OFFSET));
+    store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_CURRENT_DY_OFFSET, load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_CURRENT_DY_OFFSET));
+    store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PREVIOUS_X_OFFSET, load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PREVIOUS_X_OFFSET));
+    store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PREVIOUS_Y_OFFSET, load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PREVIOUS_Y_OFFSET));
+    store<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PREVIOUS_DY_OFFSET, load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PREVIOUS_DY_OFFSET));
+    store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_SAMPLE_INDEX_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_SAMPLE_INDEX_OFFSET));
+    store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATE_FLAGS_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_STATE_FLAGS_OFFSET));
+  }
+  return replayResultPointer;
 }
 
 @inline
@@ -387,6 +629,7 @@ export function createStepGlitchGeometryContext(inputPointer: u32, inputByteLeng
   requireArenaRange(sourceYPointer, sourceCount * sizeof<f64>(), sizeof<f64>());
   if (requiredTargetLength % 3 != 0) trap();
   requireElementRange(requiredTargetPointer, requiredTargetLength, sizeof<f64>(), sizeof<f64>());
+  validateStepGlitchTargetRecords(requiredTargetPointer, requiredTargetLength / 3);
   validatePrefixEvidenceDescriptor(prefixEvidencePointer, prefixEvidenceByteLength);
   const boundaryExpansion = validateContextValues(valuesPointer);
   validateFormulaSettings(settingsPointer);

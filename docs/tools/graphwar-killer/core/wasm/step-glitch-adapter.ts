@@ -1,5 +1,5 @@
-import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { imageToGraphPoint, pixelPointsEqual } from "../../core/geometry";
+import { GRAPHWAR_FUNC_MAX_STEPS, GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { graphToImagePoint, imageToGraphPoint, pixelPointsEqual } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, planeColumnToForwardColumn } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
@@ -28,6 +28,8 @@ import type {
 import { graphwarToolDefaults } from "../tool/defaults";
 import {
   GraphwarWasmAdapterError,
+  copyGraphwarWasmFloat64Values,
+  copyGraphwarWasmUint32Values,
   validateGraphwarWasmEnumValue,
   validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
@@ -42,6 +44,7 @@ import {
 import {
   readGraphwarWasmFormulaLaunchResultForStepGlitchTest,
   type GraphwarWasmFormulaLaunchResult,
+  type GraphwarWasmTrajectoryPhysicalState,
 } from "./formula-adapter";
 import { GraphwarWasmKernelRuntime } from "./runtime";
 import {
@@ -59,6 +62,7 @@ const STEP_GLITCH_COMMAND_CREATE_CONTEXT = 11;
 const STEP_GLITCH_COMMAND_TRACE_FRONTIER = 12;
 const STEP_GLITCH_COMMAND_TRACE_DFS = 13;
 const STEP_GLITCH_COMMAND_PREPARE_CANDIDATE_FORMULA_FOR_TEST = 15;
+const STEP_GLITCH_COMMAND_REPLAY_CANDIDATE_FOR_TEST = 16;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
@@ -79,6 +83,9 @@ const STEP_GLITCH_DFS_TRACE_BYTE_LENGTH = 56;
 const STEP_GLITCH_DFS_RESULT_MAGIC = 0x5347_4452;
 const STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH = 32;
 const STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH = 24;
+const STEP_GLITCH_REPLAY_INPUT_BYTE_LENGTH = 48;
+const STEP_GLITCH_REPLAY_RESULT_BYTE_LENGTH = 168;
+const STEP_GLITCH_REPLAY_RESULT_MAGIC = 0x5347_5252;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -237,6 +244,9 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   prepareCandidateFormulaForTest: (
     input: GraphwarWasmStepGlitchFormulaCandidateTestInput,
   ) => GraphwarWasmFormulaLaunchResult;
+  replayCandidateForTest: (
+    input: GraphwarWasmStepGlitchRealReplayTestInput,
+  ) => GraphwarWasmStepGlitchRealReplayTestOutput;
   traceGateFrontier: (
     input: GraphwarWasmStepGlitchGeometryFrontierInput,
   ) => GraphwarWasmStepGlitchGeometryFrontierTrace;
@@ -247,6 +257,50 @@ export interface GraphwarWasmStepGlitchFormulaCandidateTestInput {
   path: readonly PixelPoint[];
   windows: { type: "automatic" } | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
 }
+
+/** One scanner candidate replay is kept as a cold, target-aware command input. */
+export interface GraphwarWasmStepGlitchRealReplayTestInput {
+  controlX: number;
+  orderedTargets: readonly GraphwarTrajectoryTargetCircle[];
+  path: readonly PixelPoint[];
+  windows: { type: "automatic" } | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
+}
+
+export type GraphwarWasmStepGlitchRealReplayTestOutput =
+  | {
+      acceptedSamplePointCount: number;
+      bisectionCount: number;
+      launchStatus: "invalid";
+      minStepJumpCount: number;
+      observedSignProtection: readonly number[];
+      reachedRequiredTargetCount: number;
+      reachedTargetCount: number;
+      replayCount: number;
+      rk4StepCount: number;
+      status: "miss";
+      stopReason: number;
+    }
+  | {
+      acceptedPoint?: GraphPoint;
+      acceptedSamplePointCount: number;
+      bisectionCount: number;
+      blockedPoint?: GraphPoint;
+      launchStatus: "success";
+      minStepJumpCount: number;
+      obstacleHitIndex: number;
+      observedSignProtection: readonly number[];
+      points: readonly GraphPoint[];
+      reachedRequiredTargetCount: number;
+      reachedTargetCount: number;
+      replayCount: number;
+      requiredTargetsHitIndex: number;
+      rk4StepCount: number;
+      state: GraphwarWasmTrajectoryPhysicalState;
+      status: "hit" | "miss";
+      stopReason: number;
+      targetHitIndex: number;
+      visiblePixels: readonly PixelPoint[];
+    };
 
 export interface GraphwarWasmStepGlitchGeometryFrontierInput {
   acceptedPoint: GraphPoint;
@@ -514,6 +568,10 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
     const boundsRectSnapshot = { ...input.boundsRect };
     const formulaSettingsSnapshot = { ...input.formulaMode.settings };
     const sourcePathSnapshot = input.sourcePath.map((point) => createPixelPoint(point.x, point.y));
+    const requiredTargetsSnapshot = input.requiredTargets.map((target) => ({
+      center: createPixelPoint(target.center.x, target.center.y),
+      radius: target.radius,
+    }));
     const packed = packedResult.input;
     const prefixEvidenceDescriptor = writePrefixEvidenceDescriptor(runtime, packed.prefixEvidence);
     const inputPointer = runtime.reserveArena(STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH, 4);
@@ -624,6 +682,19 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
             candidateInput,
           );
         },
+        replayCandidateForTest(replayInput) {
+          assertActive();
+          return replayGraphwarWasmStepGlitchCandidate(
+            runtime,
+            contextPointer,
+            boundsSnapshot,
+            boundsRectSnapshot,
+            formulaSettingsSnapshot,
+            sourcePathSnapshot,
+            requiredTargetsSnapshot,
+            replayInput,
+          );
+        },
         traceGateFrontier(input) {
           assertActive();
           return traceGraphwarWasmStepGlitchGeometryFrontier(runtime, contextPointer, input);
@@ -680,35 +751,7 @@ function prepareGraphwarWasmStepGlitchCandidateFormula(
   const commandMark = runtime.markArena();
   try {
     const packedPath = packGraphwarWasmPointSoA(runtime, input.path, runtime.arenaBase);
-    let windowPointer = 0;
-    let windowCount = 0;
-    if (input.windows.type === "explicit") {
-      windowCount = input.windows.segments.length;
-      windowPointer = runtime.reserveArena(windowCount * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH, 8);
-      new Uint8Array(runtime.buffer, windowPointer, windowCount * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH).fill(0);
-      const windowView = new DataView(
-        runtime.buffer,
-        windowPointer,
-        windowCount * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
-      );
-      for (let index = 0; index < windowCount; index += 1) {
-        const window = input.windows.segments[index];
-        if (window === undefined) {
-          continue;
-        }
-        if (!Number.isFinite(window.startX) || !Number.isFinite(window.endX) || !(window.endX > window.startX)) {
-          throw new GraphwarWasmAdapterError(
-            "invalid-formula-input",
-            `Graphwar WASM Step-glitch fixed window ${index} is invalid`,
-            "input",
-          );
-        }
-        const offset = index * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
-        windowView.setUint32(offset, 1, true);
-        windowView.setFloat64(offset + 8, window.startX, true);
-        windowView.setFloat64(offset + 16, window.endX, true);
-      }
-    }
+    const packedWindows = packGraphwarWasmStepGlitchCandidateWindows(runtime, segmentCount, input.windows);
 
     const inputPointer = runtime.reserveArena(STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH, 4);
     const inputView = new DataView(runtime.buffer, inputPointer, STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH);
@@ -716,9 +759,9 @@ function prepareGraphwarWasmStepGlitchCandidateFormula(
     inputView.setUint32(4, packedPath.x.pointer, true);
     inputView.setUint32(8, packedPath.y.pointer, true);
     inputView.setUint32(12, packedPath.length, true);
-    inputView.setUint32(16, windowPointer, true);
-    inputView.setUint32(20, windowCount, true);
-    inputView.setUint32(24, input.windows.type === "automatic" ? 0 : 1, true);
+    inputView.setUint32(16, packedWindows.pointer, true);
+    inputView.setUint32(20, packedWindows.count, true);
+    inputView.setUint32(24, packedWindows.mode, true);
     inputView.setUint32(28, 0, true);
     const outputMinimumPointer = runtime.arenaCursor;
     const resultPointer = runtime.runRouteTask(
@@ -733,6 +776,568 @@ function prepareGraphwarWasmStepGlitchCandidateFormula(
       resultPointer,
       outputMinimumPointer,
     );
+    runtime.resetArena(commandMark);
+    return result;
+  } catch (error) {
+    runtime.resetArenaAfterFault(commandMark);
+    throw error;
+  }
+}
+
+function packGraphwarWasmStepGlitchCandidateWindows(
+  runtime: GraphwarWasmKernelRuntime,
+  segmentCount: number,
+  windows: GraphwarWasmStepGlitchFormulaCandidateTestInput["windows"],
+) {
+  if (windows.type === "automatic") {
+    return { count: 0, mode: 0, pointer: 0 };
+  }
+  if (windows.segments.length !== segmentCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch fixed windows must match the candidate segment count",
+      "input",
+    );
+  }
+  const byteLength = windows.segments.length * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+  const pointer = runtime.reserveArena(byteLength, 8);
+  new Uint8Array(runtime.buffer, pointer, byteLength).fill(0);
+  const view = new DataView(runtime.buffer, pointer, byteLength);
+  for (let index = 0; index < windows.segments.length; index += 1) {
+    const window = windows.segments[index];
+    if (window === undefined) {
+      continue;
+    }
+    if (!Number.isFinite(window.startX) || !Number.isFinite(window.endX) || !(window.endX > window.startX)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-formula-input",
+        `Graphwar WASM Step-glitch fixed window ${index} is invalid`,
+        "input",
+      );
+    }
+    const offset = index * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+    view.setUint32(offset, 1, true);
+    view.setFloat64(offset + 8, window.startX, true);
+    view.setFloat64(offset + 16, window.endX, true);
+  }
+  return { count: windows.segments.length, mode: 1, pointer };
+}
+
+function throwGraphwarWasmStepGlitchReplayResultError(message: string): never {
+  throw new GraphwarWasmAdapterError("invalid-formula-result", message, "output");
+}
+
+function replayGraphwarWasmStepGlitchCandidate(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  bounds: GraphBounds,
+  boundsRect: BoundsRect,
+  settings: GraphwarTrajectoryFormulaSettings,
+  sourcePath: readonly PixelPoint[],
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
+  input: GraphwarWasmStepGlitchRealReplayTestInput,
+): GraphwarWasmStepGlitchRealReplayTestOutput {
+  if (
+    !Number.isFinite(input.controlX) ||
+    input.path.length < 2 ||
+    input.path.length < sourcePath.length ||
+    !input.path.every(isGraphwarTrajectoryPoint) ||
+    !sourcePath.every((point, index) => pixelPointsEqual(point, input.path[index])) ||
+    !targetsAreValid(input.orderedTargets)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch replay input is malformed",
+      "input",
+    );
+  }
+
+  const commandMark = runtime.markArena();
+  try {
+    const packedPath = packGraphwarWasmPointSoA(runtime, input.path, runtime.arenaBase);
+    const packedWindows = packGraphwarWasmStepGlitchCandidateWindows(runtime, input.path.length - 1, input.windows);
+    const packedTargets = packTargets(runtime, input.orderedTargets, runtime.arenaBase);
+    const inputPointer = runtime.reserveArena(STEP_GLITCH_REPLAY_INPUT_BYTE_LENGTH, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, STEP_GLITCH_REPLAY_INPUT_BYTE_LENGTH);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setUint32(4, packedPath.x.pointer, true);
+    inputView.setUint32(8, packedPath.y.pointer, true);
+    inputView.setUint32(12, packedPath.length, true);
+    inputView.setUint32(16, packedWindows.pointer, true);
+    inputView.setUint32(20, packedWindows.count, true);
+    inputView.setUint32(24, packedWindows.mode, true);
+    inputView.setUint32(28, packedTargets.pointer, true);
+    inputView.setUint32(32, input.orderedTargets.length, true);
+    inputView.setUint32(36, 0, true);
+    inputView.setFloat64(40, input.controlX, true);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const replayResultPointer = runtime.runRouteTask(
+      STEP_GLITCH_COMMAND_REPLAY_CANDIDATE_FOR_TEST,
+      inputPointer,
+      STEP_GLITCH_REPLAY_INPUT_BYTE_LENGTH,
+    );
+    const replayRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: replayResultPointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_REPLAY_RESULT_BYTE_LENGTH, minimumPointer: outputMinimumPointer },
+    );
+    const replayView = new DataView(replayRange.buffer, replayRange.byteOffset, replayRange.byteLength);
+    const status = validateGraphwarWasmEnumValue(replayView.getUint32(4, true), [0, 1] as const, "replay.status");
+    const launchStatus = validateGraphwarWasmEnumValue(
+      replayView.getInt32(12, true),
+      [0, 1] as const,
+      "replay.launchStatus",
+    );
+    if (replayView.getUint32(0, true) !== STEP_GLITCH_REPLAY_RESULT_MAGIC) {
+      throwGraphwarWasmStepGlitchReplayResultError("Graphwar WASM Step-glitch replay result has invalid magic");
+    }
+    const trajectoryPointer = replayView.getUint32(8, true);
+    const trajectoryRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: trajectoryPointer },
+      { alignment: 8, elementByteLength: 224, minimumPointer: outputMinimumPointer },
+    );
+    const trajectoryView = new DataView(trajectoryRange.buffer, trajectoryRange.byteOffset, trajectoryRange.byteLength);
+    const mirroredFields: readonly [number, number, "i32" | "u32"][] = [
+      [12, 0, "i32"],
+      [16, 100, "u32"],
+      [20, 104, "u32"],
+      [64, 4, "i32"],
+      [68, 108, "i32"],
+      [72, 112, "i32"],
+      [76, 116, "i32"],
+      [80, 8, "u32"],
+      [84, 12, "u32"],
+      [88, 16, "u32"],
+      [92, 20, "u32"],
+      [96, 212, "u32"],
+      [100, 216, "u32"],
+      [104, 136, "u32"],
+      [108, 140, "u32"],
+      [160, 192, "u32"],
+      [164, 196, "u32"],
+    ];
+    for (const [replayOffset, trajectoryOffset, type] of mirroredFields) {
+      const replayValue =
+        type === "i32" ? replayView.getInt32(replayOffset, true) : replayView.getUint32(replayOffset, true);
+      const trajectoryValue =
+        type === "i32"
+          ? trajectoryView.getInt32(trajectoryOffset, true)
+          : trajectoryView.getUint32(trajectoryOffset, true);
+      if (replayValue !== trajectoryValue) {
+        throwGraphwarWasmStepGlitchReplayResultError("Graphwar WASM Step-glitch replay fields disagree");
+      }
+    }
+    for (const [replayOffset, trajectoryOffset] of [
+      [112, 32],
+      [120, 40],
+      [128, 48],
+      [136, 168],
+      [144, 176],
+      [152, 184],
+    ] as const) {
+      if (!Object.is(replayView.getFloat64(replayOffset, true), trajectoryView.getFloat64(trajectoryOffset, true))) {
+        throwGraphwarWasmStepGlitchReplayResultError("Graphwar WASM Step-glitch replay state disagrees");
+      }
+    }
+
+    const reachedTargetCount = validateGraphwarWasmU32(replayView.getUint32(16, true), "replay.reachedTargetCount");
+    const reachedRequiredTargetCount = validateGraphwarWasmU32(
+      replayView.getUint32(20, true),
+      "replay.reachedRequiredTargetCount",
+    );
+    if (reachedTargetCount > input.orderedTargets.length || reachedRequiredTargetCount > requiredTargets.length) {
+      throwGraphwarWasmStepGlitchReplayResultError("Graphwar WASM Step-glitch replay target counts overflow input");
+    }
+    const stopReason = validateGraphwarWasmEnumValue(
+      replayView.getInt32(64, true),
+      [1, 2, 3, 4, 5, 6, 7] as const,
+      "replay.stopReason",
+    );
+    const acceptedSamplePointCount = validateGraphwarWasmU32(
+      replayView.getUint32(96, true),
+      "replay.acceptedSamplePointCount",
+    );
+    const bisectionCount = validateGraphwarWasmU32(replayView.getUint32(88, true), "replay.bisectionCount");
+    const minStepJumpCount = validateGraphwarWasmU32(replayView.getUint32(92, true), "replay.minStepJumpCount");
+    const replayCount = validateGraphwarWasmU32(replayView.getUint32(100, true), "replay.replayCount");
+    const rk4StepCount = validateGraphwarWasmU32(replayView.getUint32(84, true), "replay.rk4StepCount");
+    const protectionCount = validateGraphwarWasmU32(replayView.getUint32(108, true), "replay.protectionCount");
+    if (protectionCount !== input.path.length - 1) {
+      throwGraphwarWasmStepGlitchReplayResultError("Graphwar WASM Step-glitch replay protection length differs");
+    }
+    const observedSignProtection = [
+      ...copyGraphwarWasmUint32Values(
+        runtime,
+        { length: protectionCount, pointer: replayView.getUint32(104, true) },
+        outputMinimumPointer,
+      ),
+    ];
+    for (let index = 0; index < observedSignProtection.length; index += 1) {
+      validateGraphwarWasmProtectionBits(
+        observedSignProtection[index],
+        ALLOWED_SIGN_PROTECTION_BITS,
+        `replay.protection[${index}]`,
+      );
+    }
+    const pointCount = validateGraphwarWasmU32(replayView.getUint32(80, true), "replay.pointCount");
+    const acceptedFlag = validateGraphwarWasmEnumValue(
+      replayView.getUint32(24, true),
+      [0, 1] as const,
+      "replay.acceptedFlag",
+    );
+    const blockedFlag = validateGraphwarWasmEnumValue(
+      replayView.getUint32(28, true),
+      [0, 1] as const,
+      "replay.blockedFlag",
+    );
+    const obstacleHitIndex = replayView.getInt32(76, true);
+    const targetHitIndex = replayView.getInt32(68, true);
+    const requiredTargetsHitIndex = replayView.getInt32(72, true);
+    const stateFlags = replayView.getUint32(164, true);
+    if (launchStatus === 0) {
+      if (
+        status !== 0 ||
+        pointCount !== 0 ||
+        acceptedFlag !== 0 ||
+        blockedFlag !== 0 ||
+        reachedTargetCount !== 0 ||
+        reachedRequiredTargetCount !== 0 ||
+        targetHitIndex !== -1 ||
+        requiredTargetsHitIndex !== -1 ||
+        obstacleHitIndex !== -1 ||
+        stateFlags !== 0
+      ) {
+        throwGraphwarWasmStepGlitchReplayResultError("Invalid launch replay contains physical output");
+      }
+      const result = {
+        acceptedSamplePointCount,
+        bisectionCount,
+        launchStatus: "invalid",
+        minStepJumpCount,
+        observedSignProtection,
+        reachedRequiredTargetCount,
+        reachedTargetCount,
+        replayCount,
+        rk4StepCount,
+        status: "miss",
+        stopReason,
+      } satisfies GraphwarWasmStepGlitchRealReplayTestOutput;
+      runtime.resetArena(commandMark);
+      return result;
+    }
+
+    if (pointCount === 0) {
+      throwGraphwarWasmStepGlitchReplayResultError("Successful Step-glitch replay has no physical points");
+    }
+    if (replayCount < 1 || acceptedSamplePointCount < pointCount) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay counters disagree with its physical points");
+    }
+    const pointXs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pointCount, pointer: trajectoryView.getUint32(24, true) },
+      outputMinimumPointer,
+    );
+    const pointYs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pointCount, pointer: trajectoryView.getUint32(28, true) },
+      outputMinimumPointer,
+    );
+    const pointDys = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: pointCount, pointer: trajectoryView.getUint32(208, true) },
+      outputMinimumPointer,
+    );
+    const points: GraphPoint[] = [];
+    for (let index = 0; index < pointCount; index += 1) {
+      if (settings.equation === "ddy") {
+        validateGraphwarWasmFiniteNumber(pointDys[index], `replay.points[${index}].dy`);
+      } else if (!Object.is(pointDys[index], 0)) {
+        throwGraphwarWasmStepGlitchReplayResultError("First-order replay contains second-order point state");
+      }
+      points.push(
+        createGraphPoint(
+          validateGraphwarWasmFiniteNumber(pointXs[index], `replay.points[${index}].x`),
+          validateGraphwarWasmFiniteNumber(pointYs[index], `replay.points[${index}].y`),
+        ),
+      );
+    }
+    const visiblePointCount = validateGraphwarWasmU32(trajectoryView.getUint32(152, true), "replay.visiblePointCount");
+    if (visiblePointCount !== pointCount) {
+      throwGraphwarWasmStepGlitchReplayResultError("Cold scanner replay did not collect every visible point");
+    }
+    const visibleXs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: visiblePointCount, pointer: trajectoryView.getUint32(144, true) },
+      outputMinimumPointer,
+    );
+    const visibleYs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { length: visiblePointCount, pointer: trajectoryView.getUint32(148, true) },
+      outputMinimumPointer,
+    );
+    const visiblePixels = Array.from({ length: visiblePointCount }, (_value, index) =>
+      createPixelPoint(
+        validateGraphwarWasmFiniteNumber(visibleXs[index], `replay.visiblePixels[${index}].x`),
+        validateGraphwarWasmFiniteNumber(visibleYs[index], `replay.visiblePixels[${index}].y`),
+      ),
+    );
+    for (let index = 0; index < visiblePixels.length; index += 1) {
+      const expectedPixel = graphToImagePoint(points[index], bounds, boundsRect);
+      if (!Object.is(visiblePixels[index].x, expectedPixel.x) || !Object.is(visiblePixels[index].y, expectedPixel.y)) {
+        throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay visible pixels disagree with its samples");
+      }
+    }
+    if (
+      targetHitIndex < -1 ||
+      targetHitIndex >= pointCount ||
+      requiredTargetsHitIndex < -1 ||
+      requiredTargetsHitIndex >= pointCount
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay target index is outside its samples");
+    }
+    const hasObstacleHit = obstacleHitIndex >= 0;
+    if (
+      obstacleHitIndex < -1 ||
+      obstacleHitIndex >= pointCount ||
+      hasObstacleHit !== (blockedFlag === 1) ||
+      hasObstacleHit !== (stopReason === 6) ||
+      (hasObstacleHit && obstacleHitIndex !== pointCount - 1)
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay blocked point disagrees with obstacle index");
+    }
+
+    const requiredTargetHits = new Uint8Array(requiredTargets.length);
+    let expectedReachedTargetCount = 0;
+    let expectedReachedRequiredTargetCount = 0;
+    let expectedTargetHitIndex = -1;
+    let expectedRequiredTargetsHitIndex = -1;
+    for (let pointIndex = 1; pointIndex < visiblePixels.length; pointIndex += 1) {
+      const pixel = visiblePixels[pointIndex];
+      for (let targetIndex = 0; targetIndex < requiredTargets.length; targetIndex += 1) {
+        if (requiredTargetHits[targetIndex] !== 0) {
+          continue;
+        }
+        const target = requiredTargets[targetIndex];
+        const dx = pixel.x - target.center.x;
+        const dy = pixel.y - target.center.y;
+        if (dx * dx + dy * dy < target.radius * target.radius) {
+          requiredTargetHits[targetIndex] = 1;
+          expectedReachedRequiredTargetCount += 1;
+        }
+      }
+      while (expectedReachedTargetCount < input.orderedTargets.length) {
+        const target = input.orderedTargets[expectedReachedTargetCount];
+        const dx = pixel.x - target.center.x;
+        const dy = pixel.y - target.center.y;
+        if (!(dx * dx + dy * dy < target.radius * target.radius)) {
+          break;
+        }
+        expectedReachedTargetCount += 1;
+      }
+      if (
+        input.orderedTargets.length > 0 &&
+        expectedReachedTargetCount === input.orderedTargets.length &&
+        expectedTargetHitIndex < 0
+      ) {
+        expectedTargetHitIndex = pointIndex;
+      }
+      if (
+        requiredTargets.length > 0 &&
+        expectedReachedRequiredTargetCount === requiredTargets.length &&
+        expectedRequiredTargetsHitIndex < 0
+      ) {
+        expectedRequiredTargetsHitIndex = pointIndex;
+      }
+    }
+    if (
+      reachedTargetCount !== expectedReachedTargetCount ||
+      reachedRequiredTargetCount !== expectedReachedRequiredTargetCount ||
+      targetHitIndex !== expectedTargetHitIndex ||
+      requiredTargetsHitIndex !== expectedRequiredTargetsHitIndex
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay target state disagrees with its samples");
+    }
+
+    const lastSafeIndex = hasObstacleHit ? obstacleHitIndex - 1 : pointCount - 1;
+    const completionIndex = Math.max(expectedTargetHitIndex, expectedRequiredTargetsHitIndex);
+    const hasReachedTargets =
+      expectedReachedTargetCount === input.orderedTargets.length &&
+      expectedReachedRequiredTargetCount === requiredTargets.length;
+    const isCompletionSafe =
+      input.orderedTargets.length === 0 && requiredTargets.length === 0
+        ? true
+        : completionIndex >= 0 && completionIndex <= lastSafeIndex;
+    let expectedAcceptedPointIndex = -1;
+    if (hasReachedTargets && isCompletionSafe) {
+      for (
+        let pointIndex = Math.max(expectedTargetHitIndex, 0);
+        pointIndex < pointCount && (!hasObstacleHit || pointIndex < obstacleHitIndex);
+        pointIndex += 1
+      ) {
+        if (points[pointIndex].x >= input.controlX) {
+          expectedAcceptedPointIndex = pointIndex;
+          break;
+        }
+      }
+    }
+    const hasAcceptedPoint = expectedAcceptedPointIndex >= 0;
+    if ((status === 1) !== hasAcceptedPoint || (acceptedFlag === 1) !== hasAcceptedPoint) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay hit status disagrees with its samples");
+    }
+    const acceptedX = replayView.getFloat64(32, true);
+    const acceptedY = replayView.getFloat64(40, true);
+    const acceptedPoint = hasAcceptedPoint
+      ? createGraphPoint(
+          validateGraphwarWasmFiniteNumber(acceptedX, "replay.acceptedPoint.x"),
+          validateGraphwarWasmFiniteNumber(acceptedY, "replay.acceptedPoint.y"),
+        )
+      : undefined;
+    if (
+      acceptedPoint
+        ? !Object.is(acceptedPoint.x, points[expectedAcceptedPointIndex].x) ||
+          !Object.is(acceptedPoint.y, points[expectedAcceptedPointIndex].y)
+        : !Object.is(acceptedX, 0) || !Object.is(acceptedY, 0)
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay accepted point is not canonical");
+    }
+    const blockedX = replayView.getFloat64(48, true);
+    const blockedY = replayView.getFloat64(56, true);
+    const blockedPoint = hasObstacleHit
+      ? createGraphPoint(
+          validateGraphwarWasmFiniteNumber(blockedX, "replay.blockedPoint.x"),
+          validateGraphwarWasmFiniteNumber(blockedY, "replay.blockedPoint.y"),
+        )
+      : undefined;
+    if (
+      blockedPoint
+        ? !Object.is(blockedPoint.x, points[obstacleHitIndex].x) ||
+          !Object.is(blockedPoint.y, points[obstacleHitIndex].y)
+        : !Object.is(blockedX, 0) || !Object.is(blockedY, 0)
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay blocked point is not canonical");
+    }
+    const hasPreviousPoint = (stateFlags & 1) !== 0;
+    const expectedStateFlags =
+      (hasPreviousPoint ? 1 : 0) |
+      (settings.equation === "ddy" ? 2 : 0) |
+      (hasPreviousPoint && settings.equation === "ddy" ? 4 : 0);
+    if (stateFlags !== expectedStateFlags) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay terminal state flags are inconsistent");
+    }
+    const currentPoint = createGraphPoint(
+      validateGraphwarWasmFiniteNumber(replayView.getFloat64(112, true), "replay.state.currentPoint.x"),
+      validateGraphwarWasmFiniteNumber(replayView.getFloat64(120, true), "replay.state.currentPoint.y"),
+    );
+    const previousPoint = hasPreviousPoint
+      ? createGraphPoint(
+          validateGraphwarWasmFiniteNumber(replayView.getFloat64(136, true), "replay.state.previousPoint.x"),
+          validateGraphwarWasmFiniteNumber(replayView.getFloat64(144, true), "replay.state.previousPoint.y"),
+        )
+      : undefined;
+    const sampleIndex = validateGraphwarWasmU32(replayView.getUint32(160, true), "replay.state.sampleIndex");
+    const state = createGraphwarWasmTrajectoryPhysicalStateFromSamplingState(
+      settings.equation === "ddy"
+        ? {
+            currentPoint,
+            dy: validateGraphwarWasmFiniteNumber(replayView.getFloat64(128, true), "replay.state.currentDy"),
+            ...(previousPoint
+              ? {
+                  previousDy: validateGraphwarWasmFiniteNumber(
+                    replayView.getFloat64(152, true),
+                    "replay.state.previousDy",
+                  ),
+                  previousPoint,
+                }
+              : {}),
+            sampleIndex,
+          }
+        : { currentPoint, ...(previousPoint ? { previousPoint } : {}), sampleIndex },
+      settings.equation,
+      "replay.state",
+    );
+    const statePreviousPoint = state.equation === "ddy" ? state.previous?.point : state.previousPoint;
+    const statePreviousDy = state.equation === "ddy" ? state.previous?.dy : undefined;
+    const stateCurrentDy = state.equation === "ddy" ? state.currentDy : undefined;
+    const expectedSampleIndex = stopReason === 4 ? pointCount : pointCount - 1;
+    if (state.sampleIndex !== expectedSampleIndex) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay sample index disagrees with its points");
+    }
+    const lastPoint = points[pointCount - 1];
+    const lastPointDy = pointDys[pointCount - 1];
+    if (stopReason === 4) {
+      if (
+        !statePreviousPoint ||
+        !Object.is(statePreviousPoint.x, lastPoint.x) ||
+        !Object.is(statePreviousPoint.y, lastPoint.y) ||
+        (settings.equation === "ddy" && !Object.is(statePreviousDy, lastPointDy))
+      ) {
+        throwGraphwarWasmStepGlitchReplayResultError(
+          "Out-of-bounds Step-glitch replay does not retain its last published point",
+        );
+      }
+      const minX = Math.min(bounds.minX, bounds.maxX);
+      const maxX = Math.max(bounds.minX, bounds.maxX);
+      const minY = Math.min(bounds.minY, bounds.maxY);
+      const maxY = Math.max(bounds.minY, bounds.maxY);
+      if (
+        state.currentPoint.x >= minX &&
+        state.currentPoint.x <= maxX &&
+        state.currentPoint.y >= minY &&
+        state.currentPoint.y <= maxY
+      ) {
+        throwGraphwarWasmStepGlitchReplayResultError("Out-of-bounds Step-glitch replay retained an in-bounds state");
+      }
+    } else if (
+      !Object.is(state.currentPoint.x, lastPoint.x) ||
+      !Object.is(state.currentPoint.y, lastPoint.y) ||
+      (settings.equation === "ddy" && !Object.is(stateCurrentDy, lastPointDy))
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay terminal state disagrees with its last point");
+    }
+    if (pointCount > 1 && stopReason !== 4) {
+      const penultimatePoint = points[pointCount - 2];
+      if (
+        !statePreviousPoint ||
+        !Object.is(statePreviousPoint.x, penultimatePoint.x) ||
+        !Object.is(statePreviousPoint.y, penultimatePoint.y) ||
+        (settings.equation === "ddy" && !Object.is(statePreviousDy, pointDys[pointCount - 2]))
+      ) {
+        throwGraphwarWasmStepGlitchReplayResultError(
+          "Step-glitch replay previous state disagrees with its penultimate point",
+        );
+      }
+    }
+    if (stopReason === 1 && state.currentPoint.x < input.controlX) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay stopped before its requested frontier");
+    }
+    if (stopReason === 3 && state.sampleIndex !== GRAPHWAR_FUNC_MAX_STEPS - 1) {
+      throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay max-steps state stopped early");
+    }
+    if (stopReason === 7) {
+      throwGraphwarWasmStepGlitchReplayResultError("Cold Step-glitch replay unexpectedly stopped on target completion");
+    }
+    const result = {
+      ...(acceptedPoint ? { acceptedPoint } : {}),
+      acceptedSamplePointCount,
+      bisectionCount,
+      ...(blockedPoint ? { blockedPoint } : {}),
+      launchStatus: "success",
+      minStepJumpCount,
+      obstacleHitIndex,
+      observedSignProtection,
+      points,
+      reachedRequiredTargetCount,
+      reachedTargetCount,
+      replayCount,
+      requiredTargetsHitIndex,
+      rk4StepCount,
+      state,
+      status: status === 1 ? "hit" : "miss",
+      stopReason,
+      targetHitIndex,
+      visiblePixels,
+    } satisfies GraphwarWasmStepGlitchRealReplayTestOutput;
     runtime.resetArena(commandMark);
     return result;
   } catch (error) {

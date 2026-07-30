@@ -358,12 +358,12 @@ test("guards the source and release configuration against managed hot-path alloc
     .map(({ file }) => file)
     .sort();
   assert.deepEqual(trajectoryRequestReferenceFiles, ["step-glitch.ts", "trajectory.ts"]);
-  assert.equal((combinedSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 4);
+  assert.equal((combinedSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 5);
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 2);
-  assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 2);
-  assert.equal((combinedSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 3);
+  assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 3);
+  assert.equal((combinedSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 4);
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
-  assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 1);
+  assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
   assert.match(stepGlitchSource, /import \{ runTrajectoryRequest \} ;/);
   const prepareLaunchReferenceFiles = executableSources
     .filter(({ source }) => /\brunPrepareLaunch\b/.test(source))

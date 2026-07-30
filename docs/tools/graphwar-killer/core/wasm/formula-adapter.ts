@@ -332,167 +332,198 @@ export function prepareGraphwarWasmFormulaLaunch(
       packedInput.inputPointer,
       FORMULA_INPUT_BYTE_LENGTH,
     );
-    const resultRange = validateGraphwarWasmMemoryRange(
-      runtime,
-      { length: 1, pointer: resultPointer },
-      {
-        alignment: 8,
-        elementByteLength: FORMULA_LAUNCH_RESULT_BYTE_LENGTH,
-        minimumPointer: outputMinimumPointer,
-      },
-    );
-    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
-    const status = resultView.getInt32(0, true);
-    const iterationCount = resultView.getUint32(4, true);
-    const formulaPointIterationCount = resultView.getUint32(56, true);
-    const materialResultPointer = resultView.getUint32(48, true);
-    const flags = resultView.getUint32(52, true);
-    const protectionPointer = resultView.getUint32(60, true);
-    const protectionCount = resultView.getUint32(64, true);
-    const formulaPointCount = resultView.getUint32(68, true);
-    const formulaPointXPointer = resultView.getUint32(72, true);
-    const formulaPointYPointer = resultView.getUint32(76, true);
-    if (protectionCount !== packedInput.segmentCount) {
-      throwFormulaResultError("Launch result protection count does not match the source segments");
-    }
-    const observedSignProtection = copyAndValidateProtection(
-      runtime,
-      protectionPointer,
-      protectionCount,
-      outputMinimumPointer,
-    );
+    return readGraphwarWasmFormulaLaunchResult(runtime, descriptor, packedInput, resultPointer, outputMinimumPointer);
+  });
+}
 
-    if (status === FORMULA_LAUNCH_STATUS_INVALID) {
-      if (
-        materialResultPointer !== 0 ||
-        flags !== 0 ||
-        formulaPointCount !== 0 ||
-        formulaPointXPointer !== 0 ||
-        formulaPointYPointer !== 0
-      ) {
-        throwFormulaResultError("Invalid launch result leaked success-only state");
-      }
-      return {
-        formulaPointIterationCount,
-        iterationCount,
-        observedSignProtection,
-        status: "invalid",
-      };
-    }
-    if (status !== FORMULA_LAUNCH_STATUS_SUCCESS) {
-      throwFormulaResultError("Launch result contains an unsupported status");
-    }
-    if (formulaPointCount !== packedInput.pointCount) {
-      throwFormulaResultError("Launch result formula point count does not match the source path");
-    }
-    const formulaPointXs = copyGraphwarWasmFloat64Values(
-      runtime,
-      { length: formulaPointCount, pointer: formulaPointXPointer },
-      outputMinimumPointer,
-    );
-    const formulaPointYs = copyGraphwarWasmFloat64Values(
-      runtime,
-      { length: formulaPointCount, pointer: formulaPointYPointer },
-      outputMinimumPointer,
-    );
-    const formulaPoints: GraphPoint[] = [];
-    for (let index = 0; index < formulaPointCount; index += 1) {
-      const x = formulaPointXs[index];
-      const y = formulaPointYs[index];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        throwFormulaResultError(`Launch result formulaPoints[${index}] is not finite`);
-      }
-      formulaPoints.push(createGraphPoint(x, y));
-    }
+/** Test-only decoder for scanner-owned launch requests; production scanner commands consume results in WASM. */
+export function readGraphwarWasmFormulaLaunchResultForStepGlitchTest(
+  runtime: GraphwarWasmKernelRuntime,
+  settings: GraphwarWasmFormulaInputDescriptor["settings"],
+  pointCount: number,
+  resultPointer: number,
+  outputMinimumPointer: number,
+): GraphwarWasmFormulaLaunchResult {
+  const validatedPointCount = validateGraphwarWasmU32(pointCount, "pointCount", "input");
+  if (validatedPointCount < 2) {
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Formula point count must be at least two", "input");
+  }
+  return readGraphwarWasmFormulaLaunchResult(
+    runtime,
+    { settings },
+    { pointCount: validatedPointCount, segmentCount: validatedPointCount - 1 },
+    resultPointer,
+    outputMinimumPointer,
+  );
+}
 
-    const { algorithm, decimalPlaces, equation } = descriptor.settings;
-    const materialResult = readRawFormulaBatchResult(runtime, materialResultPointer, outputMinimumPointer, {
-      expectedMaterialCountMaximum: packedInput.segmentCount,
-      expectedMaterialStride: getExpectedMaterialStride(algorithm, equation),
-      expectedMaterialType: getExpectedMaterialType(algorithm, equation),
-      expectedProtectionCount: packedInput.segmentCount,
-      expectedValueCount: 0,
-    });
-    if (!uint32ArraysEqual(materialResult.observedSignProtection, observedSignProtection)) {
-      throwFormulaResultError("Launch result and nested material protection evidence do not match");
-    }
-    const compiledMaterials = decodeFormulaMaterials(
-      runtime,
-      materialResult,
-      algorithm,
-      equation,
-      decimalPlaces,
-      packedInput.segmentCount,
-      outputMinimumPointer,
-    );
-    validateFiniteLaunchFormulaMaterials(compiledMaterials, equation);
-    const pointX = resultView.getFloat64(16, true);
-    const pointY = resultView.getFloat64(24, true);
-    if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) {
-      throwFormulaResultError("Launch result point is not finite");
-    }
-    const point = createGraphPoint(pointX, pointY);
-    const angleRadians = resultView.getFloat64(8, true);
-    const initialDy = resultView.getFloat64(32, true);
-    const yOffset = resultView.getFloat64(40, true);
+function readGraphwarWasmFormulaLaunchResult(
+  runtime: GraphwarWasmKernelRuntime,
+  descriptor: Pick<GraphwarWasmFormulaInputDescriptor, "secondOrderLaunchAngle" | "settings">,
+  packedInput: Pick<PackedFormulaInput, "pointCount" | "segmentCount">,
+  resultPointer: number,
+  outputMinimumPointer: number,
+): GraphwarWasmFormulaLaunchResult {
+  const resultRange = validateGraphwarWasmMemoryRange(
+    runtime,
+    { length: 1, pointer: resultPointer },
+    {
+      alignment: 8,
+      elementByteLength: FORMULA_LAUNCH_RESULT_BYTE_LENGTH,
+      minimumPointer: outputMinimumPointer,
+    },
+  );
+  const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+  const status = resultView.getInt32(0, true);
+  const iterationCount = resultView.getUint32(4, true);
+  const formulaPointIterationCount = resultView.getUint32(56, true);
+  const materialResultPointer = resultView.getUint32(48, true);
+  const flags = resultView.getUint32(52, true);
+  const protectionPointer = resultView.getUint32(60, true);
+  const protectionCount = resultView.getUint32(64, true);
+  const formulaPointCount = resultView.getUint32(68, true);
+  const formulaPointXPointer = resultView.getUint32(72, true);
+  const formulaPointYPointer = resultView.getUint32(76, true);
+  if (protectionCount !== packedInput.segmentCount) {
+    throwFormulaResultError("Launch result protection count does not match the source segments");
+  }
+  const observedSignProtection = copyAndValidateProtection(
+    runtime,
+    protectionPointer,
+    protectionCount,
+    outputMinimumPointer,
+  );
 
-    if (equation === "y") {
-      if (
-        flags !== FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET ||
-        !Number.isFinite(yOffset) ||
-        angleRadians === Number.POSITIVE_INFINITY ||
-        angleRadians === Number.NEGATIVE_INFINITY ||
-        !Object.is(initialDy, 0)
-      ) {
-        throwFormulaResultError("Normal launch result has inconsistent y-offset state");
-      }
-      return {
-        compiledMaterials,
-        formulaPointIterationCount,
-        formulaPoints,
-        iterationCount,
-        launch: { equation, point, yOffset },
-        observedSignProtection,
-        status: "success",
-      };
-    }
-    if (equation === "dy") {
-      if (flags !== 0 || !Number.isFinite(angleRadians) || !Object.is(initialDy, 0) || !Object.is(yOffset, 0)) {
-        throwFormulaResultError("First-order launch result has inconsistent angle state");
-      }
-      return {
-        compiledMaterials,
-        formulaPointIterationCount,
-        formulaPoints,
-        iterationCount,
-        launch: { angleRadians, equation, point },
-        observedSignProtection,
-        status: "success",
-      };
-    }
-
-    const secondOrderLaunchAngle = descriptor.secondOrderLaunchAngle;
-    const isUserAngle = secondOrderLaunchAngle !== undefined;
-    const expectedFlags = FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY | (isUserAngle ? FORMULA_LAUNCH_FLAG_USED_USER_ANGLE : 0);
+  if (status === FORMULA_LAUNCH_STATUS_INVALID) {
     if (
-      flags !== expectedFlags ||
-      !Number.isFinite(angleRadians) ||
-      !Number.isFinite(initialDy) ||
-      !Object.is(yOffset, 0) ||
-      (isUserAngle && !Object.is(angleRadians, secondOrderLaunchAngle.radians))
+      materialResultPointer !== 0 ||
+      flags !== 0 ||
+      formulaPointCount !== 0 ||
+      formulaPointXPointer !== 0 ||
+      formulaPointYPointer !== 0
     ) {
-      throwFormulaResultError("Second-order launch result has inconsistent angle state");
+      throwFormulaResultError("Invalid launch result leaked success-only state");
+    }
+    return {
+      formulaPointIterationCount,
+      iterationCount,
+      observedSignProtection,
+      status: "invalid",
+    };
+  }
+  if (status !== FORMULA_LAUNCH_STATUS_SUCCESS) {
+    throwFormulaResultError("Launch result contains an unsupported status");
+  }
+  if (formulaPointCount !== packedInput.pointCount) {
+    throwFormulaResultError("Launch result formula point count does not match the source path");
+  }
+  const formulaPointXs = copyGraphwarWasmFloat64Values(
+    runtime,
+    { length: formulaPointCount, pointer: formulaPointXPointer },
+    outputMinimumPointer,
+  );
+  const formulaPointYs = copyGraphwarWasmFloat64Values(
+    runtime,
+    { length: formulaPointCount, pointer: formulaPointYPointer },
+    outputMinimumPointer,
+  );
+  const formulaPoints: GraphPoint[] = [];
+  for (let index = 0; index < formulaPointCount; index += 1) {
+    const x = formulaPointXs[index];
+    const y = formulaPointYs[index];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throwFormulaResultError(`Launch result formulaPoints[${index}] is not finite`);
+    }
+    formulaPoints.push(createGraphPoint(x, y));
+  }
+
+  const { algorithm, decimalPlaces, equation } = descriptor.settings;
+  const materialResult = readRawFormulaBatchResult(runtime, materialResultPointer, outputMinimumPointer, {
+    expectedMaterialCountMaximum: packedInput.segmentCount,
+    expectedMaterialStride: getExpectedMaterialStride(algorithm, equation),
+    expectedMaterialType: getExpectedMaterialType(algorithm, equation),
+    expectedProtectionCount: packedInput.segmentCount,
+    expectedValueCount: 0,
+  });
+  if (!uint32ArraysEqual(materialResult.observedSignProtection, observedSignProtection)) {
+    throwFormulaResultError("Launch result and nested material protection evidence do not match");
+  }
+  const compiledMaterials = decodeFormulaMaterials(
+    runtime,
+    materialResult,
+    algorithm,
+    equation,
+    decimalPlaces,
+    packedInput.segmentCount,
+    outputMinimumPointer,
+  );
+  validateFiniteLaunchFormulaMaterials(compiledMaterials, equation);
+  const pointX = resultView.getFloat64(16, true);
+  const pointY = resultView.getFloat64(24, true);
+  if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) {
+    throwFormulaResultError("Launch result point is not finite");
+  }
+  const point = createGraphPoint(pointX, pointY);
+  const angleRadians = resultView.getFloat64(8, true);
+  const initialDy = resultView.getFloat64(32, true);
+  const yOffset = resultView.getFloat64(40, true);
+
+  if (equation === "y") {
+    if (
+      flags !== FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET ||
+      !Number.isFinite(yOffset) ||
+      angleRadians === Number.POSITIVE_INFINITY ||
+      angleRadians === Number.NEGATIVE_INFINITY ||
+      !Object.is(initialDy, 0)
+    ) {
+      throwFormulaResultError("Normal launch result has inconsistent y-offset state");
     }
     return {
       compiledMaterials,
       formulaPointIterationCount,
       formulaPoints,
       iterationCount,
-      launch: { angleRadians, equation, initialDy, isUserAngle, point },
+      launch: { equation, point, yOffset },
       observedSignProtection,
       status: "success",
     };
-  });
+  }
+  if (equation === "dy") {
+    if (flags !== 0 || !Number.isFinite(angleRadians) || !Object.is(initialDy, 0) || !Object.is(yOffset, 0)) {
+      throwFormulaResultError("First-order launch result has inconsistent angle state");
+    }
+    return {
+      compiledMaterials,
+      formulaPointIterationCount,
+      formulaPoints,
+      iterationCount,
+      launch: { angleRadians, equation, point },
+      observedSignProtection,
+      status: "success",
+    };
+  }
+
+  const secondOrderLaunchAngle = descriptor.secondOrderLaunchAngle;
+  const isUserAngle = secondOrderLaunchAngle !== undefined;
+  const expectedFlags = FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY | (isUserAngle ? FORMULA_LAUNCH_FLAG_USED_USER_ANGLE : 0);
+  if (
+    flags !== expectedFlags ||
+    !Number.isFinite(angleRadians) ||
+    !Number.isFinite(initialDy) ||
+    !Object.is(yOffset, 0) ||
+    (isUserAngle && !Object.is(angleRadians, secondOrderLaunchAngle.radians))
+  ) {
+    throwFormulaResultError("Second-order launch result has inconsistent angle state");
+  }
+  return {
+    compiledMaterials,
+    formulaPointIterationCount,
+    formulaPoints,
+    iterationCount,
+    launch: { angleRadians, equation, initialDy, isUserAngle, point },
+    observedSignProtection,
+    status: "success",
+  };
 }
 
 /** Executes launch preparation and trajectory sampling without exposing WASM-backed views. */

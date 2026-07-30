@@ -117,6 +117,14 @@ export const FORMULA_FLAG_STEP_OVERFLOW_PROTECTION: u32 = 1;
 export const FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE: u32 = 2;
 export const FORMULA_FLAG_HAS_USER_LAUNCH_ANGLE: u32 = 4;
 export const FORMULA_FLAG_STEP_GLITCH_MODE: u32 = 8;
+/** Scanner-owned launch input uses the glitch pointer for per-segment fixed X windows, not compiled segments. */
+export const FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS: u32 = 16;
+
+export const STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET: u32 = 0;
+export const STEP_GLITCH_FIXED_WINDOW_RESERVED_OFFSET: u32 = 4;
+export const STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET: u32 = 8;
+export const STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET: u32 = 16;
+export const STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH: u32 = 24;
 
 /** Optional Step-glitch records are indexed by original path segment. */
 export const STEP_GLITCH_RECORD_EQUATION_OFFSET: u32 = 0;

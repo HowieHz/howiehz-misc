@@ -96,6 +96,7 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
       fixture.prefixTarget.y,
       12,
       1,
+      1,
     ]);
     expect(result.input.sourcePath.length).toBe(2);
     expect(result.input.requiredTargetRecords.length).toBe(3);

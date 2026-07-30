@@ -14,6 +14,7 @@ import {
 import type {
   GraphwarStepGlitchFormulaEvidence,
   GraphwarStepGlitchFormulaPrefix,
+  GraphwarStepGlitchXWindow,
   GraphwarTrajectoryFormulaContext,
   GraphwarTrajectoryFormulaMode,
   GraphwarTrajectoryFormulaSettings,
@@ -24,6 +25,7 @@ import type {
   GraphwarStepGlitchPrefixOptions,
   GraphwarStepGlitchTargetOptions,
 } from "../../pathfinding/routing/step-glitch-scan";
+import { graphwarToolDefaults } from "../tool/defaults";
 import {
   GraphwarWasmAdapterError,
   validateGraphwarWasmEnumValue,
@@ -37,6 +39,10 @@ import {
   type GraphwarWasmArenaMemorySource,
   type GraphwarWasmMemorySlice,
 } from "./abi";
+import {
+  readGraphwarWasmFormulaLaunchResultForStepGlitchTest,
+  type GraphwarWasmFormulaLaunchResult,
+} from "./formula-adapter";
 import { GraphwarWasmKernelRuntime } from "./runtime";
 import {
   getGraphwarWasmFormulaAlgorithmTag,
@@ -52,6 +58,7 @@ const ALLOWED_SIGN_PROTECTION_BITS = 0b1_1111;
 const STEP_GLITCH_COMMAND_CREATE_CONTEXT = 11;
 const STEP_GLITCH_COMMAND_TRACE_FRONTIER = 12;
 const STEP_GLITCH_COMMAND_TRACE_DFS = 13;
+const STEP_GLITCH_COMMAND_PREPARE_CANDIDATE_FORMULA_FOR_TEST = 15;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
@@ -70,6 +77,8 @@ const STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH = 40;
 const STEP_GLITCH_DFS_RESULT_BYTE_LENGTH = 40;
 const STEP_GLITCH_DFS_TRACE_BYTE_LENGTH = 56;
 const STEP_GLITCH_DFS_RESULT_MAGIC = 0x5347_4452;
+const STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH = 32;
+const STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH = 24;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -225,10 +234,18 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   copyFarthestFreeX: () => Int16Array;
   dispose: () => void;
   isMirrored: boolean;
+  prepareCandidateFormulaForTest: (
+    input: GraphwarWasmStepGlitchFormulaCandidateTestInput,
+  ) => GraphwarWasmFormulaLaunchResult;
   traceGateFrontier: (
     input: GraphwarWasmStepGlitchGeometryFrontierInput,
   ) => GraphwarWasmStepGlitchGeometryFrontierTrace;
   traceScriptedDfs: (input: GraphwarWasmStepGlitchGeometryDfsInput) => GraphwarWasmStepGlitchGeometryDfsTrace;
+}
+
+export interface GraphwarWasmStepGlitchFormulaCandidateTestInput {
+  path: readonly PixelPoint[];
+  windows: { type: "automatic" } | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
 }
 
 export interface GraphwarWasmStepGlitchGeometryFrontierInput {
@@ -465,6 +482,7 @@ export function packGraphwarWasmStepGlitchContextInput(
     prefixTarget?.center.y ?? 0,
     prefixTarget?.radius ?? 0,
     input.prefixTarget.type === "target" ? 1 : 0,
+    graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
   ]);
   return {
     input: {
@@ -494,6 +512,7 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
     }
     const boundsSnapshot = { ...input.bounds };
     const boundsRectSnapshot = { ...input.boundsRect };
+    const formulaSettingsSnapshot = { ...input.formulaMode.settings };
     const sourcePathSnapshot = input.sourcePath.map((point) => createPixelPoint(point.x, point.y));
     const packed = packedResult.input;
     const prefixEvidenceDescriptor = writePrefixEvidenceDescriptor(runtime, packed.prefixEvidence);
@@ -595,6 +614,16 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
           isDisposed = true;
         },
         isMirrored,
+        prepareCandidateFormulaForTest(candidateInput) {
+          assertActive();
+          return prepareGraphwarWasmStepGlitchCandidateFormula(
+            runtime,
+            contextPointer,
+            formulaSettingsSnapshot,
+            sourcePathSnapshot,
+            candidateInput,
+          );
+        },
         traceGateFrontier(input) {
           assertActive();
           return traceGraphwarWasmStepGlitchGeometryFrontier(runtime, contextPointer, input);
@@ -616,6 +645,98 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
     };
   } catch (error) {
     runtime.resetArenaAfterFault(contextMark);
+    throw error;
+  }
+}
+
+function prepareGraphwarWasmStepGlitchCandidateFormula(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  settings: GraphwarTrajectoryFormulaSettings,
+  sourcePath: readonly PixelPoint[],
+  input: GraphwarWasmStepGlitchFormulaCandidateTestInput,
+): GraphwarWasmFormulaLaunchResult {
+  if (
+    input.path.length < 2 ||
+    input.path.length < sourcePath.length ||
+    !input.path.every(isGraphwarTrajectoryPoint) ||
+    !sourcePath.every((point, index) => pixelPointsEqual(point, input.path[index]))
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch candidate path must preserve the retained source prefix",
+      "input",
+    );
+  }
+  const segmentCount = input.path.length - 1;
+  if (input.windows.type === "explicit" && input.windows.segments.length !== segmentCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch fixed windows must match the candidate segment count",
+      "input",
+    );
+  }
+
+  const commandMark = runtime.markArena();
+  try {
+    const packedPath = packGraphwarWasmPointSoA(runtime, input.path, runtime.arenaBase);
+    let windowPointer = 0;
+    let windowCount = 0;
+    if (input.windows.type === "explicit") {
+      windowCount = input.windows.segments.length;
+      windowPointer = runtime.reserveArena(windowCount * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH, 8);
+      new Uint8Array(runtime.buffer, windowPointer, windowCount * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH).fill(0);
+      const windowView = new DataView(
+        runtime.buffer,
+        windowPointer,
+        windowCount * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+      );
+      for (let index = 0; index < windowCount; index += 1) {
+        const window = input.windows.segments[index];
+        if (window === undefined) {
+          continue;
+        }
+        if (!Number.isFinite(window.startX) || !Number.isFinite(window.endX) || !(window.endX > window.startX)) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-formula-input",
+            `Graphwar WASM Step-glitch fixed window ${index} is invalid`,
+            "input",
+          );
+        }
+        const offset = index * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+        windowView.setUint32(offset, 1, true);
+        windowView.setFloat64(offset + 8, window.startX, true);
+        windowView.setFloat64(offset + 16, window.endX, true);
+      }
+    }
+
+    const inputPointer = runtime.reserveArena(STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH, 4);
+    const inputView = new DataView(runtime.buffer, inputPointer, STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setUint32(4, packedPath.x.pointer, true);
+    inputView.setUint32(8, packedPath.y.pointer, true);
+    inputView.setUint32(12, packedPath.length, true);
+    inputView.setUint32(16, windowPointer, true);
+    inputView.setUint32(20, windowCount, true);
+    inputView.setUint32(24, input.windows.type === "automatic" ? 0 : 1, true);
+    inputView.setUint32(28, 0, true);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runRouteTask(
+      STEP_GLITCH_COMMAND_PREPARE_CANDIDATE_FORMULA_FOR_TEST,
+      inputPointer,
+      STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH,
+    );
+    const result = readGraphwarWasmFormulaLaunchResultForStepGlitchTest(
+      runtime,
+      settings,
+      packedPath.length,
+      resultPointer,
+      outputMinimumPointer,
+    );
+    runtime.resetArena(commandMark);
+    return result;
+  } catch (error) {
+    runtime.resetArenaAfterFault(commandMark);
     throw error;
   }
 }

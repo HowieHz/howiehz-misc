@@ -32,6 +32,7 @@ import {
   FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE,
   FORMULA_FLAG_HAS_USER_LAUNCH_ANGLE,
   FORMULA_FLAG_STEP_OVERFLOW_PROTECTION,
+  FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS,
   FORMULA_FLAG_STEP_GLITCH_MODE,
   FORMULA_INPUT_ALGORITHM_OFFSET,
   FORMULA_INPUT_ABS_PULSE_CENTER_X_POINTER_OFFSET,
@@ -104,6 +105,11 @@ import {
   FORMULA_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
   SOFT_CUBIC_BYTE_LENGTH,
+  STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+  STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET,
+  STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET,
+  STEP_GLITCH_FIXED_WINDOW_RESERVED_OFFSET,
+  STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET,
   STEP_MATERIAL_BYTE_LENGTH,
 } from "./formula-layout";
 import { runStepLaunchBatch } from "./formula-step";
@@ -1009,8 +1015,10 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     FORMULA_FLAG_STEP_OVERFLOW_PROTECTION |
     FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE |
     FORMULA_FLAG_HAS_USER_LAUNCH_ANGLE |
-    FORMULA_FLAG_STEP_GLITCH_MODE;
+    FORMULA_FLAG_STEP_GLITCH_MODE |
+    FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS;
   const isStepGlitchModeEnabled = (flags & FORMULA_FLAG_STEP_GLITCH_MODE) != 0;
+  const hasStepGlitchFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) != 0;
   if (
     (algorithm != FORMULA_ALGORITHM_ABS &&
       algorithm != FORMULA_ALGORITHM_STEP &&
@@ -1039,6 +1047,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     (isStepGlitchModeEnabled &&
       (algorithm != FORMULA_ALGORITHM_STEP ||
         (equation != FORMULA_EQUATION_DY && equation != FORMULA_EQUATION_DDY))) ||
+    (hasStepGlitchFixedWindows && !isStepGlitchModeEnabled) ||
     (maskPointer != 0 && !isStepGlitchModeEnabled) ||
     (maskPointer == 0 ? maskByteLength != 0 : maskByteLength == 0) ||
     ((flags & (FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE | FORMULA_FLAG_HAS_USER_LAUNCH_ANGLE)) != 0 &&
@@ -1051,7 +1060,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     segmentStartXPointer != 0 ||
     segmentStartYPointer != 0 ||
     deltaYPointer != 0 ||
-    glitchSegmentPointer != 0 ||
+    (hasStepGlitchFixedWindows ? glitchSegmentPointer == 0 : glitchSegmentPointer != 0) ||
     absPulseDeltaSlopePointer != 0 ||
     absPulseCenterXPointer != 0 ||
     (overflowRangePointer == 0 ? overflowRangeCount != 0 : overflowRangeCount != 2) ||
@@ -1064,6 +1073,31 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
   const segmentCount = pointCount - 1;
   const segmentF64ByteLength = checkedByteLength(segmentCount, sizeof<f64>());
   const protectionByteLength = checkedByteLength(segmentCount, sizeof<u32>());
+  if (hasStepGlitchFixedWindows) {
+    requireArenaRange(
+      glitchSegmentPointer,
+      checkedByteLength(segmentCount, STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH),
+      sizeof<f64>(),
+    );
+    let fixedWindowIndex: u32 = 0;
+    while (fixedWindowIndex < segmentCount) {
+      const fixedWindowPointer =
+        glitchSegmentPointer + fixedWindowIndex * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+      const presence = load<u32>(fixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET);
+      const startX = load<f64>(fixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET);
+      const endX = load<f64>(fixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET);
+      if (
+        presence > 1 ||
+        load<u32>(fixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_RESERVED_OFFSET) != 0 ||
+        (presence == 0
+          ? startX != 0 || endX != 0
+          : !isFiniteValue(startX) || !isFiniteValue(endX) || !(endX > startX))
+      ) {
+        trap();
+      }
+      fixedWindowIndex += 1;
+    }
+  }
   if (
     (protectionPointer == 0 ? protectionCount != 0 : protectionCount != segmentCount)
   ) {
@@ -1161,6 +1195,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     store<u32>(buildInputPointer + FORMULA_INPUT_VALUE_DY_POINTER_OFFSET, 0);
     store<u32>(buildInputPointer + FORMULA_INPUT_ABS_PULSE_DELTA_SLOPE_POINTER_OFFSET, 0);
     store<u32>(buildInputPointer + FORMULA_INPUT_ABS_PULSE_CENTER_X_POINTER_OFFSET, 0);
+    store<u32>(buildInputPointer + FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET, 0);
     store<u32>(buildInputPointer + FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, workingProtectionPointer);
     store<u32>(buildInputPointer + FORMULA_INPUT_SIGN_PROTECTION_COUNT_OFFSET, segmentCount);
     store<u32>(

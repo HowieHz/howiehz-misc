@@ -2,6 +2,7 @@ import { quantizeFormulaOffsetCenter } from "./decimal";
 import {
   FORMULA_EQUATION_DDY,
   FORMULA_EQUATION_DY,
+  FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS,
   FORMULA_FLAG_STEP_GLITCH_MODE,
   FORMULA_INPUT_BOUNDS_MAX_X_OFFSET,
   FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET,
@@ -35,6 +36,10 @@ import {
   STEP_GLITCH_RECORD_END_X_OFFSET,
   STEP_GLITCH_RECORD_EQUATION_OFFSET,
   STEP_GLITCH_RECORD_BYTE_LENGTH,
+  STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+  STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET,
+  STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET,
+  STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET,
   STEP_MATERIAL_BYTE_LENGTH,
 } from "./formula-layout";
 import {
@@ -174,7 +179,11 @@ export function refineStepFormulaCold(
   const pathSteepness = load<f64>(inputPointer + FORMULA_INPUT_PATH_STEEPNESS_OFFSET);
   const soldierX = load<f64>(inputPointer + FORMULA_INPUT_SOLDIER_X_OFFSET);
   const soldierY = load<f64>(inputPointer + FORMULA_INPUT_SOLDIER_Y_OFFSET);
-  const isStepGlitchModeEnabled = (load<u32>(inputPointer + FORMULA_INPUT_FLAGS_OFFSET) & FORMULA_FLAG_STEP_GLITCH_MODE) != 0;
+  const flags = load<u32>(inputPointer + FORMULA_INPUT_FLAGS_OFFSET);
+  const isStepGlitchModeEnabled = (flags & FORMULA_FLAG_STEP_GLITCH_MODE) != 0;
+  const hasFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) != 0;
+  const fixedWindowPointer =
+    hasFixedWindows ? load<u32>(inputPointer + FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET) : 0;
   const pointByteLength = checkedByteLength(pointCount, sizeof<f64>());
   const segmentF64ByteLength = checkedByteLength(segmentCount, sizeof<f64>());
   const glitchByteLength = checkedByteLength(segmentCount, STEP_GLITCH_RECORD_BYTE_LENGTH);
@@ -406,6 +415,10 @@ export function refineStepFormulaCold(
       break;
     }
 
+    const segmentFixedWindowPointer =
+      hasFixedWindows ? fixedWindowPointer + segmentIndex * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH : 0;
+    const isFixedWindowPresent =
+      hasFixedWindows && load<u32>(segmentFixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET) != 0;
     let softDeltaY = nextDeltaY;
     let softFormulaX = nextFormulaX;
     let softPositionError = f64.POSITIVE_INFINITY;
@@ -413,7 +426,7 @@ export function refineStepFormulaCold(
     let isSoftReplayValid = false;
     let hasSoftObstacleHit = false;
     let softLaunchAngle = f64.NaN;
-    const shouldReplaySoft = isStepGlitchModeEnabled || equation == FORMULA_EQUATION_DDY;
+    const shouldReplaySoft = !isFixedWindowPresent && (isStepGlitchModeEnabled || equation == FORMULA_EQUATION_DDY);
     if (shouldReplaySoft) {
       store<f64>(deltaYPointer + segmentIndex * sizeof<f64>(), nextDeltaY);
       store<f64>(formulaPointXPointer + (segmentIndex + 1) * sizeof<f64>(), nextFormulaX);
@@ -604,21 +617,22 @@ export function refineStepFormulaCold(
       }
     }
 
-    const hasMaskRequirement =
-      isStepGlitchModeEnabled &&
-      maskPointer != 0 &&
-      stepGlitchObstacleEnvelopeHitsObstacle(
-        load<f64>(pointXPointer + segmentIndex * sizeof<f64>()),
-        load<f64>(pointYPointer + segmentIndex * sizeof<f64>()),
-        targetX,
-        load<f64>(pointYPointer + (segmentIndex + 1) * sizeof<f64>()),
-        load<f64>(initialFormulaPointXPointer + (segmentIndex + 1) * sizeof<f64>()),
-        boundsMinX,
-        boundsMaxX,
-        boundsMinY,
-        boundsMaxY,
-        maskPointer,
-      );
+    const hasMaskRequirement = hasFixedWindows
+      ? isFixedWindowPresent
+      : isStepGlitchModeEnabled &&
+        maskPointer != 0 &&
+        stepGlitchObstacleEnvelopeHitsObstacle(
+          load<f64>(pointXPointer + segmentIndex * sizeof<f64>()),
+          load<f64>(pointYPointer + segmentIndex * sizeof<f64>()),
+          targetX,
+          load<f64>(pointYPointer + (segmentIndex + 1) * sizeof<f64>()),
+          load<f64>(initialFormulaPointXPointer + (segmentIndex + 1) * sizeof<f64>()),
+          boundsMinX,
+          boundsMaxX,
+          boundsMinY,
+          boundsMaxY,
+          maskPointer,
+        );
     const isHardRequired =
       isStepGlitchModeEnabled &&
       (hasMaskRequirement || !isSoftReplayValid || hasSoftObstacleHit || softPositionError > positionTargetPlanePixels);
@@ -627,9 +641,10 @@ export function refineStepFormulaCold(
     if (isHardRequired) {
       store<f64>(deltaYPointer + segmentIndex * sizeof<f64>(), nextDeltaY);
       store<f64>(formulaPointXPointer + (segmentIndex + 1) * sizeof<f64>(), nextFormulaX);
+      store<u8>(disabledPointer + segmentIndex, 0);
       const initialWindowDecimalPlaces = getStepGlitchInitialWindowDecimalPlaces();
       const isLaunchWindowRequired =
-        segmentIndex == 0 && targetX <= soldierX + getGraphwarGameSoldierRadius();
+        !isFixedWindowPresent && segmentIndex == 0 && targetX <= soldierX + getGraphwarGameSoldierRadius();
       let glitchDecimalPlaces = decimalPlaces > 1 ? decimalPlaces : 1;
       while (glitchDecimalPlaces <= 15 && !hasHardWinner) {
         const targetY = quantizeFormulaOffsetCenter(formulaTargetY, glitchDecimalPlaces);
@@ -638,7 +653,23 @@ export function refineStepFormulaCold(
         while (windowWidth >= getGraphwarLastBisectedXStepDistance() && !hasHardWinner) {
           let hasJump = false;
           let launchWindowAngle = f64.NaN;
-          if (isLaunchWindowRequired && windowWidth == getGraphwarStepSize()) {
+          if (isFixedWindowPresent) {
+            store<f64>(
+              jumpPointer + STEP_GLITCH_JUMP_START_X_OFFSET,
+              load<f64>(segmentFixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET),
+            );
+            store<f64>(
+              jumpPointer + STEP_GLITCH_JUMP_END_X_OFFSET,
+              load<f64>(segmentFixedWindowPointer + STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET),
+            );
+            store<f64>(jumpPointer + STEP_GLITCH_JUMP_STEP_OFFSET, getGraphwarLastBisectedXStepDistance());
+            hasJump =
+              load<f64>(jumpPointer + STEP_GLITCH_JUMP_START_X_OFFSET) >
+                load<f64>(pointXPointer + segmentIndex * sizeof<f64>()) &&
+              load<f64>(jumpPointer + STEP_GLITCH_JUMP_END_X_OFFSET) >
+                load<f64>(jumpPointer + STEP_GLITCH_JUMP_START_X_OFFSET) &&
+              targetX >= load<f64>(jumpPointer + STEP_GLITCH_JUMP_END_X_OFFSET);
+          } else if (isLaunchWindowRequired && windowWidth == getGraphwarStepSize()) {
             if (equation == FORMULA_EQUATION_DY) {
               store<f64>(
                 jumpPointer + STEP_GLITCH_JUMP_START_X_OFFSET,
@@ -916,8 +947,12 @@ export function refineStepFormulaCold(
               }
             }
           }
-          windowWidth /= 2;
-          windowDecimalPlaces += 1;
+          if (isFixedWindowPresent) {
+            windowWidth = 0;
+          } else {
+            windowWidth /= 2;
+            windowDecimalPlaces += 1;
+          }
         }
         glitchDecimalPlaces += 1;
       }
@@ -982,6 +1017,9 @@ export function refineStepFormulaCold(
         boundaryMaterialIdentityByteLength,
       );
       hasAcceptedBoundaryState = true;
+    } else if (isFixedWindowPresent) {
+      resetArena(segmentMark);
+      return hasProtectionChanged ? STEP_COLD_REFINEMENT_PROTECTION_CHANGED : STEP_COLD_REFINEMENT_INVALID;
     } else if (shouldReplaySoft) {
       if (isStepGlitchModeEnabled) {
         resetArena(segmentMark);

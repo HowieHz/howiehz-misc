@@ -365,9 +365,19 @@ test("guards the source and release configuration against managed hot-path alloc
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
   assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 1);
   assert.match(stepGlitchSource, /import \{ runTrajectoryRequest \} ;/);
+  const prepareLaunchReferenceFiles = executableSources
+    .filter(({ source }) => /\brunPrepareLaunch\b/.test(source))
+    .map(({ file }) => file)
+    .sort();
+  assert.deepEqual(prepareLaunchReferenceFiles, ["formula-launch.ts", "formula.ts", "step-glitch.ts", "trajectory.ts"]);
+  assert.equal((combinedSource.match(/\brunPrepareLaunch\b/g) ?? []).length, 7);
+  assert.equal((stepGlitchSource.match(/\brunPrepareLaunch\b/g) ?? []).length, 2);
+  assert.equal((combinedSource.match(/\brunPrepareLaunch\s*\(/g) ?? []).length, 4);
+  assert.equal((stepGlitchSource.match(/\brunPrepareLaunch\s*\(/g) ?? []).length, 1);
+  assert.match(stepGlitchSource, /import \{ runPrepareLaunch \} ;/);
   assert.doesNotMatch(
     stepGlitchSource,
-    /\b(?:runPrepareLaunch|evaluateFormulaMaterialValue|replayFormulaTrajectoryScalar\w*|rk4|bisection)\b/i,
+    /\b(?:evaluateFormulaMaterialValue|replayFormulaTrajectoryScalar\w*|rk4|bisection)\b/i,
   );
 
   const forbiddenPatterns = [

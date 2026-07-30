@@ -1,5 +1,6 @@
-import { FORMULA_ALGORITHM_STEP, FORMULA_EQUATION_DDY, FORMULA_EQUATION_DY } from "./formula-layout";
 import { floorFormulaDecimal, roundFormulaDecimal } from "./decimal";
+import * as FormulaLayout from "./formula-layout";
+import { runPrepareLaunch } from "./formula-launch";
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants";
 import { requireArenaRange, reserveArena } from "./memory";
 import * as Layout from "./step-glitch-layout";
@@ -13,6 +14,127 @@ function trap(): void {
 /** Test-only seam proving scanner-owned commands execute the shared trajectory implementation. */
 export function replayStepGlitchTrajectoryForTest(inputPointer: u32, inputByteLength: u32): u32 {
   return runTrajectoryRequest(inputPointer, inputByteLength);
+}
+
+/** Builds one scanner candidate's structured Step request in WASM, then reuses the shared launch/material core. */
+export function prepareStepGlitchCandidateFormulaForTest(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
+  const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_CONTEXT_POINTER_OFFSET);
+  requireStepGlitchContext(contextPointer);
+  const pathXPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_X_POINTER_OFFSET);
+  const pathYPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_Y_POINTER_OFFSET);
+  const pointCount = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_PATH_COUNT_OFFSET);
+  const sourceCount = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET);
+  if (
+    pointCount < 2 ||
+    pointCount < sourceCount ||
+    load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_RESERVED_OFFSET) != 0
+  ) trap();
+  requireElementRange(pathXPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(pathYPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  const sourceXPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET);
+  const sourceYPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_Y_POINTER_OFFSET);
+  let pointIndex: u32 = 0;
+  while (pointIndex < pointCount) {
+    const pixelX = load<f64>(pathXPointer + pointIndex * sizeof<f64>());
+    const pixelY = load<f64>(pathYPointer + pointIndex * sizeof<f64>());
+    if (!isFiniteValue(pixelX) || !isFiniteValue(pixelY)) trap();
+    if (
+      pointIndex < sourceCount &&
+      (pixelX != load<f64>(sourceXPointer + pointIndex * sizeof<f64>()) ||
+        pixelY != load<f64>(sourceYPointer + pointIndex * sizeof<f64>()))
+    ) trap();
+    pointIndex += 1;
+  }
+
+  const segmentCount = pointCount - 1;
+  const windowMode = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_MODE_OFFSET);
+  const windowPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_POINTER_OFFSET);
+  const windowCount = load<u32>(inputPointer + Layout.STEP_GLITCH_FORMULA_INPUT_WINDOW_COUNT_OFFSET);
+  if (windowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC) {
+    if (windowPointer != 0 || windowCount != 0) trap();
+  } else if (windowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_EXPLICIT) {
+    if (windowCount != segmentCount) trap();
+    requireElementRange(
+      windowPointer,
+      windowCount,
+      FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+      sizeof<f64>(),
+    );
+  } else {
+    trap();
+  }
+
+  const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  const settingsPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SETTINGS_POINTER_OFFSET);
+  const graphXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<f64>());
+  const graphYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<f64>());
+  const minX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_X_INDEX);
+  const maxX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_X_INDEX);
+  const minY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_Y_INDEX);
+  const maxY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_Y_INDEX);
+  const rectX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_X_INDEX);
+  const rectY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_Y_INDEX);
+  const rectWidth = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_WIDTH_INDEX);
+  const rectHeight = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX);
+  pointIndex = 0;
+  while (pointIndex < pointCount) {
+    const pixelX = load<f64>(pathXPointer + pointIndex * sizeof<f64>());
+    const pixelY = load<f64>(pathYPointer + pointIndex * sizeof<f64>());
+    store<f64>(graphXPointer + pointIndex * sizeof<f64>(), minX + ((pixelX - rectX) / rectWidth) * (maxX - minX));
+    store<f64>(graphYPointer + pointIndex * sizeof<f64>(), maxY - ((pixelY - rectY) / rectHeight) * (maxY - minY));
+    pointIndex += 1;
+  }
+
+  const protectionPointer = reserveArena(segmentCount * sizeof<u32>(), sizeof<u32>());
+  memory.fill(protectionPointer, 0, segmentCount * sizeof<u32>());
+  const overflowRangePointer = reserveArena(2 * sizeof<f64>(), sizeof<f64>());
+  store<f64>(overflowRangePointer, load<f64>(graphXPointer));
+  store<f64>(overflowRangePointer + sizeof<f64>(), NativeMath.max(minX, maxX));
+  const formulaInputPointer = reserveArena(FormulaLayout.FORMULA_INPUT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(formulaInputPointer, 0, FormulaLayout.FORMULA_INPUT_BYTE_LENGTH);
+  const equation = <i32>loadValue(settingsPointer, Layout.STEP_GLITCH_SETTING_EQUATION_INDEX);
+  const settingsFlags = <u32>loadValue(settingsPointer, Layout.STEP_GLITCH_SETTING_FLAGS_INDEX);
+  let formulaFlags = FormulaLayout.FORMULA_FLAG_STEP_GLITCH_MODE;
+  if ((settingsFlags & Layout.STEP_GLITCH_SETTING_FLAG_OVERFLOW_PROTECTION) != 0) {
+    formulaFlags |= FormulaLayout.FORMULA_FLAG_STEP_OVERFLOW_PROTECTION;
+  }
+  if (equation == FormulaLayout.FORMULA_EQUATION_DDY && loadValue(settingsPointer, Layout.STEP_GLITCH_SETTING_SECOND_ORDER_ANGLE_MODE_INDEX) == 2) {
+    formulaFlags |= FormulaLayout.FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE;
+  }
+  if (windowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_EXPLICIT) {
+    formulaFlags |= FormulaLayout.FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS;
+  }
+  const steepness = loadValue(settingsPointer, Layout.STEP_GLITCH_SETTING_STEEPNESS_INDEX);
+  const formulaPathSteepness =
+    (settingsFlags & Layout.STEP_GLITCH_SETTING_FLAG_HAS_FORMULA_PATH_STEEPNESS) == 0
+      ? steepness
+      : loadValue(settingsPointer, Layout.STEP_GLITCH_SETTING_FORMULA_PATH_STEEPNESS_INDEX);
+  store<i32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_ALGORITHM_OFFSET, FormulaLayout.FORMULA_ALGORITHM_STEP);
+  store<i32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_EQUATION_OFFSET, equation);
+  store<i32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_DECIMAL_PLACES_OFFSET, <i32>loadValue(settingsPointer, Layout.STEP_GLITCH_SETTING_DECIMAL_PLACES_INDEX));
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_FLAGS_OFFSET, formulaFlags);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_POINT_COUNT_OFFSET, pointCount);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_POINT_X_POINTER_OFFSET, graphXPointer);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_POINT_Y_POINTER_OFFSET, graphYPointer);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, protectionPointer);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_SIGN_PROTECTION_COUNT_OFFSET, segmentCount);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET, overflowRangePointer);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_STEEPNESS_OFFSET, steepness);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_BOUNDS_MIN_X_OFFSET, minX);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_BOUNDS_MAX_X_OFFSET, maxX);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET, minY);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET, maxY);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_SOLDIER_X_OFFSET, load<f64>(graphXPointer));
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_SOLDIER_Y_OFFSET, load<f64>(graphYPointer));
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET, windowPointer);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_OVERFLOW_RANGE_COUNT_OFFSET, 2);
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_PATH_STEEPNESS_OFFSET, formulaPathSteepness);
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_POINTER_OFFSET, load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_POINTER_OFFSET));
+  store<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_BYTE_LENGTH_OFFSET, load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_LENGTH_OFFSET));
+  store<f64>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_QUALITY_TARGET_PLANE_PIXELS_OFFSET, loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_QUALITY_TARGET_PLANE_PIXELS_INDEX));
+  return runPrepareLaunch(formulaInputPointer);
 }
 
 @inline
@@ -44,6 +166,7 @@ function validateContextValues(pointer: u32): u32 {
   const prefixTargetY = loadValue(pointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_Y_INDEX);
   const prefixTargetRadius = loadValue(pointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_RADIUS_INDEX);
   const hasPrefixTarget = loadValue(pointer, Layout.STEP_GLITCH_VALUE_HAS_PREFIX_TARGET_INDEX);
+  const qualityTargetPlanePixels = loadValue(pointer, Layout.STEP_GLITCH_VALUE_QUALITY_TARGET_PLANE_PIXELS_INDEX);
   if (
     !isFiniteValue(minX) ||
     !isFiniteValue(maxX) ||
@@ -66,7 +189,9 @@ function validateContextValues(pointer: u32): u32 {
     !isFiniteValue(prefixTargetY) ||
     !isFiniteValue(prefixTargetRadius) ||
     prefixTargetRadius < 0 ||
-    (hasPrefixTarget == 0 && (prefixTargetX != 0 || prefixTargetY != 0 || prefixTargetRadius != 0))
+    (hasPrefixTarget == 0 && (prefixTargetX != 0 || prefixTargetY != 0 || prefixTargetRadius != 0)) ||
+    !isFiniteValue(qualityTargetPlanePixels) ||
+    qualityTargetPlanePixels <= 0
   ) trap();
   return <u32>boundaryExpansion;
 }
@@ -84,8 +209,8 @@ function validateFormulaSettings(pointer: u32): void {
     Layout.STEP_GLITCH_SETTING_FLAG_OVERFLOW_PROTECTION |
     Layout.STEP_GLITCH_SETTING_FLAG_HAS_FORMULA_PATH_STEEPNESS;
   if (
-    algorithm != <f64>FORMULA_ALGORITHM_STEP ||
-    (equation != <f64>FORMULA_EQUATION_DY && equation != <f64>FORMULA_EQUATION_DDY) ||
+    algorithm != <f64>FormulaLayout.FORMULA_ALGORITHM_STEP ||
+    (equation != <f64>FormulaLayout.FORMULA_EQUATION_DY && equation != <f64>FormulaLayout.FORMULA_EQUATION_DDY) ||
     !isIntegerValue(decimalPlaces) ||
     decimalPlaces < 0 ||
     decimalPlaces > 15 ||

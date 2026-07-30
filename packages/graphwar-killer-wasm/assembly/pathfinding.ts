@@ -16,6 +16,7 @@ import { commitArena, markArena, requireArenaInitialized, requireArenaRange, res
 import * as Layout from "./pathfinding-layout";
 import {
   createStepGlitchGeometryContext,
+  prepareStepGlitchCandidateFormulaForTest,
   replayStepGlitchTrajectoryForTest,
   traceStepGlitchGeometryDfs,
   traceStepGlitchGeometryFrontier,
@@ -5922,6 +5923,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   }
   if (command == Layout.STEP_GLITCH_COMMAND_REPLAY_TRAJECTORY_FOR_TEST) {
     return replayStepGlitchTrajectoryForTest(inputPointer, inputByteLength);
+  }
+  if (command == Layout.STEP_GLITCH_COMMAND_PREPARE_CANDIDATE_FORMULA_FOR_TEST) {
+    return prepareStepGlitchCandidateFormulaForTest(inputPointer, inputByteLength);
   }
   trap();
   return 0;

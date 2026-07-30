@@ -3,10 +3,16 @@ import { floorFormulaDecimal, roundFormulaDecimal } from "./decimal";
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants";
 import { requireArenaRange, reserveArena } from "./memory";
 import * as Layout from "./step-glitch-layout";
+import { runTrajectoryRequest } from "./trajectory";
 
 @inline
 function trap(): void {
   unreachable();
+}
+
+/** Test-only seam proving scanner-owned commands execute the shared trajectory implementation. */
+export function replayStepGlitchTrajectoryForTest(inputPointer: u32, inputByteLength: u32): u32 {
+  return runTrajectoryRequest(inputPointer, inputByteLength);
 }
 
 @inline

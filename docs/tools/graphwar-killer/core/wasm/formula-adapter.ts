@@ -83,6 +83,7 @@ const FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY = 1;
 const FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET = 2;
 const FORMULA_LAUNCH_FLAG_USED_USER_ANGLE = 4;
 const TRAJECTORY_INPUT_BYTE_LENGTH = 284;
+const STEP_GLITCH_COMMAND_REPLAY_TRAJECTORY_FOR_TEST = 14;
 const TRAJECTORY_RESULT_BYTE_LENGTH = 224;
 const TRAJECTORY_EVIDENCE_BYTE_LENGTH = 104;
 const TRAJECTORY_STOP_TYPE_NATURAL = 0;
@@ -499,6 +500,22 @@ export function runGraphwarWasmTrajectory(
   runtime: GraphwarWasmKernelRuntime,
   input: GraphwarWasmTrajectoryInput,
 ): GraphwarWasmTrajectoryResult | undefined {
+  return runGraphwarWasmTrajectoryCommand(runtime, input, "production");
+}
+
+/** Test-only route seam proving Step-glitch reuses the complete trajectory command and Adapter contract. */
+export function runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmTrajectoryInput,
+): GraphwarWasmTrajectoryResult | undefined {
+  return runGraphwarWasmTrajectoryCommand(runtime, input, "step-glitch-test");
+}
+
+function runGraphwarWasmTrajectoryCommand(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmTrajectoryInput,
+  execution: "production" | "step-glitch-test",
+): GraphwarWasmTrajectoryResult | undefined {
   return withFormulaArenaScope(runtime, () => {
     const { descriptor, start, stop } = input;
     const packedFormula = packFormulaInput(runtime, descriptor, undefined, [], true);
@@ -581,7 +598,14 @@ export function runGraphwarWasmTrajectory(
     commandView.setUint32(276, packedEvidence.pointer, true);
     commandView.setUint32(280, packedEvidence.byteLength, true);
     const outputMinimumPointer = runtime.arenaCursor;
-    const resultPointer = runtime.runTrajectory(commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH);
+    const resultPointer =
+      execution === "production"
+        ? runtime.runTrajectory(commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH)
+        : runtime.runRouteTask(
+            STEP_GLITCH_COMMAND_REPLAY_TRAJECTORY_FOR_TEST,
+            commandPointer,
+            TRAJECTORY_INPUT_BYTE_LENGTH,
+          );
     const resultRange = validateGraphwarWasmMemoryRange(
       runtime,
       { length: 1, pointer: resultPointer },
@@ -856,9 +880,16 @@ export function runGraphwarWasmTrajectory(
 function withFormulaArenaScope<TResult>(runtime: GraphwarWasmKernelRuntime, run: () => TResult): TResult {
   const mark = runtime.markArena();
   try {
-    return run();
-  } finally {
+    const result = run();
     runtime.resetArena(mark);
+    return result;
+  } catch (error) {
+    try {
+      runtime.resetArenaAfterFault(mark);
+    } catch {
+      // The page fuse discards this runtime; preserve the fault that made the command unusable.
+    }
+    throw error;
   }
 }
 

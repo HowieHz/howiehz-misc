@@ -29,6 +29,8 @@ import {
   runGraphwarWasmExpressionBatch,
   runGraphwarWasmFormulaBatch,
   runGraphwarWasmTrajectory,
+  runGraphwarWasmTrajectoryThroughStepGlitchTestSeam,
+  type GraphwarWasmTrajectoryInput,
   type GraphwarWasmTrajectoryPhysicalState,
 } from "./formula-adapter";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
@@ -571,6 +573,122 @@ describe("Graphwar WASM formula Adapter", () => {
     expect(Object.is(result.initialDy, 0)).toBe(true);
     expect(result.continuationEvidence.state.sampleIndex).toBe(result.points.length - 1);
     expect(result.startType).toBe("cold");
+  });
+
+  it("normalizes identical results through the public and Step-glitch trajectory commands", async () => {
+    const invalidLaunchDescriptor = {
+      ...createDescriptor("pchip", "y"),
+      points: [createGraphPoint(0, Number.MAX_VALUE), createGraphPoint(1, -Number.MAX_VALUE)],
+      soldierCenter: createGraphPoint(0, Number.MAX_VALUE),
+    } satisfies GraphwarWasmFormulaInputDescriptor;
+    const nonFiniteTrialDescriptor = {
+      ...createDescriptor("pchip", "ddy"),
+      bounds: { maxX: 1e308, maxY: 1e308, minX: -1e308, minY: -1e308 },
+      points: [createGraphPoint(0, 0), createGraphPoint(1, 1e308)],
+      secondOrderLaunchAngle: { degrees: 0, radians: 0 },
+      soldierCenter: createGraphPoint(0, 0),
+    } satisfies GraphwarWasmFormulaInputDescriptor;
+    const collisionMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    collisionMask[0] = 1;
+    const vectors = [
+      {
+        input: {
+          descriptor: createDescriptor("step", "dy"),
+          start: { type: "cold" },
+          stop: { observationXs: [-1, 1], stopX: 3, type: "stop-x-observations" },
+        },
+        name: "dy stop-x",
+      },
+      {
+        input: {
+          descriptor: createDescriptor("step", "ddy"),
+          start: { type: "cold" },
+          stop: createTargetStop({
+            requiredTargets: [{ center: createGraphPoint(2, 0), radius: 1 }],
+          }),
+        },
+        name: "ddy targets",
+      },
+      {
+        input: {
+          descriptor: createDescriptor("step", "dy"),
+          start: { type: "cold" },
+          stop: { type: "natural" },
+        },
+        name: "dy natural",
+      },
+      {
+        input: {
+          descriptor: invalidLaunchDescriptor,
+          start: { type: "cold" },
+          stop: { type: "natural" },
+        },
+        name: "invalid launch",
+      },
+      {
+        input: {
+          descriptor: nonFiniteTrialDescriptor,
+          start: { type: "cold" },
+          stop: { type: "natural" },
+        },
+        name: "non-finite trial",
+      },
+      {
+        input: {
+          descriptor: nonFiniteTrialDescriptor,
+          start: { type: "cold" },
+          stop: createTargetStop({ collision: { boundaryExpansion: 0, mask: collisionMask, type: "mask" } }),
+        },
+        name: "collision before non-finite classification",
+      },
+    ] as const satisfies readonly { input: GraphwarWasmTrajectoryInput; name: string }[];
+
+    for (const vector of vectors) {
+      const expected = runGraphwarWasmTrajectory(await createRuntime(), vector.input);
+      const actual = runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(await createRuntime(), vector.input);
+      expect(actual, vector.name).toEqual(expected);
+    }
+  });
+
+  it("restores the caller mark and stabilizes the Step-glitch trajectory seam after growth", async () => {
+    const runtime = await createRuntime(64);
+    const input = {
+      descriptor: createDescriptor("step", "ddy"),
+      start: { type: "cold" },
+      stop: createTargetStop({ shouldCollectVisiblePixels: true }),
+    } satisfies GraphwarWasmTrajectoryInput;
+    const expected = runGraphwarWasmTrajectory(await createRuntime(), input);
+    const arenaCursor = runtime.arenaCursor;
+    expect(runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(runtime, input)).toEqual(expected);
+    const highWaterByteLength = runtime.buffer.byteLength;
+
+    for (let iteration = 0; iteration < 100; iteration += 1) {
+      expect(runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(runtime, input)).toEqual(expected);
+    }
+    expect(runtime.arenaCursor).toBe(arenaCursor);
+    expect(runtime.buffer.byteLength).toBe(highWaterByteLength);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+  });
+
+  it("unwinds a trajectory attempt mark after a nested kernel fault", async () => {
+    const runtime = await createRuntime();
+    const input = {
+      descriptor: createDescriptor("step", "ddy"),
+      start: { type: "cold" },
+      stop: { type: "natural" },
+    } satisfies GraphwarWasmTrajectoryInput;
+    const arenaCursor = runtime.arenaCursor;
+    const runTrajectory = runtime.runTrajectory.bind(runtime);
+    vi.spyOn(runtime, "runTrajectory").mockImplementationOnce((inputPointer, inputByteLength) => {
+      // Trajectory validates this field only when launch runs below its internal attempt mark.
+      new DataView(runtime.buffer).setInt32(inputPointer, 0, true);
+      return runTrajectory(inputPointer, inputByteLength);
+    });
+
+    expect(() => runGraphwarWasmTrajectory(runtime, input)).toThrowError(
+      expect.objectContaining({ code: "trap", message: "unreachable" }),
+    );
+    expect(runtime.arenaCursor).toBe(arenaCursor);
   });
 
   it("stabilizes launch-only zero-sign protection before publishing the result", async () => {

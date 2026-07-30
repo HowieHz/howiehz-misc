@@ -197,6 +197,11 @@ function trap(): void {
 /** Runs launch preparation and the complete scalar trajectory in one raw command. */
 export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
+  return runTrajectoryRequest(inputPointer, inputByteLength);
+}
+
+/** Executes one complete raw request after the owning command has established arena preconditions. */
+export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32): u32 {
   if (inputPointer == 0 && inputByteLength == 0) {
     return 0;
   }

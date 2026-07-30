@@ -282,6 +282,46 @@ export interface GraphwarStepGlitchGeometryFrontierTrace {
   windows: readonly ScanGateWindow[];
 }
 
+/** Test-only replay outcome used to drive the iterative scanner without crossing the WASM boundary per candidate. */
+export type GraphwarStepGlitchGeometryReplayOutcome =
+  | {
+      blockedX?: number;
+      reachedTargetCount: number;
+      status: "miss";
+    }
+  | {
+      acceptedPoint: GraphPoint;
+      blockedX?: number;
+      reachedTargetCount: number;
+      status: "hit";
+    };
+
+export interface GraphwarStepGlitchGeometryDfsInput {
+  hitTargetCenter: PixelPoint;
+  prefixAcceptedPoint: GraphPoint;
+  prefixBlockedX?: number;
+  prefixReachedTargetCount: number;
+  replayMode: { type: "all-miss" } | { outcomes: readonly GraphwarStepGlitchGeometryReplayOutcome[]; type: "scripted" };
+  targetPoint: PixelPoint;
+}
+
+export type GraphwarStepGlitchGeometryDfsCandidateTrace = {
+  blockedX?: number;
+  expansionOrdinal: number;
+  kind: "direct" | "gate" | "target";
+  path: readonly PixelPoint[];
+  reachedTargetCount: number;
+} & ({ acceptedPoint?: never; status: "miss" } | { acceptedPoint: GraphPoint; status: "hit" });
+
+export interface GraphwarStepGlitchGeometryDfsTrace {
+  bestReachedTargetCount: number;
+  blockedX?: number;
+  candidates: readonly GraphwarStepGlitchGeometryDfsCandidateTrace[];
+  expandedStates: number;
+  scriptConsumed: number;
+  status: "hit" | "no-path";
+}
+
 /** 迭代 DFS 工作项；扫描器不会通过候选状态递归调用自身。 */
 type ScanWorkItem =
   | { candidate: ScanCandidate; type: "candidate" }
@@ -1204,6 +1244,173 @@ export function createGraphwarStepGlitchGeometryFrontierTraceForTest(
     }
   }
   return { batches, candidates, firstBlockedSearchX: scan.firstBlockedSearchX, rows: scan.rows, windows };
+}
+
+/** Runs the production scanner's DFS order against deterministic outcomes for the raw WASM differential seam. */
+export function createGraphwarStepGlitchGeometryDfsTraceForTest(
+  options: GraphwarStepGlitchPrefixOptions,
+  input: GraphwarStepGlitchGeometryDfsInput,
+): GraphwarStepGlitchGeometryDfsTrace {
+  const boundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
+  const maskIndex = getCompatibleMaskIndex(options, boundaryExpansion);
+  const target = imageToGraphPoint(input.targetPoint, options.bounds, options.boundsRect);
+  const targetGrid = pixelPointToSearchGrid(input.targetPoint, options.boundsRect, maskIndex.isMirrored);
+  const hitTargetGrid = pixelPointToSearchGrid(input.hitTargetCenter, options.boundsRect, maskIndex.isMirrored);
+  const directPath = [...options.sourcePath, input.targetPoint];
+  const candidates: GraphwarStepGlitchGeometryDfsTrace["candidates"][number][] = [];
+  let scriptConsumed = 0;
+  const consumeOutcome = (): GraphwarStepGlitchGeometryReplayOutcome => {
+    if (input.replayMode.type === "all-miss") {
+      return { reachedTargetCount: 0, status: "miss" };
+    }
+    const outcome = input.replayMode.outcomes[scriptConsumed];
+    if (!outcome) {
+      throw new Error("Step-glitch geometry replay script was exhausted");
+    }
+    scriptConsumed += 1;
+    return outcome;
+  };
+  const recordCandidate = (
+    kind: GraphwarStepGlitchGeometryDfsTrace["candidates"][number]["kind"],
+    path: readonly PixelPoint[],
+    outcome: GraphwarStepGlitchGeometryReplayOutcome,
+  ) => {
+    const candidate = {
+      ...(outcome.blockedX === undefined ? {} : { blockedX: outcome.blockedX }),
+      expansionOrdinal: candidates.length,
+      kind,
+      path,
+      reachedTargetCount: outcome.reachedTargetCount,
+    };
+    candidates.push(
+      outcome.status === "hit"
+        ? { ...candidate, acceptedPoint: outcome.acceptedPoint, status: "hit" }
+        : { ...candidate, status: "miss" },
+    );
+  };
+
+  const directOutcome = consumeOutcome();
+  recordCandidate("direct", directPath, directOutcome);
+  let expandedStates = 1;
+  let bestReachedTargetCount = Math.max(input.prefixReachedTargetCount, directOutcome.reachedTargetCount);
+  let blockedX = directOutcome.blockedX ?? input.prefixBlockedX;
+  const finish = (status: GraphwarStepGlitchGeometryDfsTrace["status"]) => {
+    if (input.replayMode.type === "scripted" && scriptConsumed !== input.replayMode.outcomes.length) {
+      throw new Error("Step-glitch geometry replay script has leftover outcomes");
+    }
+    return {
+      bestReachedTargetCount,
+      ...(blockedX === undefined ? {} : { blockedX }),
+      candidates,
+      expandedStates,
+      scriptConsumed,
+      status,
+    } satisfies GraphwarStepGlitchGeometryDfsTrace;
+  };
+  if (directOutcome.status === "hit") {
+    return finish("hit");
+  }
+
+  interface ScriptedState {
+    acceptedPoint: GraphPoint;
+    blockedX?: number;
+    path: PixelPoint[];
+  }
+  type ScriptedWorkItem =
+    | { candidate: { kind: "gate" | "target"; path: PixelPoint[] }; type: "candidate" }
+    | {
+        candidateIndex: number;
+        frontier: GraphwarStepGlitchGeometryFrontierTrace;
+        state: ScriptedState;
+        type: "frontier";
+      }
+    | { state: ScriptedState; type: "state" };
+  const work: ScriptedWorkItem[] = [
+    {
+      state: {
+        acceptedPoint: input.prefixAcceptedPoint,
+        ...(directOutcome.blockedX === undefined ? {} : { blockedX: directOutcome.blockedX }),
+        path: [...options.sourcePath],
+      },
+      type: "state",
+    },
+  ];
+
+  while (work.length > 0) {
+    const item = work.pop();
+    if (!item) {
+      break;
+    }
+    if (item.type === "state") {
+      if (item.state.acceptedPoint.x >= target.x) {
+        continue;
+      }
+      const stateGrid = graphPointToSearchGrid(item.state.acceptedPoint, options, maskIndex.isMirrored);
+      const farthestX = getFarthestFreeX(maskIndex, stateGrid.x, stateGrid.y);
+      if (farthestX < stateGrid.x) {
+        continue;
+      }
+      if (item.state.blockedX === undefined && farthestX >= targetGrid.x) {
+        work.push({ candidate: { kind: "target", path: [...item.state.path, input.targetPoint] }, type: "candidate" });
+        continue;
+      }
+      const firstBlockedSearchX =
+        item.state.blockedX === undefined
+          ? farthestX + 1
+          : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.isMirrored);
+      const frontier = createGraphwarStepGlitchGeometryFrontierTraceForTest(options, {
+        acceptedPoint: item.state.acceptedPoint,
+        firstBlockedSearchX,
+        row: stateGrid.y,
+        target,
+        targetRow: hitTargetGrid.y,
+      });
+      if (frontier.candidates.length > 0) {
+        work.push({ candidateIndex: 0, frontier, state: item.state, type: "frontier" });
+      }
+      continue;
+    }
+    if (item.type === "frontier") {
+      const frontierCandidate = item.frontier.candidates[item.candidateIndex];
+      if (!frontierCandidate) {
+        continue;
+      }
+      if (item.candidateIndex + 1 < item.frontier.candidates.length) {
+        work.push({ ...item, candidateIndex: item.candidateIndex + 1 });
+      }
+      work.push({
+        candidate: { kind: "gate", path: [...item.state.path, frontierCandidate.controlPoint] },
+        type: "candidate",
+      });
+      continue;
+    }
+    if (graphwarPixelPathsEqual(item.candidate.path, directPath)) {
+      continue;
+    }
+    expandedStates += 1;
+    const outcome = consumeOutcome();
+    recordCandidate(item.candidate.kind, item.candidate.path, outcome);
+    bestReachedTargetCount = Math.max(bestReachedTargetCount, outcome.reachedTargetCount);
+    blockedX ??= outcome.blockedX;
+    if (item.candidate.kind === "target") {
+      if (outcome.status === "hit") {
+        return finish("hit");
+      }
+      continue;
+    }
+    if (outcome.status === "miss" || outcome.acceptedPoint.x >= target.x) {
+      continue;
+    }
+    work.push({
+      state: {
+        acceptedPoint: outcome.acceptedPoint,
+        ...(outcome.blockedX === undefined ? {} : { blockedX: outcome.blockedX }),
+        path: item.candidate.path,
+      },
+      type: "state",
+    });
+  }
+  return finish("no-path");
 }
 
 /** 查询指定行从 searchX 开始连续可通行区的最右列。 */

@@ -1,7 +1,8 @@
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { imageToGraphPoint, pixelPointsEqual } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
-import { createPixelPoint } from "../../core/types";
+import { imagePointToPlaneGridPoint, planeColumnToForwardColumn } from "../../core/plane-grid";
+import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import type { StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
 import { graphwarByteArraysEqual } from "../../formula/trajectory/final-replay-snapshot";
@@ -50,6 +51,7 @@ const STEP_GLITCH_SEGMENT_RECORD_LENGTH = 10;
 const ALLOWED_SIGN_PROTECTION_BITS = 0b1_1111;
 const STEP_GLITCH_COMMAND_CREATE_CONTEXT = 11;
 const STEP_GLITCH_COMMAND_TRACE_FRONTIER = 12;
+const STEP_GLITCH_COMMAND_TRACE_DFS = 13;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
@@ -63,6 +65,11 @@ const STEP_GLITCH_TRACE_BATCH_BYTE_LENGTH = 24;
 const STEP_GLITCH_TRACE_WINDOW_BYTE_LENGTH = 32;
 const STEP_GLITCH_TRACE_ROW_BYTE_LENGTH = 20;
 const STEP_GLITCH_TRACE_CANDIDATE_BYTE_LENGTH = 56;
+const STEP_GLITCH_DFS_INPUT_BYTE_LENGTH = 88;
+const STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH = 40;
+const STEP_GLITCH_DFS_RESULT_BYTE_LENGTH = 40;
+const STEP_GLITCH_DFS_TRACE_BYTE_LENGTH = 56;
+const STEP_GLITCH_DFS_RESULT_MAGIC = 0x5347_4452;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -221,6 +228,7 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   traceGateFrontier: (
     input: GraphwarWasmStepGlitchGeometryFrontierInput,
   ) => GraphwarWasmStepGlitchGeometryFrontierTrace;
+  traceScriptedDfs: (input: GraphwarWasmStepGlitchGeometryDfsInput) => GraphwarWasmStepGlitchGeometryDfsTrace;
 }
 
 export interface GraphwarWasmStepGlitchGeometryFrontierInput {
@@ -267,9 +275,56 @@ export interface GraphwarWasmStepGlitchGeometryFrontierTrace {
   }[];
 }
 
+export type GraphwarWasmStepGlitchGeometryReplayOutcome =
+  | { blockedX?: number; reachedTargetCount: number; status: "miss" }
+  | {
+      acceptedPoint: GraphPoint;
+      blockedX?: number;
+      reachedTargetCount: number;
+      status: "hit";
+    };
+
+export interface GraphwarWasmStepGlitchGeometryDfsInput {
+  hitTargetCenter: PixelPoint;
+  prefixAcceptedPoint: GraphPoint;
+  prefixBlockedX?: number;
+  prefixReachedTargetCount: number;
+  replayMode:
+    | { type: "all-miss" }
+    | { outcomes: readonly GraphwarWasmStepGlitchGeometryReplayOutcome[]; type: "scripted" };
+  targetPoint: PixelPoint;
+}
+
+export type GraphwarWasmStepGlitchGeometryDfsCandidateTrace = {
+  blockedX?: number;
+  expansionOrdinal: number;
+  kind: "direct" | "gate" | "target";
+  path: readonly PixelPoint[];
+  reachedTargetCount: number;
+} & ({ acceptedPoint?: never; status: "miss" } | { acceptedPoint: GraphPoint; status: "hit" });
+
+export interface GraphwarWasmStepGlitchGeometryDfsTrace {
+  bestReachedTargetCount: number;
+  blockedX?: number;
+  candidates: readonly GraphwarWasmStepGlitchGeometryDfsCandidateTrace[];
+  expandedStates: number;
+  scriptConsumed: number;
+  status: "hit" | "no-path";
+}
+
 export type GraphwarWasmStepGlitchGeometryContextCreateResult =
   | { status: "invalid-input" | "unsupported" }
   | { context: GraphwarWasmStepGlitchGeometryTestContext; status: "ready" };
+
+function graphwarWasmPixelPathsEqual(left: readonly PixelPoint[], right: readonly PixelPoint[]) {
+  return (
+    left.length === right.length &&
+    left.every((point, index) => {
+      const rightPoint = right[index];
+      return rightPoint !== undefined && pixelPointsEqual(point, rightPoint);
+    })
+  );
+}
 
 /** Optional final replay snapshot remains an explicit result branch, never a detached cache id. */
 export type GraphwarWasmStepGlitchFinalValidationEvidence =
@@ -437,6 +492,9 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
       runtime.resetArena(contextMark);
       return packedResult;
     }
+    const boundsSnapshot = { ...input.bounds };
+    const boundsRectSnapshot = { ...input.boundsRect };
+    const sourcePathSnapshot = input.sourcePath.map((point) => createPixelPoint(point.x, point.y));
     const packed = packedResult.input;
     const prefixEvidenceDescriptor = writePrefixEvidenceDescriptor(runtime, packed.prefixEvidence);
     const inputPointer = runtime.reserveArena(STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH, 4);
@@ -540,6 +598,18 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
         traceGateFrontier(input) {
           assertActive();
           return traceGraphwarWasmStepGlitchGeometryFrontier(runtime, contextPointer, input);
+        },
+        traceScriptedDfs(dfsInput) {
+          assertActive();
+          return traceGraphwarWasmStepGlitchGeometryDfs(
+            runtime,
+            contextPointer,
+            boundsSnapshot,
+            boundsRectSnapshot,
+            sourcePathSnapshot,
+            isMirrored,
+            dfsInput,
+          );
         },
       },
       status: "ready",
@@ -789,6 +859,308 @@ function traceGraphwarWasmStepGlitchGeometryFrontier(
     });
     runtime.resetArena(commandMark);
     return { batches, candidates, firstBlockedSearchX, rows, windows };
+  } catch (error) {
+    runtime.resetArenaAfterFault(commandMark);
+    throw error;
+  }
+}
+
+function traceGraphwarWasmStepGlitchGeometryDfs(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  bounds: GraphBounds,
+  boundsRect: BoundsRect,
+  sourcePath: readonly PixelPoint[],
+  isMirrored: boolean,
+  input: GraphwarWasmStepGlitchGeometryDfsInput,
+): GraphwarWasmStepGlitchGeometryDfsTrace {
+  const points = [input.prefixAcceptedPoint, input.targetPoint, input.hitTargetCenter];
+  if (
+    !points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ||
+    !Number.isInteger(input.prefixReachedTargetCount) ||
+    input.prefixReachedTargetCount < 0 ||
+    input.prefixReachedTargetCount > 0xffff_ffff ||
+    (input.prefixBlockedX !== undefined && !Number.isFinite(input.prefixBlockedX)) ||
+    (input.replayMode.type === "scripted" && input.replayMode.outcomes.length === 0)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch DFS input is outside the scanner geometry domain",
+      "input",
+    );
+  }
+  const outcomes = input.replayMode.type === "scripted" ? input.replayMode.outcomes : [];
+  if (outcomes.length > 0xffff_ffff) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Graphwar WASM Step-glitch DFS replay script is too large",
+      "input",
+    );
+  }
+  for (const outcome of outcomes) {
+    if (
+      !Number.isInteger(outcome.reachedTargetCount) ||
+      outcome.reachedTargetCount < 0 ||
+      outcome.reachedTargetCount > 0xffff_ffff ||
+      (outcome.blockedX !== undefined && !Number.isFinite(outcome.blockedX)) ||
+      (outcome.status === "hit" &&
+        (!Number.isFinite(outcome.acceptedPoint.x) || !Number.isFinite(outcome.acceptedPoint.y)))
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-formula-input",
+        "Graphwar WASM Step-glitch DFS replay outcome is invalid",
+        "input",
+      );
+    }
+  }
+
+  const commandMark = runtime.markArena();
+  try {
+    const scriptPointer =
+      outcomes.length === 0 ? 0 : runtime.reserveArena(outcomes.length * STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH, 8);
+    if (outcomes.length > 0) {
+      new Uint8Array(runtime.buffer, scriptPointer, outcomes.length * STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH).fill(0);
+      const scriptView = new DataView(
+        runtime.buffer,
+        scriptPointer,
+        outcomes.length * STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH,
+      );
+      outcomes.forEach((outcome, index) => {
+        const offset = index * STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH;
+        scriptView.setUint32(offset, outcome.status === "hit" ? 1 : 0, true);
+        scriptView.setUint32(offset + 4, outcome.reachedTargetCount, true);
+        scriptView.setUint32(offset + 8, outcome.blockedX === undefined ? 0 : 1, true);
+        if (outcome.status === "hit") {
+          scriptView.setFloat64(offset + 16, outcome.acceptedPoint.x, true);
+          scriptView.setFloat64(offset + 24, outcome.acceptedPoint.y, true);
+        }
+        if (outcome.blockedX !== undefined) {
+          scriptView.setFloat64(offset + 32, outcome.blockedX, true);
+        }
+      });
+    }
+    const target = imageToGraphPoint(input.targetPoint, bounds, boundsRect);
+    const targetGrid = imagePointToPlaneGridPoint(input.targetPoint, boundsRect);
+    const hitTargetGrid = imagePointToPlaneGridPoint(input.hitTargetCenter, boundsRect);
+    const inputPointer = runtime.reserveArena(STEP_GLITCH_DFS_INPUT_BYTE_LENGTH, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, STEP_GLITCH_DFS_INPUT_BYTE_LENGTH);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setUint32(4, input.replayMode.type === "scripted" ? 1 : 0, true);
+    inputView.setUint32(8, scriptPointer, true);
+    inputView.setUint32(12, outcomes.length, true);
+    inputView.setFloat64(16, input.prefixAcceptedPoint.x, true);
+    inputView.setFloat64(24, input.prefixAcceptedPoint.y, true);
+    inputView.setFloat64(32, target.x, true);
+    inputView.setFloat64(40, target.y, true);
+    inputView.setFloat64(48, input.targetPoint.x, true);
+    inputView.setFloat64(56, input.targetPoint.y, true);
+    inputView.setInt32(64, hitTargetGrid.y, true);
+    inputView.setInt32(68, planeColumnToForwardColumn(targetGrid.x, isMirrored), true);
+    inputView.setUint32(72, input.prefixReachedTargetCount, true);
+    inputView.setUint32(76, input.prefixBlockedX === undefined ? 0 : 1, true);
+    inputView.setFloat64(80, input.prefixBlockedX ?? 0, true);
+    const resultPointer = runtime.runRouteTask(
+      STEP_GLITCH_COMMAND_TRACE_DFS,
+      inputPointer,
+      STEP_GLITCH_DFS_INPUT_BYTE_LENGTH,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: resultPointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_DFS_RESULT_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    const resultStatus = resultView.getUint32(4, true);
+    const expandedStates = resultView.getUint32(8, true);
+    const bestReachedTargetCount = resultView.getUint32(12, true);
+    const hasBlockedX = resultView.getUint32(16, true);
+    const scriptConsumed = resultView.getUint32(20, true);
+    const tracePointer = resultView.getUint32(24, true);
+    const traceCount = resultView.getUint32(28, true);
+    const blockedX = resultView.getFloat64(32, true);
+    const maximumAllMissTraceCount = 1 + 3 * 11 * GRAPHWAR_PLANE_HEIGHT;
+    if (
+      resultView.getUint32(0, true) !== STEP_GLITCH_DFS_RESULT_MAGIC ||
+      resultStatus > 1 ||
+      hasBlockedX > 1 ||
+      (hasBlockedX === 0 ? blockedX !== 0 : !Number.isFinite(blockedX)) ||
+      traceCount === 0 ||
+      expandedStates !== traceCount ||
+      (input.replayMode.type === "scripted"
+        ? scriptConsumed !== outcomes.length || traceCount !== outcomes.length
+        : scriptConsumed !== 0 || traceCount > maximumAllMissTraceCount)
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step-glitch DFS returned an invalid result header",
+        "output",
+      );
+    }
+    const traceRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: traceCount, pointer: tracePointer },
+      { alignment: 8, elementByteLength: STEP_GLITCH_DFS_TRACE_BYTE_LENGTH, minimumPointer: runtime.arenaBase },
+    );
+    const traceView = new DataView(traceRange.buffer, traceRange.byteOffset, traceRange.byteLength);
+    let expectedBestReachedTargetCount = input.prefixReachedTargetCount;
+    let expectedBlockedX: number | undefined;
+    const candidates = Array.from({ length: traceCount }, (_, index) => {
+      const offset = index * STEP_GLITCH_DFS_TRACE_BYTE_LENGTH;
+      const kindValue = traceView.getUint32(offset, true);
+      const statusValue = traceView.getUint32(offset + 4, true);
+      const pathXPointer = traceView.getUint32(offset + 8, true);
+      const pathYPointer = traceView.getUint32(offset + 12, true);
+      const pathCount = traceView.getUint32(offset + 16, true);
+      const reachedTargetCount = traceView.getUint32(offset + 20, true);
+      const hasCandidateBlockedX = traceView.getUint32(offset + 24, true);
+      const expansionOrdinal = traceView.getUint32(offset + 28, true);
+      const acceptedX = traceView.getFloat64(offset + 32, true);
+      const acceptedY = traceView.getFloat64(offset + 40, true);
+      const candidateBlockedX = traceView.getFloat64(offset + 48, true);
+      const expectedOutcome = outcomes[index];
+      if (
+        kindValue > 2 ||
+        (index === 0 ? kindValue !== 0 : kindValue === 0) ||
+        statusValue > 1 ||
+        hasCandidateBlockedX > 1 ||
+        expansionOrdinal !== index ||
+        pathCount < sourcePath.length + 1 ||
+        pathCount > sourcePath.length + traceCount ||
+        (statusValue === 0
+          ? acceptedX !== 0 || acceptedY !== 0
+          : !Number.isFinite(acceptedX) || !Number.isFinite(acceptedY)) ||
+        (hasCandidateBlockedX === 0 ? candidateBlockedX !== 0 : !Number.isFinite(candidateBlockedX)) ||
+        (input.replayMode.type === "all-miss" &&
+          (statusValue !== 0 || reachedTargetCount !== 0 || hasCandidateBlockedX !== 0)) ||
+        (expectedOutcome !== undefined &&
+          (statusValue !== (expectedOutcome.status === "hit" ? 1 : 0) ||
+            reachedTargetCount !== expectedOutcome.reachedTargetCount ||
+            hasCandidateBlockedX !== (expectedOutcome.blockedX === undefined ? 0 : 1) ||
+            (expectedOutcome.status === "hit" &&
+              (acceptedX !== expectedOutcome.acceptedPoint.x || acceptedY !== expectedOutcome.acceptedPoint.y)) ||
+            (expectedOutcome.blockedX !== undefined && candidateBlockedX !== expectedOutcome.blockedX)))
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch DFS returned an invalid candidate trace",
+          "output",
+        );
+      }
+      const pathXRange = validateGraphwarWasmMemoryRange(
+        runtime,
+        { length: pathCount, pointer: pathXPointer },
+        { alignment: 8, elementByteLength: 8, minimumPointer: runtime.arenaBase },
+      );
+      const pathYRange = validateGraphwarWasmMemoryRange(
+        runtime,
+        { length: pathCount, pointer: pathYPointer },
+        { alignment: 8, elementByteLength: 8, minimumPointer: runtime.arenaBase },
+      );
+      const pathXs = new Float64Array(pathXRange.buffer, pathXRange.byteOffset, pathCount);
+      const pathYs = new Float64Array(pathYRange.buffer, pathYRange.byteOffset, pathCount);
+      const path = Array.from({ length: pathCount }, (_, pathIndex) => {
+        const x = pathXs[pathIndex];
+        const y = pathYs[pathIndex];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-state",
+            "Graphwar WASM Step-glitch DFS returned a non-finite path",
+            "output",
+          );
+        }
+        return createPixelPoint(x, y);
+      });
+      const finalPathPoint = path.at(-1);
+      if (
+        sourcePath.some((point, pathIndex) => {
+          const pathPoint = path[pathIndex];
+          return pathPoint === undefined || !pixelPointsEqual(point, pathPoint);
+        }) ||
+        !finalPathPoint ||
+        (kindValue === 0 &&
+          (path.length !== sourcePath.length + 1 || !pixelPointsEqual(finalPathPoint, input.targetPoint))) ||
+        (kindValue === 1 && pixelPointsEqual(finalPathPoint, input.targetPoint)) ||
+        (kindValue === 2 &&
+          (path.length === sourcePath.length + 1 || !pixelPointsEqual(finalPathPoint, input.targetPoint)))
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch DFS returned an invalid candidate path",
+          "output",
+        );
+      }
+      expectedBestReachedTargetCount = Math.max(expectedBestReachedTargetCount, reachedTargetCount);
+      if (expectedBlockedX === undefined && hasCandidateBlockedX === 1) {
+        expectedBlockedX = candidateBlockedX;
+      }
+      if (index === 0 && expectedBlockedX === undefined) {
+        expectedBlockedX = input.prefixBlockedX;
+      }
+      const kind: GraphwarWasmStepGlitchGeometryDfsCandidateTrace["kind"] =
+        kindValue === 0 ? "direct" : kindValue === 1 ? "gate" : "target";
+      const candidate = {
+        ...(hasCandidateBlockedX === 1 ? { blockedX: candidateBlockedX } : {}),
+        expansionOrdinal,
+        kind,
+        path,
+        reachedTargetCount,
+      } satisfies Omit<GraphwarWasmStepGlitchGeometryDfsCandidateTrace, "acceptedPoint" | "status">;
+      return statusValue === 1
+        ? ({
+            ...candidate,
+            acceptedPoint: createGraphPoint(acceptedX, acceptedY),
+            status: "hit",
+          } satisfies GraphwarWasmStepGlitchGeometryDfsCandidateTrace)
+        : ({ ...candidate, status: "miss" } satisfies GraphwarWasmStepGlitchGeometryDfsCandidateTrace);
+    });
+    for (let index = 1; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      if (!candidate) {
+        continue;
+      }
+      const parentPath = candidate.path.slice(0, -1);
+      const hasValidParent =
+        graphwarWasmPixelPathsEqual(parentPath, sourcePath) ||
+        candidates
+          .slice(1, index)
+          .some(
+            (parentCandidate) =>
+              parentCandidate.kind === "gate" &&
+              parentCandidate.status === "hit" &&
+              parentCandidate.acceptedPoint.x < target.x &&
+              graphwarWasmPixelPathsEqual(parentCandidate.path, parentPath),
+          );
+      if (!hasValidParent) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM Step-glitch DFS returned a path without a successful parent",
+          "output",
+        );
+      }
+    }
+    const terminalHitIndex = candidates.findIndex(
+      (candidate) => candidate.status === "hit" && (candidate.kind === "direct" || candidate.kind === "target"),
+    );
+    if (
+      bestReachedTargetCount !== expectedBestReachedTargetCount ||
+      (expectedBlockedX === undefined ? hasBlockedX !== 0 : hasBlockedX !== 1 || blockedX !== expectedBlockedX) ||
+      terminalHitIndex !== (resultStatus === 1 ? candidates.length - 1 : -1)
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step-glitch DFS returned an inconsistent terminal trace",
+        "output",
+      );
+    }
+    runtime.resetArena(commandMark);
+    return {
+      bestReachedTargetCount,
+      ...(hasBlockedX === 1 ? { blockedX } : {}),
+      candidates,
+      expandedStates,
+      scriptConsumed,
+      status: resultStatus === 1 ? "hit" : "no-path",
+    };
   } catch (error) {
     runtime.resetArenaAfterFault(commandMark);
     throw error;

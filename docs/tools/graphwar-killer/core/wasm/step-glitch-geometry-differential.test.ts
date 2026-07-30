@@ -6,8 +6,10 @@ import {
 } from "../../formula/trajectory/sampling";
 import {
   createGraphwarStepGlitchPrefixEvidence,
+  createGraphwarStepGlitchGeometryDfsTraceForTest,
   createGraphwarStepGlitchGeometryFrontierTraceForTest,
   createGraphwarStepGlitchScanMaskIndex,
+  type GraphwarStepGlitchGeometryReplayOutcome,
 } from "../../pathfinding/routing/step-glitch-scan";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { imageToGraphPoint } from "../geometry";
@@ -302,6 +304,461 @@ describe("Graphwar WASM Step-glitch retained geometry context", () => {
     expect(contextResult.context.copyFarthestFreeX()).toHaveLength(planeCellCount);
     contextResult.context.dispose();
   });
+
+  it("runs direct replay first and terminates without geometry work", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = createDfsInput(bounds, false, [
+      {
+        acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 600), 0),
+        reachedTargetCount: 2,
+        status: "hit",
+      },
+    ]);
+
+    expect(contextResult.context.traceScriptedDfs(input)).toEqual(
+      createGraphwarStepGlitchGeometryDfsTraceForTest(createPrefixOptions(bounds, mask, 0), input),
+    );
+    expect(contextResult.context.traceScriptedDfs(input)).toMatchObject({
+      candidates: [{ expansionOrdinal: 0, kind: "direct", status: "hit" }],
+      expandedStates: 1,
+      scriptConsumed: 1,
+      status: "hit",
+    });
+    contextResult.context.dispose();
+  });
+
+  it("continues nested gate hits depth-first before the parent frontier", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const directBlockedX = graphXAtBoundary(bounds, false, 300);
+    const input = {
+      ...createDfsInput(bounds, false, [
+        { blockedX: directBlockedX, reachedTargetCount: 1, status: "miss" },
+        {
+          acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 350), 0),
+          blockedX: graphXAtBoundary(bounds, false, 450),
+          reachedTargetCount: 2,
+          status: "hit",
+        },
+        {
+          acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 500), 0),
+          reachedTargetCount: 3,
+          status: "hit",
+        },
+        {
+          acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 600), 0),
+          reachedTargetCount: 4,
+          status: "hit",
+        },
+      ]),
+      prefixBlockedX: graphXAtBoundary(bounds, false, 275),
+    };
+    const expected = createGraphwarStepGlitchGeometryDfsTraceForTest(createPrefixOptions(bounds, mask, 0), input);
+    const actual = contextResult.context.traceScriptedDfs(input);
+
+    expect(actual).toEqual(expected);
+    expect(actual.candidates.map((candidate) => candidate.kind)).toEqual(["direct", "gate", "gate", "target"]);
+    expect(actual.candidates.map((candidate) => candidate.path.length)).toEqual([3, 3, 4, 5]);
+    expect(actual).toMatchObject({
+      bestReachedTargetCount: 4,
+      blockedX: directBlockedX,
+      expandedStates: 4,
+      scriptConsumed: 4,
+      status: "hit",
+    });
+    contextResult.context.dispose();
+  });
+
+  it("finishes a mirrored nested miss subtree before resuming the parent frontier", async () => {
+    const bounds = { maxX: 4, maxY: 10, minX: 12, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const options = createPrefixOptions(bounds, mask, 0);
+    const directBlockedX = graphXAtBoundary(bounds, true, 300);
+    const nestedBlockedX = graphXAtBoundary(bounds, true, 450);
+    const nestedAcceptedPoint = createGraphPoint(graphXAtBoundary(bounds, true, 350), 0);
+    const baseInput = createDfsInput(bounds, true, []);
+    const target = imageToGraphPoint(baseInput.targetPoint, bounds, boundsRect);
+    const rootFrontier = createGraphwarStepGlitchGeometryFrontierTraceForTest(options, {
+      acceptedPoint: baseInput.prefixAcceptedPoint,
+      firstBlockedSearchX: 300,
+      row: 225,
+      target,
+      targetRow: 200,
+    });
+    const nestedFrontier = createGraphwarStepGlitchGeometryFrontierTraceForTest(options, {
+      acceptedPoint: nestedAcceptedPoint,
+      firstBlockedSearchX: 450,
+      row: 225,
+      target,
+      targetRow: 200,
+    });
+    expect(rootFrontier.candidates.length).toBeGreaterThan(1);
+    expect(nestedFrontier.candidates.length).toBeGreaterThan(0);
+    const outcomes: GraphwarStepGlitchGeometryReplayOutcome[] = [
+      { blockedX: directBlockedX, reachedTargetCount: 1, status: "miss" },
+      {
+        acceptedPoint: nestedAcceptedPoint,
+        blockedX: nestedBlockedX,
+        reachedTargetCount: 2,
+        status: "hit",
+      },
+      ...Array.from({ length: nestedFrontier.candidates.length + rootFrontier.candidates.length - 1 }, () => ({
+        reachedTargetCount: 2,
+        status: "miss" as const,
+      })),
+    ];
+    const input = createDfsInput(bounds, true, outcomes);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+
+    const actual = contextResult.context.traceScriptedDfs(input);
+    expect(actual).toEqual(createGraphwarStepGlitchGeometryDfsTraceForTest(options, input));
+    expect(
+      actual.candidates.slice(2, 2 + nestedFrontier.candidates.length).every(({ path }) => path.length === 4),
+    ).toBe(true);
+    expect(actual.candidates.at(2 + nestedFrontier.candidates.length)?.path).toHaveLength(3);
+    expect(actual.status).toBe("no-path");
+    contextResult.context.dispose();
+  });
+
+  it("keeps prefix blocked x ahead of later candidate evidence without steering initial geometry", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    setForwardMaskCell(mask, 300, 225, false);
+    const prefixBlockedX = graphXAtBoundary(bounds, false, 250);
+    const laterBlockedX = graphXAtBoundary(bounds, false, 650);
+    const baseInput = createDfsInput(bounds, false, []);
+    const target = imageToGraphPoint(baseInput.targetPoint, bounds, boundsRect);
+    const frontier = createGraphwarStepGlitchGeometryFrontierTraceForTest(createPrefixOptions(bounds, mask, 0), {
+      acceptedPoint: baseInput.prefixAcceptedPoint,
+      firstBlockedSearchX: 300,
+      row: 225,
+      target,
+      targetRow: 200,
+    });
+    expect(frontier.candidates.length).toBeGreaterThan(0);
+    const input = {
+      ...createDfsInput(bounds, false, [
+        { reachedTargetCount: 1, status: "miss" },
+        { blockedX: laterBlockedX, reachedTargetCount: 2, status: "miss" },
+        ...Array.from({ length: frontier.candidates.length - 1 }, () => ({
+          reachedTargetCount: 2,
+          status: "miss" as const,
+        })),
+      ]),
+      prefixBlockedX,
+    };
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+
+    const actual = contextResult.context.traceScriptedDfs(input);
+    expect(actual).toEqual(
+      createGraphwarStepGlitchGeometryDfsTraceForTest(createPrefixOptions(bounds, mask, 0), input),
+    );
+    expect(actual.candidates[0]?.kind).toBe("direct");
+    expect(actual.candidates.slice(1).every(({ kind }) => kind === "gate")).toBe(true);
+    expect(actual.blockedX).toBe(prefixBlockedX);
+    contextResult.context.dispose();
+  });
+
+  it("treats all-candidates-miss and duplicate initial direct suppression as a normal no-path", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = { ...createDfsInput(bounds, false, []), replayMode: { type: "all-miss" as const } };
+    const actual = contextResult.context.traceScriptedDfs(input);
+
+    expect(actual).toEqual(
+      createGraphwarStepGlitchGeometryDfsTraceForTest(createPrefixOptions(bounds, mask, 0), input),
+    );
+    expect(actual).toMatchObject({
+      candidates: [{ kind: "direct", status: "miss" }],
+      expandedStates: 1,
+      scriptConsumed: 0,
+      status: "no-path",
+    });
+    contextResult.context.dispose();
+  });
+
+  it("exhausts a real gate frontier normally in explicit all-candidates-miss mode", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    for (let row = 0; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      if (row !== 200) {
+        setForwardMaskCell(mask, 300, row, false);
+      }
+    }
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const input = { ...createDfsInput(bounds, false, []), replayMode: { type: "all-miss" as const } };
+    const actual = contextResult.context.traceScriptedDfs(input);
+
+    expect(actual).toEqual(
+      createGraphwarStepGlitchGeometryDfsTraceForTest(createPrefixOptions(bounds, mask, 0), input),
+    );
+    expect(actual.status).toBe("no-path");
+    expect(actual.candidates[0]).toMatchObject({ kind: "direct", status: "miss" });
+    expect(
+      actual.candidates.slice(1).every((candidate) => candidate.kind === "gate" && candidate.status === "miss"),
+    ).toBe(true);
+    expect(actual.expandedStates).toBeGreaterThan(1);
+    contextResult.context.dispose();
+  });
+
+  it.each([
+    {
+      name: "script exhaustion",
+      outcomes: [{ blockedX: 7, reachedTargetCount: 0, status: "miss" as const }],
+    },
+    {
+      name: "script leftovers",
+      outcomes: [
+        { acceptedPoint: createGraphPoint(9, 0), reachedTargetCount: 1, status: "hit" as const },
+        { reachedTargetCount: 0, status: "miss" as const },
+      ],
+    },
+  ])("faults on exact replay $name and restores the retained mark", async ({ outcomes }) => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const input = createDfsInput(bounds, false, outcomes);
+
+    expect(() => contextResult.context.traceScriptedDfs(input)).toThrowError();
+    expect(() =>
+      createGraphwarStepGlitchGeometryDfsTraceForTest(createPrefixOptions(bounds, mask, 0), input),
+    ).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(contextResult.context.copyFarthestFreeX()).toHaveLength(planeCellCount);
+    contextResult.context.dispose();
+  });
+
+  it.each([
+    {
+      mutate(view: DataView, resultPointer: number) {
+        view.setUint32(resultPointer + 28, 0xffff_ffff, true);
+      },
+      name: "oversized trace count",
+    },
+    {
+      mutate(view: DataView, resultPointer: number) {
+        view.setUint32(resultPointer + 4, 0, true);
+      },
+      name: "no-path status with a direct hit",
+    },
+  ])("rejects malformed DFS output ($name) and keeps the retained context usable", async ({ mutate }) => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 13) {
+        mutate(new DataView(runtime.buffer), resultPointer);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      contextResult.context.traceScriptedDfs(
+        createDfsInput(bounds, false, [
+          { acceptedPoint: createGraphPoint(9, 0), reachedTargetCount: 1, status: "hit" },
+        ]),
+      ),
+    ).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(contextResult.context.copyFarthestFreeX()).toHaveLength(planeCellCount);
+    contextResult.context.dispose();
+  });
+
+  it("rejects a non-terminal direct hit followed by a no-path trace", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const directBlockedX = graphXAtBoundary(bounds, false, 300);
+    const outcomes: GraphwarStepGlitchGeometryReplayOutcome[] = [
+      { blockedX: directBlockedX, reachedTargetCount: 1, status: "miss" },
+      {
+        acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 350), 0),
+        reachedTargetCount: 2,
+        status: "hit",
+      },
+      {
+        acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 600), 0),
+        reachedTargetCount: 3,
+        status: "hit",
+      },
+    ];
+    const input = createDfsInput(bounds, false, outcomes);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 13) {
+        const view = new DataView(runtime.buffer);
+        const tracePointer = view.getUint32(resultPointer + 24, true);
+        const finalTracePointer = tracePointer + 2 * 56;
+        outcomes[0] = {
+          acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, false, 600), 0),
+          blockedX: directBlockedX,
+          reachedTargetCount: 1,
+          status: "hit",
+        };
+        outcomes[2] = { reachedTargetCount: 3, status: "miss" };
+        view.setUint32(resultPointer + 4, 0, true);
+        view.setUint32(tracePointer + 4, 1, true);
+        view.setFloat64(tracePointer + 32, outcomes[0].acceptedPoint.x, true);
+        view.setFloat64(tracePointer + 40, outcomes[0].acceptedPoint.y, true);
+        view.setUint32(finalTracePointer + 4, 0, true);
+        view.setFloat64(finalTracePointer + 32, 0, true);
+        view.setFloat64(finalTracePointer + 40, 0, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() => contextResult.context.traceScriptedDfs(input)).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(contextResult.context.copyFarthestFreeX()).toHaveLength(planeCellCount);
+    contextResult.context.dispose();
+  });
+
+  it("rejects malformed raw replay scripts and restores the command mark", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      if (command === 13) {
+        const view = new DataView(runtime.buffer);
+        view.setUint32(view.getUint32(inputPointer + 8, true), 2, true);
+      }
+      return runRouteTask(command, inputPointer, inputByteLength);
+    });
+
+    expect(() =>
+      contextResult.context.traceScriptedDfs(
+        createDfsInput(bounds, false, [
+          { acceptedPoint: createGraphPoint(9, 0), reachedTargetCount: 1, status: "hit" },
+        ]),
+      ),
+    ).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    contextResult.context.dispose();
+  });
+
+  it("stabilizes after alternating large and small DFS traces across arena growth", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    for (let row = 50; row < GRAPHWAR_PLANE_HEIGHT; row += 1) {
+      setForwardMaskCell(mask, 300, row, false);
+    }
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const directBlockedX = graphXAtBoundary(bounds, false, 300);
+    const largeInput = createDfsInput(bounds, false, [
+      { blockedX: directBlockedX, reachedTargetCount: 0, status: "miss" },
+      ...Array.from({ length: 50 * 3 * 11 }, () => ({ reachedTargetCount: 0, status: "miss" as const })),
+    ]);
+    const smallInput = createDfsInput(bounds, false, [
+      { acceptedPoint: createGraphPoint(9, 0), reachedTargetCount: 1, status: "hit" },
+    ]);
+    const expectedLarge = createGraphwarStepGlitchGeometryDfsTraceForTest(
+      createPrefixOptions(bounds, mask, 0),
+      largeInput,
+    );
+
+    expect(contextResult.context.traceScriptedDfs(largeInput)).toEqual(expectedLarge);
+    const highWaterByteLength = runtime.buffer.byteLength;
+    expect(contextResult.context.traceScriptedDfs(smallInput).status).toBe("hit");
+    expect(contextResult.context.traceScriptedDfs(largeInput)).toEqual(expectedLarge);
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(runtime.buffer.byteLength).toBe(highWaterByteLength);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    contextResult.context.dispose();
+  });
+
+  it("reuses one retained context for 5,000 DFS commands at the arena high-water mark", async () => {
+    const bounds = { maxX: 12, maxY: 10, minX: 4, minY: -10 };
+    const mask = new Uint8Array(planeCellCount);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(runtime, createContextInput(bounds, mask, 0));
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected a retained Step-glitch geometry context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+    const input = createDfsInput(bounds, false, [
+      { acceptedPoint: createGraphPoint(9, 0), reachedTargetCount: 1, status: "hit" },
+    ]);
+    contextResult.context.traceScriptedDfs(input);
+    const highWaterByteLength = runtime.buffer.byteLength;
+
+    for (let iteration = 0; iteration < 5_000; iteration += 1) {
+      expect(contextResult.context.traceScriptedDfs(input).status).toBe("hit");
+    }
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(runtime.buffer.byteLength).toBe(highWaterByteLength);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    contextResult.context.dispose();
+  });
 });
 
 function createContextInput(
@@ -381,21 +838,49 @@ function createFrontierInput(
   isMirrored: boolean,
   firstBlockedSearchX: number,
 ) {
-  const graphXAtBoundary = (searchBoundaryX: number) => {
-    const planeBoundaryX = isMirrored ? GRAPHWAR_PLANE_LENGTH - searchBoundaryX : searchBoundaryX;
-    return imageToGraphPoint(
-      createPixelPoint((planeBoundaryX / GRAPHWAR_PLANE_LENGTH) * boundsRect.width, boundsRect.y),
-      bounds,
-      boundsRect,
-    ).x;
-  };
   return {
-    acceptedPoint: createGraphPoint(graphXAtBoundary(100), 0),
+    acceptedPoint: createGraphPoint(graphXAtBoundary(bounds, isMirrored, 100), 0),
     firstBlockedSearchX,
     row: 220,
-    target: createGraphPoint(graphXAtBoundary(600), 0),
+    target: createGraphPoint(graphXAtBoundary(bounds, isMirrored, 600), 0),
     targetRow: 200,
   };
+}
+
+function createDfsInput(
+  bounds: { maxX: number; maxY: number; minX: number; minY: number },
+  isMirrored: boolean,
+  outcomes: readonly (
+    | { blockedX?: number; reachedTargetCount: number; status: "miss" }
+    | {
+        acceptedPoint: ReturnType<typeof createGraphPoint>;
+        blockedX?: number;
+        reachedTargetCount: number;
+        status: "hit";
+      }
+  )[],
+) {
+  const targetPointX = isMirrored ? GRAPHWAR_PLANE_LENGTH - 600 : 600;
+  return {
+    hitTargetCenter: createPixelPoint(targetPointX, 200.5),
+    prefixAcceptedPoint: createGraphPoint(graphXAtBoundary(bounds, isMirrored, 100), 0),
+    prefixReachedTargetCount: 1,
+    replayMode: { outcomes, type: "scripted" as const },
+    targetPoint: createPixelPoint(targetPointX, 225),
+  };
+}
+
+function graphXAtBoundary(
+  bounds: { maxX: number; maxY: number; minX: number; minY: number },
+  isMirrored: boolean,
+  searchBoundaryX: number,
+) {
+  const planeBoundaryX = isMirrored ? GRAPHWAR_PLANE_LENGTH - searchBoundaryX : searchBoundaryX;
+  return imageToGraphPoint(
+    createPixelPoint((planeBoundaryX / GRAPHWAR_PLANE_LENGTH) * boundsRect.width, boundsRect.y),
+    bounds,
+    boundsRect,
+  ).x;
 }
 
 function setForwardMaskCell(mask: Uint8Array, forwardX: number, row: number, isMirrored: boolean) {

@@ -18,6 +18,7 @@ import {
   createStepGlitchGeometryContext,
   prepareStepGlitchCandidateFormulaForTest,
   replayStepGlitchCandidateForTest,
+  traceStepGlitchRealDfsForTest,
   replayStepGlitchTrajectoryForTest,
   traceStepGlitchGeometryDfs,
   traceStepGlitchGeometryFrontier,
@@ -5930,6 +5931,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   }
   if (command == Layout.STEP_GLITCH_COMMAND_REPLAY_CANDIDATE_FOR_TEST) {
     return replayStepGlitchCandidateForTest(inputPointer, inputByteLength);
+  }
+  if (command == Layout.STEP_GLITCH_COMMAND_TRACE_REAL_DFS_FOR_TEST) {
+    return traceStepGlitchRealDfsForTest(inputPointer, inputByteLength);
   }
   trap();
   return 0;

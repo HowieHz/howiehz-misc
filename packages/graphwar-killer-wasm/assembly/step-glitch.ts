@@ -2,7 +2,7 @@ import { floorFormulaDecimal, roundFormulaDecimal } from "./decimal";
 import * as FormulaLayout from "./formula-layout";
 import { runPrepareLaunch } from "./formula-launch";
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants";
-import { requireArenaRange, reserveArena } from "./memory";
+import { markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
 import * as Layout from "./step-glitch-layout";
 import { runTrajectoryRequest } from "./trajectory";
 import * as TrajectoryLayout from "./trajectory-layout";
@@ -180,6 +180,32 @@ export function replayStepGlitchCandidateForTest(inputPointer: u32, inputByteLen
   if (!isFiniteValue(controlX) || load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_RESERVED_OFFSET) != 0) trap();
   validateStepGlitchTargetRecords(targetRecordPointer, orderedTargetCount);
 
+  return replayStepGlitchCandidate(
+    contextPointer,
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_X_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_Y_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_COUNT_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_COUNT_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_MODE_OFFSET),
+    targetRecordPointer,
+    orderedTargetCount,
+    controlX,
+  );
+}
+
+function replayStepGlitchCandidate(
+  contextPointer: u32,
+  pathXPointer: u32,
+  pathYPointer: u32,
+  pathCount: u32,
+  windowPointer: u32,
+  windowCount: u32,
+  windowMode: u32,
+  targetRecordPointer: u32,
+  orderedTargetCount: u32,
+  controlX: f64,
+): u32 {
   const requiredTargetValueCount = load<u32>(
     contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET,
   );
@@ -205,12 +231,12 @@ export function replayStepGlitchCandidateForTest(inputPointer: u32, inputByteLen
   memory.fill(trajectoryInputPointer, 0, TrajectoryLayout.TRAJECTORY_INPUT_BYTE_LENGTH);
   const formulaInputPointer = buildStepGlitchCandidateFormulaInput(
     contextPointer,
-    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_X_POINTER_OFFSET),
-    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_Y_POINTER_OFFSET),
-    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_PATH_COUNT_OFFSET),
-    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_POINTER_OFFSET),
-    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_COUNT_OFFSET),
-    load<u32>(inputPointer + Layout.STEP_GLITCH_REPLAY_WINDOW_MODE_OFFSET),
+    pathXPointer,
+    pathYPointer,
+    pathCount,
+    windowPointer,
+    windowCount,
+    windowMode,
   );
   memory.copy(
     trajectoryInputPointer,
@@ -704,6 +730,22 @@ function graphXToSearchColumn(contextPointer: u32, graphX: f64): i32 {
     : width - 1 - planeX;
 }
 
+/** Matches the scanner's direct pixel-grid projection without a graph-coordinate round trip. */
+@inline
+function imageXToSearchColumn(contextPointer: u32, pixelX: f64): i32 {
+  const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  const rectX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_X_INDEX);
+  const rectWidth = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_WIDTH_INDEX);
+  const width = <i32>getGraphwarPlaneLength();
+  let planeX = <i32>NativeMath.floor(((pixelX - rectX) / rectWidth) * <f64>width);
+  if (planeX < 0) planeX = 0;
+  if (planeX >= width) planeX = width - 1;
+  return (load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FLAGS_OFFSET) &
+    Layout.STEP_GLITCH_CONTEXT_FLAG_MIRRORED) == 0
+    ? planeX
+    : width - 1 - planeX;
+}
+
 @inline
 function getFarthestFreeX(contextPointer: u32, searchX: i32, row: i32): i32 {
   const width = <i32>getGraphwarPlaneLength();
@@ -1098,7 +1140,10 @@ const DFS_WORK_VALUE_A_OFFSET: u32 = 4;
 const DFS_WORK_VALUE_B_OFFSET: u32 = 8;
 const DFS_WORK_VALUE_C_OFFSET: u32 = 12;
 const DFS_WORK_VALUE_D_OFFSET: u32 = 16;
-const DFS_WORK_BYTE_LENGTH: u32 = 24;
+const DFS_WORK_WINDOW_POINTER_OFFSET: u32 = 20;
+const DFS_WORK_WINDOW_COUNT_OFFSET: u32 = 24;
+const DFS_WORK_CONTROL_X_OFFSET: u32 = 32;
+const DFS_WORK_BYTE_LENGTH: u32 = 40;
 
 const DFS_STATE_ACCEPTED_X_OFFSET: u32 = 0;
 const DFS_STATE_ACCEPTED_Y_OFFSET: u32 = 8;
@@ -1109,7 +1154,9 @@ const DFS_STATE_PATH_X_POINTER_OFFSET: u32 = 28;
 const DFS_STATE_PATH_Y_POINTER_OFFSET: u32 = 32;
 const DFS_STATE_PATH_COUNT_OFFSET: u32 = 36;
 const DFS_STATE_BLOCKED_X_OFFSET: u32 = 40;
-const DFS_STATE_BYTE_LENGTH: u32 = 48;
+const DFS_STATE_WINDOW_POINTER_OFFSET: u32 = 48;
+const DFS_STATE_WINDOW_COUNT_OFFSET: u32 = 52;
+const DFS_STATE_BYTE_LENGTH: u32 = 56;
 
 function createDfsVector(): u32 {
   const pointer = reserveArena(DFS_VECTOR_BYTE_LENGTH, sizeof<u32>());
@@ -1157,6 +1204,9 @@ function pushDfsCandidate(
   pathXPointer: u32,
   pathYPointer: u32,
   pathCount: u32,
+  windowPointer: u32,
+  windowCount: u32,
+  controlX: f64,
 ): void {
   const itemPointer = appendDfsRecord(workPointer, DFS_WORK_BYTE_LENGTH);
   store<u32>(itemPointer + DFS_WORK_TYPE_OFFSET, DFS_WORK_CANDIDATE);
@@ -1164,6 +1214,9 @@ function pushDfsCandidate(
   store<u32>(itemPointer + DFS_WORK_VALUE_B_OFFSET, pathXPointer);
   store<u32>(itemPointer + DFS_WORK_VALUE_C_OFFSET, pathYPointer);
   store<u32>(itemPointer + DFS_WORK_VALUE_D_OFFSET, pathCount);
+  store<u32>(itemPointer + DFS_WORK_WINDOW_POINTER_OFFSET, windowPointer);
+  store<u32>(itemPointer + DFS_WORK_WINDOW_COUNT_OFFSET, windowCount);
+  store<f64>(itemPointer + DFS_WORK_CONTROL_X_OFFSET, controlX);
 }
 
 function appendDfsPathPoint(
@@ -1187,6 +1240,39 @@ function appendDfsPathPoint(
   store<u32>(descriptorPointer, nextXPointer);
   store<u32>(descriptorPointer + sizeof<u32>(), nextYPointer);
   store<u32>(descriptorPointer + 2 * sizeof<u32>(), nextCount);
+  return descriptorPointer;
+}
+
+function appendDfsWindow(
+  windowPointer: u32,
+  windowCount: u32,
+  hasWindow: bool,
+  startX: f64,
+  endX: f64,
+): u32 {
+  if (windowCount == u32.MAX_VALUE || windowCount + 1 > u32.MAX_VALUE / FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH) trap();
+  const nextCount = windowCount + 1;
+  const nextPointer = reserveArena(
+    nextCount * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+    sizeof<f64>(),
+  );
+  if (windowCount > 0) {
+    memory.copy(
+      nextPointer,
+      windowPointer,
+      windowCount * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+    );
+  }
+  const recordPointer = nextPointer + windowCount * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+  memory.fill(recordPointer, 0, FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH);
+  if (hasWindow) {
+    store<u32>(recordPointer + FormulaLayout.STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET, 1);
+    store<f64>(recordPointer + FormulaLayout.STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET, startX);
+    store<f64>(recordPointer + FormulaLayout.STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET, endX);
+  }
+  const descriptorPointer = reserveArena(2 * sizeof<u32>(), sizeof<u32>());
+  store<u32>(descriptorPointer, nextPointer);
+  store<u32>(descriptorPointer + sizeof<u32>(), nextCount);
   return descriptorPointer;
 }
 
@@ -1225,6 +1311,19 @@ function graphYToSearchRow(contextPointer: u32, graphY: f64): i32 {
   return row;
 }
 
+/** Matches the scanner's direct pixel-grid projection without a graph-coordinate round trip. */
+@inline
+function imageYToSearchRow(contextPointer: u32, pixelY: f64): i32 {
+  const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  const rectY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_Y_INDEX);
+  const rectHeight = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX);
+  const height = <i32>getGraphwarPlaneHeight();
+  let row = <i32>NativeMath.floor(((pixelY - rectY) / rectHeight) * <f64>height);
+  if (row < 0) row = 0;
+  if (row >= height) row = height - 1;
+  return row;
+}
+
 function createDfsState(
   contextPointer: u32,
   acceptedX: f64,
@@ -1234,6 +1333,8 @@ function createDfsState(
   pathXPointer: u32,
   pathYPointer: u32,
   pathCount: u32,
+  windowPointer: u32,
+  windowCount: u32,
 ): u32 {
   const statePointer = reserveArena(DFS_STATE_BYTE_LENGTH, sizeof<f64>());
   memory.fill(statePointer, 0, DFS_STATE_BYTE_LENGTH);
@@ -1246,6 +1347,8 @@ function createDfsState(
   store<u32>(statePointer + DFS_STATE_PATH_Y_POINTER_OFFSET, pathYPointer);
   store<u32>(statePointer + DFS_STATE_PATH_COUNT_OFFSET, pathCount);
   store<f64>(statePointer + DFS_STATE_BLOCKED_X_OFFSET, blockedX);
+  store<u32>(statePointer + DFS_STATE_WINDOW_POINTER_OFFSET, windowPointer);
+  store<u32>(statePointer + DFS_STATE_WINDOW_COUNT_OFFSET, windowCount);
   return statePointer;
 }
 
@@ -1277,6 +1380,109 @@ function appendDfsTrace(
   store<f64>(tracePointer + Layout.STEP_GLITCH_DFS_TRACE_BLOCKED_X_OFFSET, blockedX);
 }
 
+function beginRealDfsTrace(
+  traceVectorPointer: u32,
+  kind: u32,
+  pathXPointer: u32,
+  pathYPointer: u32,
+  pathCount: u32,
+  windowPointer: u32,
+  windowCount: u32,
+  windowMode: u32,
+  controlX: f64,
+): u32 {
+  const tracePointer = appendDfsRecord(traceVectorPointer, Layout.STEP_GLITCH_REAL_DFS_TRACE_BYTE_LENGTH);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_KIND_OFFSET, kind);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_PATH_X_POINTER_OFFSET, pathXPointer);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_PATH_Y_POINTER_OFFSET, pathYPointer);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_PATH_COUNT_OFFSET, pathCount);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_WINDOW_POINTER_OFFSET, windowPointer);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_WINDOW_COUNT_OFFSET, windowCount);
+  store<u32>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_WINDOW_MODE_OFFSET, windowMode);
+  store<u32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_EXPANSION_ORDINAL_OFFSET,
+    load<u32>(traceVectorPointer + DFS_VECTOR_COUNT_OFFSET) - 1,
+  );
+  store<f64>(tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_CONTROL_X_OFFSET, controlX);
+  return tracePointer;
+}
+
+function finishRealDfsTrace(tracePointer: u32, replayPointer: u32): void {
+  store<u32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_STATUS_OFFSET,
+    load<u32>(replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET),
+  );
+  store<i32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_LAUNCH_STATUS_OFFSET,
+    load<i32>(replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_LAUNCH_STATUS_OFFSET),
+  );
+  store<u32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_REACHED_ORDERED_COUNT_OFFSET,
+    load<u32>(replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET),
+  );
+  store<u32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_REACHED_REQUIRED_COUNT_OFFSET,
+    load<u32>(replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET),
+  );
+  store<u32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_ACCEPTED_FLAG_OFFSET,
+    load<u32>(replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_FLAG_OFFSET),
+  );
+  store<u32>(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_BLOCKED_FLAG_OFFSET,
+    load<u32>(replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET),
+  );
+  memory.copy(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_ACCEPTED_X_OFFSET,
+    replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET,
+    4 * sizeof<f64>(),
+  );
+  memory.copy(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_STOP_REASON_OFFSET,
+    replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STOP_REASON_OFFSET,
+    4 * sizeof<u32>(),
+  );
+  memory.copy(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_POINT_COUNT_OFFSET,
+    replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_POINT_COUNT_OFFSET,
+    6 * sizeof<u32>(),
+  );
+  memory.copy(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_CURRENT_X_OFFSET,
+    replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_CURRENT_X_OFFSET,
+    6 * sizeof<f64>(),
+  );
+  memory.copy(
+    tracePointer + Layout.STEP_GLITCH_REAL_DFS_TRACE_SAMPLE_INDEX_OFFSET,
+    replayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_SAMPLE_INDEX_OFFSET,
+    2 * sizeof<u32>(),
+  );
+}
+
+function createRealDfsResult(
+  status: u32,
+  expandedStates: u32,
+  bestReachedTargetCount: u32,
+  hasBlockedX: u32,
+  blockedX: f64,
+  traceVectorPointer: u32,
+): u32 {
+  const resultPointer = reserveArena(Layout.STEP_GLITCH_REAL_DFS_RESULT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(resultPointer, 0, Layout.STEP_GLITCH_REAL_DFS_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_MAGIC_OFFSET, Layout.STEP_GLITCH_REAL_DFS_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_STATUS_OFFSET, status);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_EXPANDED_STATES_OFFSET, expandedStates);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_BEST_REACHED_COUNT_OFFSET, bestReachedTargetCount);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_BLOCKED_FLAG_OFFSET, hasBlockedX);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_TRACE_POINTER_OFFSET, load<u32>(traceVectorPointer));
+  store<u32>(
+    resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_TRACE_COUNT_OFFSET,
+    load<u32>(traceVectorPointer + DFS_VECTOR_COUNT_OFFSET),
+  );
+  store<f64>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_BLOCKED_X_OFFSET, blockedX);
+  return resultPointer;
+}
+
 function createDfsResult(
   status: u32,
   expandedStates: u32,
@@ -1305,6 +1511,58 @@ function createDfsResult(
 
 /** Replays the scanner's exact iterative DFS against one atomic test script. */
 export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 {
+  return runStepGlitchGeometryDfs(inputPointer, inputByteLength);
+}
+
+/** Builds the internal DFS descriptor for one real target scan. */
+export function traceStepGlitchRealDfsForTest(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.STEP_GLITCH_REAL_DFS_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
+  const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_REAL_DFS_INPUT_CONTEXT_POINTER_OFFSET);
+  requireStepGlitchContext(contextPointer);
+  const targetValuesPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUES_POINTER_OFFSET);
+  const targetValuesLength = load<u32>(inputPointer + Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUES_LENGTH_OFFSET);
+  if (
+    targetValuesLength != Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUE_COUNT ||
+    load<u32>(inputPointer + Layout.STEP_GLITCH_REAL_DFS_INPUT_RESERVED_OFFSET) != 0
+  ) trap();
+  requireElementRange(targetValuesPointer, targetValuesLength, sizeof<f64>(), sizeof<f64>());
+  let valueIndex: u32 = 0;
+  while (valueIndex < targetValuesLength) {
+    if (!isFiniteValue(load<f64>(targetValuesPointer + valueIndex * sizeof<f64>()))) trap();
+    valueIndex += 1;
+  }
+  const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  const targetPointX = load<f64>(targetValuesPointer + 3 * sizeof<f64>());
+  const targetPointY = load<f64>(targetValuesPointer + 4 * sizeof<f64>());
+  const minX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_X_INDEX);
+  const maxX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_X_INDEX);
+  const minY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_Y_INDEX);
+  const maxY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_Y_INDEX);
+  const rectX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_X_INDEX);
+  const rectY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_Y_INDEX);
+  const rectWidth = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_WIDTH_INDEX);
+  const rectHeight = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX);
+  const targetGraphX = minX + ((targetPointX - rectX) / rectWidth) * (maxX - minX);
+  const targetGraphY = maxY - ((targetPointY - rectY) / rectHeight) * (maxY - minY);
+  const hitTargetRow = imageYToSearchRow(contextPointer, load<f64>(targetValuesPointer + sizeof<f64>()));
+  const targetSearchX = imageXToSearchColumn(contextPointer, targetPointX);
+  const descriptorPointer = reserveArena(Layout.STEP_GLITCH_DFS_INPUT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(descriptorPointer, 0, Layout.STEP_GLITCH_DFS_INPUT_BYTE_LENGTH);
+  store<u32>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_CONTEXT_POINTER_OFFSET, contextPointer);
+  store<u32>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_MODE_OFFSET, Layout.STEP_GLITCH_DFS_MODE_REAL);
+  store<u32>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_SCRIPT_POINTER_OFFSET, targetValuesPointer);
+  store<u32>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_SCRIPT_COUNT_OFFSET, targetValuesLength);
+  store<f64>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_X_OFFSET, targetGraphX);
+  store<f64>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_Y_OFFSET, targetGraphY);
+  store<f64>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_POINT_X_OFFSET, targetPointX);
+  store<f64>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_POINT_Y_OFFSET, targetPointY);
+  store<i32>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_HIT_TARGET_ROW_OFFSET, hitTargetRow);
+  store<i32>(descriptorPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_SEARCH_X_OFFSET, targetSearchX);
+  return runStepGlitchGeometryDfs(descriptorPointer, Layout.STEP_GLITCH_DFS_INPUT_BYTE_LENGTH);
+}
+
+function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 {
   if (inputByteLength != Layout.STEP_GLITCH_DFS_INPUT_BYTE_LENGTH) trap();
   requireArenaRange(inputPointer, inputByteLength, sizeof<f64>());
   const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_CONTEXT_POINTER_OFFSET);
@@ -1312,15 +1570,15 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
   const mode = load<u32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_MODE_OFFSET);
   const scriptPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_SCRIPT_POINTER_OFFSET);
   const scriptCount = load<u32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_SCRIPT_COUNT_OFFSET);
-  const prefixAcceptedX = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_PREFIX_ACCEPTED_X_OFFSET);
-  const prefixAcceptedY = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_PREFIX_ACCEPTED_Y_OFFSET);
+  let prefixAcceptedX = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_PREFIX_ACCEPTED_X_OFFSET);
+  let prefixAcceptedY = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_PREFIX_ACCEPTED_Y_OFFSET);
   const targetX = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_X_OFFSET);
   const targetY = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_Y_OFFSET);
   const targetPointX = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_POINT_X_OFFSET);
   const targetPointY = load<f64>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_POINT_Y_OFFSET);
   const hitTargetRow = load<i32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_HIT_TARGET_ROW_OFFSET);
   const targetSearchX = load<i32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_TARGET_SEARCH_X_OFFSET);
-  const prefixReachedTargetCount = load<u32>(
+  let prefixReachedTargetCount = load<u32>(
     inputPointer + Layout.STEP_GLITCH_DFS_INPUT_PREFIX_REACHED_COUNT_OFFSET,
   );
   const hasPrefixBlockedX = load<u32>(inputPointer + Layout.STEP_GLITCH_DFS_INPUT_PREFIX_BLOCKED_FLAG_OFFSET);
@@ -1328,11 +1586,20 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
   const width = <i32>getGraphwarPlaneLength();
   const height = <i32>getGraphwarPlaneHeight();
   if (
-    (mode != Layout.STEP_GLITCH_DFS_MODE_ALL_MISS && mode != Layout.STEP_GLITCH_DFS_MODE_SCRIPTED) ||
+    (mode != Layout.STEP_GLITCH_DFS_MODE_ALL_MISS &&
+      mode != Layout.STEP_GLITCH_DFS_MODE_SCRIPTED &&
+      mode != Layout.STEP_GLITCH_DFS_MODE_REAL) ||
     (mode == Layout.STEP_GLITCH_DFS_MODE_ALL_MISS && (scriptPointer != 0 || scriptCount != 0)) ||
     (mode == Layout.STEP_GLITCH_DFS_MODE_SCRIPTED && scriptCount == 0) ||
-    !isFiniteValue(prefixAcceptedX) ||
-    !isFiniteValue(prefixAcceptedY) ||
+    (mode == Layout.STEP_GLITCH_DFS_MODE_REAL &&
+      (scriptCount != Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUE_COUNT ||
+        prefixAcceptedX != 0 ||
+        prefixAcceptedY != 0 ||
+        prefixReachedTargetCount != 0 ||
+        hasPrefixBlockedX != 0 ||
+        prefixBlockedX != 0)) ||
+    (mode != Layout.STEP_GLITCH_DFS_MODE_REAL &&
+      (!isFiniteValue(prefixAcceptedX) || !isFiniteValue(prefixAcceptedY))) ||
     !isFiniteValue(targetX) ||
     !isFiniteValue(targetY) ||
     !isFiniteValue(targetPointX) ||
@@ -1370,11 +1637,59 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
       ) trap();
       scriptIndex += 1;
     }
+  } else if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+    requireElementRange(scriptPointer, scriptCount, sizeof<f64>(), sizeof<f64>());
+    let targetValueIndex: u32 = 0;
+    while (targetValueIndex < scriptCount) {
+      if (!isFiniteValue(load<f64>(scriptPointer + targetValueIndex * sizeof<f64>()))) trap();
+      targetValueIndex += 1;
+    }
+    if (load<f64>(scriptPointer + 2 * sizeof<f64>()) < 0) trap();
   }
 
   const sourceXPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET);
   const sourceYPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_Y_POINTER_OFFSET);
   const sourceCount = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET);
+  const sourceWindowCount = sourceCount - 1;
+  const sourceWindowPointer = sourceWindowCount == 0
+    ? 0
+    : reserveArena(
+        sourceWindowCount * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+        sizeof<f64>(),
+      );
+  if (sourceWindowCount > 0) {
+    memory.fill(
+      sourceWindowPointer,
+      0,
+      sourceWindowCount * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+    );
+  }
+  let targetRecordPointer: u32 = 0;
+  let orderedTargetCount: u32 = 0;
+  if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+    targetRecordPointer = scriptPointer;
+    const requiredTargetPointer = load<u32>(
+      contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_POINTER_OFFSET,
+    );
+    const requiredTargetValueCount = load<u32>(
+      contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET,
+    );
+    let isRequiredTarget = false;
+    let requiredTargetIndex: u32 = 0;
+    while (requiredTargetIndex < requiredTargetValueCount / 3) {
+      const recordPointer = requiredTargetPointer + requiredTargetIndex * 3 * sizeof<f64>();
+      if (
+        load<f64>(recordPointer) == load<f64>(targetRecordPointer) &&
+        load<f64>(recordPointer + sizeof<f64>()) == load<f64>(targetRecordPointer + sizeof<f64>()) &&
+        load<f64>(recordPointer + 2 * sizeof<f64>()) == load<f64>(targetRecordPointer + 2 * sizeof<f64>())
+      ) {
+        isRequiredTarget = true;
+        break;
+      }
+      requiredTargetIndex += 1;
+    }
+    orderedTargetCount = isRequiredTarget ? 0 : 1;
+  }
   const directPathDescriptor = appendDfsPathPoint(
     sourceXPointer,
     sourceYPointer,
@@ -1386,6 +1701,7 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
   const directPathYPointer = load<u32>(directPathDescriptor + sizeof<u32>());
   const directPathCount = load<u32>(directPathDescriptor + 2 * sizeof<u32>());
   const traceVectorPointer = createDfsVector();
+  const realTraceVectorPointer = mode == Layout.STEP_GLITCH_DFS_MODE_REAL ? createDfsVector() : 0;
   let scriptConsumed: u32 = 0;
   let directStatus = Layout.STEP_GLITCH_DFS_REPLAY_MISS;
   let directReachedTargetCount: u32 = 0;
@@ -1393,6 +1709,7 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
   let directAcceptedX = 0.0;
   let directAcceptedY = 0.0;
   let directBlockedX = 0.0;
+  let directReplayPointer: u32 = 0;
   if (mode == Layout.STEP_GLITCH_DFS_MODE_SCRIPTED) {
     const directOutcomePointer = scriptPointer;
     directStatus = load<u32>(directOutcomePointer + Layout.STEP_GLITCH_DFS_SCRIPT_STATUS_OFFSET);
@@ -1404,20 +1721,57 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
     directAcceptedY = load<f64>(directOutcomePointer + Layout.STEP_GLITCH_DFS_SCRIPT_ACCEPTED_Y_OFFSET);
     directBlockedX = load<f64>(directOutcomePointer + Layout.STEP_GLITCH_DFS_SCRIPT_BLOCKED_X_OFFSET);
     scriptConsumed = 1;
+  } else if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+    const directTracePointer = beginRealDfsTrace(
+      realTraceVectorPointer,
+      Layout.STEP_GLITCH_REAL_DFS_CANDIDATE_DIRECT,
+      directPathXPointer,
+      directPathYPointer,
+      directPathCount,
+      0,
+      0,
+      Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+      targetX,
+    );
+    const replayMark = markArena();
+    directReplayPointer = replayStepGlitchCandidate(
+      contextPointer,
+      directPathXPointer,
+      directPathYPointer,
+      directPathCount,
+      0,
+      0,
+      Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+      targetRecordPointer,
+      orderedTargetCount,
+      targetX,
+    );
+    directStatus = load<u32>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET);
+    directReachedTargetCount =
+      load<u32>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
+      load<u32>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
+    hasDirectBlockedX = load<u32>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET);
+    directAcceptedX = load<f64>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET);
+    directAcceptedY = load<f64>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET);
+    directBlockedX = load<f64>(directReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
+    finishRealDfsTrace(directTracePointer, directReplayPointer);
+    resetArena(replayMark);
   }
-  appendDfsTrace(
-    traceVectorPointer,
-    Layout.STEP_GLITCH_DFS_CANDIDATE_DIRECT,
-    directStatus,
-    directPathXPointer,
-    directPathYPointer,
-    directPathCount,
-    directReachedTargetCount,
-    hasDirectBlockedX,
-    directAcceptedX,
-    directAcceptedY,
-    directBlockedX,
-  );
+  if (mode != Layout.STEP_GLITCH_DFS_MODE_REAL) {
+    appendDfsTrace(
+      traceVectorPointer,
+      Layout.STEP_GLITCH_DFS_CANDIDATE_DIRECT,
+      directStatus,
+      directPathXPointer,
+      directPathYPointer,
+      directPathCount,
+      directReachedTargetCount,
+      hasDirectBlockedX,
+      directAcceptedX,
+      directAcceptedY,
+      directBlockedX,
+    );
+  }
   let expandedStates: u32 = 1;
   let bestReachedTargetCount = prefixReachedTargetCount > directReachedTargetCount
     ? prefixReachedTargetCount
@@ -1425,6 +1779,16 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
   let hasBlockedX = hasDirectBlockedX != 0 ? hasDirectBlockedX : hasPrefixBlockedX;
   let blockedX = hasDirectBlockedX != 0 ? directBlockedX : prefixBlockedX;
   if (directStatus == Layout.STEP_GLITCH_DFS_REPLAY_HIT) {
+    if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+      return createRealDfsResult(
+        Layout.STEP_GLITCH_REAL_DFS_RESULT_HIT,
+        expandedStates,
+        bestReachedTargetCount,
+        hasBlockedX,
+        blockedX,
+        realTraceVectorPointer,
+      );
+    }
     if (mode == Layout.STEP_GLITCH_DFS_MODE_SCRIPTED && scriptConsumed != scriptCount) trap();
     return createDfsResult(
       Layout.STEP_GLITCH_DFS_RESULT_HIT,
@@ -1435,6 +1799,102 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
       scriptConsumed,
       traceVectorPointer,
     );
+  }
+
+  if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+    const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+    const hasPrefixTarget = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_HAS_PREFIX_TARGET_INDEX) != 0;
+    const prefixTargetPointer = hasPrefixTarget ? reserveArena(3 * sizeof<f64>(), sizeof<f64>()) : 0;
+    if (hasPrefixTarget) {
+      store<f64>(prefixTargetPointer, loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_X_INDEX));
+      store<f64>(prefixTargetPointer + sizeof<f64>(), loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_Y_INDEX));
+      store<f64>(prefixTargetPointer + 2 * sizeof<f64>(), loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_RADIUS_INDEX));
+    }
+    const prefixTargetCount: u32 = hasPrefixTarget ? 1 : 0;
+    const lastSourceIndex = sourceCount - 1;
+    const lastSourcePixelX = load<f64>(sourceXPointer + lastSourceIndex * sizeof<f64>());
+    const lastSourcePixelY = load<f64>(sourceYPointer + lastSourceIndex * sizeof<f64>());
+    const prefixControlX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_X_INDEX) +
+      ((lastSourcePixelX - loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_X_INDEX)) /
+        loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_WIDTH_INDEX)) *
+        (loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_X_INDEX) -
+          loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_X_INDEX));
+    const shouldReplayPrefix = sourceCount > 1 || prefixTargetCount != 0 ||
+      load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET) != 0;
+    if (shouldReplayPrefix) {
+      if (sourceCount == 1) {
+        return createRealDfsResult(
+          Layout.STEP_GLITCH_REAL_DFS_RESULT_NO_PATH,
+          expandedStates,
+          bestReachedTargetCount,
+          hasBlockedX,
+          blockedX,
+          realTraceVectorPointer,
+        );
+      }
+      const prefixTracePointer = beginRealDfsTrace(
+        realTraceVectorPointer,
+        Layout.STEP_GLITCH_REAL_DFS_CANDIDATE_PREFIX,
+        sourceXPointer,
+        sourceYPointer,
+        sourceCount,
+        0,
+        0,
+        Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+        prefixControlX,
+      );
+      const replayMark = markArena();
+      const prefixReplayPointer = replayStepGlitchCandidate(
+        contextPointer,
+        sourceXPointer,
+        sourceYPointer,
+        sourceCount,
+        0,
+        0,
+        Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+        prefixTargetPointer,
+        prefixTargetCount,
+        prefixControlX,
+      );
+      const prefixStatus = load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET);
+      const prefixReached =
+        load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
+        load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
+      if (prefixReached > bestReachedTargetCount) bestReachedTargetCount = prefixReached;
+      if (hasBlockedX == 0 && load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET) != 0) {
+        hasBlockedX = 1;
+        blockedX = load<f64>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
+      }
+      const prefixAcceptedReplayX = load<f64>(
+        prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET,
+      );
+      const prefixAcceptedReplayY = load<f64>(
+        prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET,
+      );
+      finishRealDfsTrace(prefixTracePointer, prefixReplayPointer);
+      resetArena(replayMark);
+      if (prefixStatus != Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_HIT) {
+        return createRealDfsResult(
+          Layout.STEP_GLITCH_REAL_DFS_RESULT_NO_PATH,
+          expandedStates,
+          bestReachedTargetCount,
+          hasBlockedX,
+          blockedX,
+          realTraceVectorPointer,
+        );
+      }
+      prefixAcceptedX = prefixAcceptedReplayX;
+      prefixAcceptedY = prefixAcceptedReplayY;
+      prefixReachedTargetCount = prefixReached;
+    } else {
+      prefixAcceptedX = prefixControlX;
+      prefixAcceptedY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_Y_INDEX) -
+        ((lastSourcePixelY - loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_Y_INDEX)) /
+          loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX)) *
+          (loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_Y_INDEX) -
+            loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_Y_INDEX));
+      prefixReachedTargetCount = 0;
+    }
   }
 
   const workPointer = createDfsVector();
@@ -1449,6 +1909,8 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
       sourceXPointer,
       sourceYPointer,
       sourceCount,
+      sourceWindowPointer,
+      sourceWindowCount,
     ),
   );
   while (load<u32>(workPointer + DFS_VECTOR_COUNT_OFFSET) > 0) {
@@ -1477,12 +1939,22 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
           targetPointX,
           targetPointY,
         );
+        const windowDescriptor = appendDfsWindow(
+          load<u32>(statePointer + DFS_STATE_WINDOW_POINTER_OFFSET),
+          load<u32>(statePointer + DFS_STATE_WINDOW_COUNT_OFFSET),
+          false,
+          0,
+          0,
+        );
         pushDfsCandidate(
           workPointer,
           Layout.STEP_GLITCH_DFS_CANDIDATE_TARGET,
           load<u32>(pathDescriptor),
           load<u32>(pathDescriptor + sizeof<u32>()),
           load<u32>(pathDescriptor + 2 * sizeof<u32>()),
+          load<u32>(windowDescriptor),
+          load<u32>(windowDescriptor + sizeof<u32>()),
+          targetX,
         );
       } else {
         const firstBlockedSearchX = hasStateBlockedX == 0
@@ -1534,12 +2006,22 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
         load<f64>(frontierCandidatePointer + Layout.STEP_GLITCH_TRACE_CANDIDATE_POINT_X_OFFSET),
         load<f64>(frontierCandidatePointer + Layout.STEP_GLITCH_TRACE_CANDIDATE_POINT_Y_OFFSET),
       );
+      const windowDescriptor = appendDfsWindow(
+        load<u32>(statePointer + DFS_STATE_WINDOW_POINTER_OFFSET),
+        load<u32>(statePointer + DFS_STATE_WINDOW_COUNT_OFFSET),
+        true,
+        load<f64>(frontierCandidatePointer + Layout.STEP_GLITCH_TRACE_CANDIDATE_START_X_OFFSET),
+        load<f64>(frontierCandidatePointer + Layout.STEP_GLITCH_TRACE_CANDIDATE_CONTROL_X_OFFSET),
+      );
       pushDfsCandidate(
         workPointer,
         Layout.STEP_GLITCH_DFS_CANDIDATE_GATE,
         load<u32>(pathDescriptor),
         load<u32>(pathDescriptor + sizeof<u32>()),
         load<u32>(pathDescriptor + 2 * sizeof<u32>()),
+        load<u32>(windowDescriptor),
+        load<u32>(windowDescriptor + sizeof<u32>()),
+        load<f64>(frontierCandidatePointer + Layout.STEP_GLITCH_TRACE_CANDIDATE_CONTROL_X_OFFSET),
       );
       continue;
     }
@@ -1548,6 +2030,9 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
     const pathXPointer = load<u32>(itemPointer + DFS_WORK_VALUE_B_OFFSET);
     const pathYPointer = load<u32>(itemPointer + DFS_WORK_VALUE_C_OFFSET);
     const pathCount = load<u32>(itemPointer + DFS_WORK_VALUE_D_OFFSET);
+    const windowPointer = load<u32>(itemPointer + DFS_WORK_WINDOW_POINTER_OFFSET);
+    const windowCount = load<u32>(itemPointer + DFS_WORK_WINDOW_COUNT_OFFSET);
+    const controlX = load<f64>(itemPointer + DFS_WORK_CONTROL_X_OFFSET);
     if (
       dfsPathsEqual(
         pathXPointer,
@@ -1566,6 +2051,7 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
     let acceptedX = 0.0;
     let acceptedY = 0.0;
     let candidateBlockedX = 0.0;
+    let candidateReplayPointer: u32 = 0;
     if (mode == Layout.STEP_GLITCH_DFS_MODE_SCRIPTED) {
       if (scriptConsumed >= scriptCount) trap();
       const outcomePointer = scriptPointer + scriptConsumed * Layout.STEP_GLITCH_DFS_SCRIPT_BYTE_LENGTH;
@@ -1576,20 +2062,60 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
       acceptedY = load<f64>(outcomePointer + Layout.STEP_GLITCH_DFS_SCRIPT_ACCEPTED_Y_OFFSET);
       candidateBlockedX = load<f64>(outcomePointer + Layout.STEP_GLITCH_DFS_SCRIPT_BLOCKED_X_OFFSET);
       scriptConsumed += 1;
+    } else if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+      const isTargetCandidate = kind == Layout.STEP_GLITCH_DFS_CANDIDATE_TARGET;
+      const candidateTracePointer = beginRealDfsTrace(
+        realTraceVectorPointer,
+        isTargetCandidate
+          ? Layout.STEP_GLITCH_REAL_DFS_CANDIDATE_TARGET
+          : Layout.STEP_GLITCH_REAL_DFS_CANDIDATE_GATE,
+        pathXPointer,
+        pathYPointer,
+        pathCount,
+        windowPointer,
+        windowCount,
+        Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_EXPLICIT,
+        controlX,
+      );
+      const replayMark = markArena();
+      candidateReplayPointer = replayStepGlitchCandidate(
+        contextPointer,
+        pathXPointer,
+        pathYPointer,
+        pathCount,
+        windowPointer,
+        windowCount,
+        Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_EXPLICIT,
+        isTargetCandidate ? targetRecordPointer : 0,
+        isTargetCandidate ? orderedTargetCount : 0,
+        controlX,
+      );
+      replayStatus = load<u32>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET);
+      reachedTargetCount =
+        load<u32>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
+        load<u32>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
+      hasCandidateBlockedX = load<u32>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET);
+      acceptedX = load<f64>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET);
+      acceptedY = load<f64>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET);
+      candidateBlockedX = load<f64>(candidateReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
+      finishRealDfsTrace(candidateTracePointer, candidateReplayPointer);
+      resetArena(replayMark);
     }
-    appendDfsTrace(
-      traceVectorPointer,
-      kind,
-      replayStatus,
-      pathXPointer,
-      pathYPointer,
-      pathCount,
-      reachedTargetCount,
-      hasCandidateBlockedX,
-      acceptedX,
-      acceptedY,
-      candidateBlockedX,
-    );
+    if (mode != Layout.STEP_GLITCH_DFS_MODE_REAL) {
+      appendDfsTrace(
+        traceVectorPointer,
+        kind,
+        replayStatus,
+        pathXPointer,
+        pathYPointer,
+        pathCount,
+        reachedTargetCount,
+        hasCandidateBlockedX,
+        acceptedX,
+        acceptedY,
+        candidateBlockedX,
+      );
+    }
     if (reachedTargetCount > bestReachedTargetCount) bestReachedTargetCount = reachedTargetCount;
     if (hasBlockedX == 0 && hasCandidateBlockedX != 0) {
       hasBlockedX = 1;
@@ -1597,6 +2123,16 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
     }
     if (kind == Layout.STEP_GLITCH_DFS_CANDIDATE_TARGET) {
       if (replayStatus == Layout.STEP_GLITCH_DFS_REPLAY_HIT) {
+        if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+          return createRealDfsResult(
+            Layout.STEP_GLITCH_REAL_DFS_RESULT_HIT,
+            expandedStates,
+            bestReachedTargetCount,
+            hasBlockedX,
+            blockedX,
+            realTraceVectorPointer,
+          );
+        }
         if (mode == Layout.STEP_GLITCH_DFS_MODE_SCRIPTED && scriptConsumed != scriptCount) trap();
         return createDfsResult(
           Layout.STEP_GLITCH_DFS_RESULT_HIT,
@@ -1622,7 +2158,19 @@ export function traceStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u
         pathXPointer,
         pathYPointer,
         pathCount,
+        windowPointer,
+        windowCount,
       ),
+    );
+  }
+  if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
+    return createRealDfsResult(
+      Layout.STEP_GLITCH_REAL_DFS_RESULT_NO_PATH,
+      expandedStates,
+      bestReachedTargetCount,
+      hasBlockedX,
+      blockedX,
+      realTraceVectorPointer,
     );
   }
   if (mode == Layout.STEP_GLITCH_DFS_MODE_SCRIPTED && scriptConsumed != scriptCount) trap();

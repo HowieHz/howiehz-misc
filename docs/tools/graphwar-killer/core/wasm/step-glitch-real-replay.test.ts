@@ -11,7 +11,7 @@ import {
 } from "../../formula/trajectory/sampling";
 import { findGraphwarStepGlitchAcceptedPointAtOrAfterControlX } from "../../pathfinding/routing/step-glitch-scan";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
-import { graphToImagePoint } from "../geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../geometry";
 import { createGraphPoint } from "../types";
 import type { BoundsRect, EquationMode, GraphBounds } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
@@ -43,6 +43,216 @@ beforeAll(async () => {
 });
 
 describe("Graphwar WASM Step-glitch real candidate replay", () => {
+  it("drives a direct Step-glitch DFS candidate through one real WASM replay", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const retainedCursor = runtime.arenaCursor;
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.status).toBe("hit");
+    expect(trace.expandedStates).toBe(1);
+    expect(trace.candidates).toHaveLength(1);
+    expect(trace.candidates[0]).toMatchObject({
+      kind: "direct",
+      replay: { launchStatus: "success", status: "hit" },
+      windows: { type: "automatic" },
+    });
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    context.dispose();
+  });
+
+  it("keeps lazy prefix replay and normal no-path as one owned trace", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const retainedCursor = runtime.arenaCursor;
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.status).toBe("no-path");
+    expect(trace.candidates[0]?.kind).toBe("direct");
+    expect(trace.candidates[1]?.kind).toBe("prefix");
+    expect(trace.candidates[1]?.replay.status).toBe("hit");
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    context.dispose();
+  });
+
+  it("replays real gate candidates after a blocked direct path", async () => {
+    const emptyFixture = createFixture("dy");
+    const targetPoint = graphToImagePoint(createGraphPoint(10, 0), bounds, boundsRect);
+    const hitTarget = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const directPath = [...emptyFixture.pixelPath.slice(0, 2), targetPoint];
+    const directControlX = imageToGraphPoint(targetPoint, bounds, boundsRect).x;
+    const { context: baselineContext } = await createContext(emptyFixture);
+    const baseline = baselineContext.replayCandidateForTest({
+      controlX: directControlX,
+      orderedTargets: [hitTarget],
+      path: directPath,
+      windows: { type: "automatic" },
+    });
+    baselineContext.dispose();
+    if (baseline.launchStatus !== "success") {
+      throw new Error("expected a launched direct baseline");
+    }
+    const sourceTailX = emptyFixture.pixelPath[1].x;
+    const obstaclePixel = baseline.visiblePixels.find(
+      (point) => point.x >= sourceTailX + 20 && point.x < targetPoint.x - 20,
+    );
+    if (!obstaclePixel) {
+      throw new Error("expected a direct replay point before the target");
+    }
+    const mask = new Uint8Array(planeCellCount);
+    mask[Math.trunc(obstaclePixel.y) * GRAPHWAR_PLANE_LENGTH + Math.trunc(obstaclePixel.x)] = 1;
+    const fixture = createFixture("dy", mask);
+    const { context, runtime } = await createContext(fixture);
+    const retainedCursor = runtime.arenaCursor;
+
+    const trace = context.traceRealDfsForTest({ hitTarget, targetPoint });
+
+    const gateCandidate = trace.candidates.find((candidate) => candidate.kind === "gate");
+    expect(gateCandidate).toBeDefined();
+    expect(gateCandidate?.windows.type).toBe("explicit");
+    if (gateCandidate?.windows.type === "explicit") {
+      expect(gateCandidate.windows.segments.at(-1)?.endX).toBe(gateCandidate.controlX);
+    }
+    const highWaterByteLength = runtime.buffer.byteLength;
+    for (let index = 0; index < 20; index += 1) {
+      expect(
+        context
+          .traceRealDfsForTest({ hitTarget, targetPoint })
+          .candidates.some((candidate) => candidate.kind === "gate"),
+      ).toBe(true);
+      expect(runtime.arenaCursor).toBe(retainedCursor);
+    }
+    expect(runtime.buffer.byteLength).toBe(highWaterByteLength);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    context.dispose();
+  });
+
+  it("returns normal no-path when a one-point source still has required targets", async () => {
+    const fixture = createFixture("dy");
+    const requiredTarget = {
+      center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect),
+      radius: 0.01,
+    } satisfies GraphwarTrajectoryTargetCircle;
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const contextResult = createGraphwarWasmStepGlitchGeometryTestContext(
+      runtime,
+      createGraphwarWasmStepGlitchContextInput({
+        bounds,
+        boundsRect,
+        formulaMode: fixture.formulaMode,
+        requiredTargets: [requiredTarget],
+        simulationMask: fixture.mask,
+        sourcePath: fixture.pixelPath.slice(0, 1),
+      }),
+    );
+    expect(contextResult.status).toBe("ready");
+    if (contextResult.status !== "ready") {
+      throw new Error("expected retained one-point Step-glitch context");
+    }
+    const retainedCursor = runtime.arenaCursor;
+
+    const trace = contextResult.context.traceRealDfsForTest({
+      hitTarget: requiredTarget,
+      targetPoint: fixture.pixelPath[1],
+    });
+
+    expect(trace).toMatchObject({ expandedStates: 1, status: "no-path" });
+    expect(trace.candidates.map((candidate) => candidate.kind)).toEqual(["direct"]);
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    contextResult.context.dispose();
+  });
+
+  it("rejects a target that does not advance from the retained source", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const retainedCursor = runtime.arenaCursor;
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: fixture.pixelPath[1], radius: 2 },
+        targetPoint: fixture.pixelPath[1],
+      }),
+    ).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    context.dispose();
+  });
+
+  it.each([
+    {
+      mutate(traceView: DataView) {
+        traceView.setFloat64(32, traceView.getFloat64(32, true) + 1, true);
+      },
+      name: "control x",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setUint32(188, 7, true);
+      },
+      name: "terminal state flags",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setInt32(108, 0x7fff_ffff, true);
+      },
+      name: "obstacle index",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setUint32(192, 1, true);
+      },
+      name: "reserved field",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setUint32(48, 0, true);
+      },
+      name: "target completion",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setFloat64(64, -999, true);
+      },
+      name: "accepted frontier",
+    },
+  ])("rejects corrupted real DFS $name and preserves the retained context", async ({ mutate }) => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const retainedCursor = runtime.arenaCursor;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 40);
+        mutate(new DataView(runtime.buffer, resultView.getUint32(24, true), 200));
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
+
+    expect(
+      context.traceRealDfsForTest({
+        hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+        targetPoint: fixture.pixelPath[2],
+      }).status,
+    ).toBe("hit");
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    context.dispose();
+  });
+
   it.each(["dy", "ddy"] satisfies readonly EquationMode[])(
     "matches a cold TypeScript gate replay for %s",
     async (equation) => {

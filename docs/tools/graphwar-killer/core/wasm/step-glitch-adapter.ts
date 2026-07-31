@@ -1793,6 +1793,18 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     formulaMaterialResultPointer,
     finalValidationPointer,
   );
+  if (continuation) {
+    const continuationView = new DataView(
+      continuation.bytes.buffer,
+      continuation.bytes.byteOffset,
+      continuation.bytes.byteLength,
+    );
+    continuationView.setUint32(
+      TRAJECTORY_EVIDENCE_PROTECTION_POINTER_OFFSET,
+      header.getUint32(52, true) - evidencePointer,
+      true,
+    );
+  }
   return {
     bytes: evidenceBytes,
     finalValidation,

@@ -60,10 +60,16 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const evidenceBytes = scan.evidence?.bytes;
     if (!evidenceBytes) throw new Error("expected copied production evidence");
     expect(scan.evidence?.owned.formulaContext).not.toHaveProperty("stepGlitchFormulaEvidence");
-    expect(
-      new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength).getUint32(248, true),
-    ).toBe(evidenceBytes.byteLength);
     const evidenceView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength);
+    const continuation = scan.evidence?.owned.continuation;
+    if (!continuation) throw new Error("expected copied continuation evidence");
+    const continuationView = new DataView(
+      continuation.bytes.buffer,
+      continuation.bytes.byteOffset,
+      continuation.bytes.byteLength,
+    );
+    expect(continuationView.getUint32(32, true)).toBe(evidenceView.getUint32(52, true));
+    expect(evidenceView.getUint32(248, true)).toBe(evidenceBytes.byteLength);
     expect(evidenceView.getUint32(240, true)).toBe(0);
     expect(evidenceView.getUint32(244, true)).toBe(0);
     expect(evidenceView.getUint32(144, true)).toBe(1);

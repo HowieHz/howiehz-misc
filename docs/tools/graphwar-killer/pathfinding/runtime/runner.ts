@@ -5,6 +5,7 @@ import {
   isGraphwarBackendControlMessage,
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
+  type GraphwarBackendExecution,
   type GraphwarWorkerBackendConfiguration,
   type GraphwarWorkerBackendSelection,
   GraphwarWasmFault,
@@ -58,6 +59,8 @@ export interface GraphwarPathfindingRunOptions {
 interface PendingPathfindingWorkerTaskBase {
   /** Stable public task plus the currently authoritative backend attempt. */
   attempt: GraphwarBackendAttemptIdentity;
+  /** Requested/effective backend remains attached to the stable outer task across replay. */
+  backendExecution: GraphwarBackendExecution;
   /** 发送给 Worker 的请求 id。 */
   id: number;
   /** 搜索动画回调；只有普通智能寻路会使用。 */
@@ -86,11 +89,23 @@ type PendingPathfindingWorkerTask = PendingPathfindingWorkerTaskBase &
       }
   );
 
+/** Backend selection 尚未完成时持有 owned request 与公开 Promise，确保取消不会漏过 loading 任务。 */
+interface PendingPathfindingAdmission {
+  backendGeneration: number;
+  isSettled: boolean;
+  onIncumbent?: GraphwarPathfindingRunOptions["onIncumbent"];
+  onPreview?: GraphwarPathfindingRunOptions["onPreview"];
+  reject: (reason?: unknown) => void;
+  request: Omit<GraphwarPathfindingWorkerRequest, "attempt">;
+  resolve: (value: GraphwarPathfindingWorkerSuccessResponse["result"]) => void;
+  shouldCollectDiagnostics: boolean;
+}
+
 /** Pathfinding master 与 nested edge Worker 共用的 backend 生命周期注入点。 */
 export interface GraphwarPathfindingRunnerOptions {
   backendConfiguration?: GraphwarWorkerBackendConfiguration;
   createBackendSelection?: () => GraphwarWorkerBackendSelection;
-  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => number | undefined;
 }
 
 /**
@@ -116,6 +131,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
   let workerBackendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot> | undefined;
   let cleanupWorkerListeners: (() => void) | undefined;
   let nextRequestId = 1;
+  let pendingAdmission: PendingPathfindingAdmission | undefined;
   let pendingTask: PendingPathfindingWorkerTask | undefined;
   let shouldResetWorkerAfterCurrentTask = false;
 
@@ -172,7 +188,6 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
         if (workerBackendSlot) {
           handleWasmFaultFromWorker(createdWorker, message);
         } else {
-          options.onWasmFault?.(message);
           initializationError = new GraphwarWasmFault(message.fault.code, message.fault.message);
         }
       },
@@ -195,52 +210,44 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
   /** 在 master Worker 中执行普通智能寻路几何搜索。 */
   function findRoute(input: GraphwarPathfindingRouteInput, options?: GraphwarPathfindingRunOptions) {
     cancel();
-    return withBackend((activeWorker) =>
-      runWorkerTask<GraphwarPathfindingRouteResult>(
-        activeWorker,
-        {
-          id: nextRequestId,
-          task: {
-            input,
-            type: "find-route",
-          },
+    return withBackend<GraphwarPathfindingRouteResult>(
+      {
+        id: nextRequestId,
+        task: {
+          input,
+          type: "find-route",
         },
-        options,
-      ),
+      },
+      options,
     );
   }
 
   /** 在 master Worker 中执行完整智能寻路，主线程只负责写回结果。 */
   function findSmartPath(input: GraphwarSmartPathfindingPathInput, options?: GraphwarPathfindingRunOptions) {
     cancel();
-    return withBackend((activeWorker) =>
-      runWorkerTask<GraphwarSmartPathfindingPathResult>(
-        activeWorker,
-        {
-          id: nextRequestId,
-          task: {
-            ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
-            input,
-            type: "find-smart-path",
-          },
+    return withBackend<GraphwarSmartPathfindingPathResult>(
+      {
+        id: nextRequestId,
+        task: {
+          ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
+          input,
+          type: "find-smart-path",
         },
-        options,
-      ),
+      },
+      options,
     );
   }
 
   /** 在 master Worker 中建立一键清图 DAG 边。 */
   function buildOneClickClearDagEdges(input: GraphwarOneClickClearDagEdgeBuildRequest) {
     cancel();
-    return withBackend((activeWorker) =>
-      runWorkerTask<GraphwarOneClickClearDagEdgeBuildResult>(activeWorker, {
-        id: nextRequestId,
-        task: {
-          input,
-          type: "build-one-click-clear-dag-edges",
-        },
-      }),
-    );
+    return withBackend<GraphwarOneClickClearDagEdgeBuildResult>({
+      id: nextRequestId,
+      task: {
+        input,
+        type: "build-one-click-clear-dag-edges",
+      },
+    });
   }
 
   /** 在 master Worker 中执行完整一键清图搜索，避免主线程同步采样卡顿。 */
@@ -249,101 +256,181 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     options?: GraphwarPathfindingRunOptions,
   ) {
     cancel();
-    return withBackend((activeWorker) =>
-      runWorkerTask<GraphwarOneClickClearPathWorkerResult>(
-        activeWorker,
-        {
-          id: nextRequestId,
-          task: {
-            ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
-            input,
-            shouldReportIncumbents: options?.onIncumbent !== undefined,
-            type: "build-one-click-clear-path",
-          },
+    return withBackend<GraphwarOneClickClearPathWorkerResult>(
+      {
+        id: nextRequestId,
+        task: {
+          ...(options?.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
+          input,
+          shouldReportIncumbents: options?.onIncumbent !== undefined,
+          type: "build-one-click-clear-path",
         },
-        options,
-      ),
+      },
+      options,
     );
   }
 
-  function withBackend<TResult>(task: (worker: Worker) => Promise<TResult>) {
-    const runWithConfiguration = (configuration: GraphwarWorkerBackendConfiguration) => {
-      if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
-        resetWorker();
-        backendConfiguration = configuration;
+  /** 先固定 request 并建立 cancellable admission，再等待动态 backend。 */
+  function withBackend<TResult>(
+    request: Omit<GraphwarPathfindingWorkerRequest, "attempt">,
+    runOptions?: GraphwarPathfindingRunOptions,
+  ) {
+    let ownedRequest: Omit<GraphwarPathfindingWorkerRequest, "attempt">;
+    try {
+      ownedRequest = cloneGraphwarPathfindingWorkerRequestWithoutAttempt(request);
+    } catch (error) {
+      return Promise.reject<TResult>(normalizeError(error, "Graphwar pathfinding input could not be cloned"));
+    }
+    nextRequestId += 1;
+    return new Promise<TResult>((resolve, reject) => {
+      const admission: PendingPathfindingAdmission = {
+        backendGeneration: backendConfiguration.generation,
+        isSettled: false,
+        onIncumbent: runOptions?.onIncumbent,
+        onPreview: runOptions?.onPreview,
+        reject,
+        request: ownedRequest,
+        resolve: resolve as PendingPathfindingAdmission["resolve"],
+        shouldCollectDiagnostics: runOptions?.shouldCollectDiagnostics === true,
+      };
+      pendingAdmission = admission;
+      if (!options.createBackendSelection) {
+        startAdmission(admission, backendConfiguration);
+        return;
       }
+
+      let selection: GraphwarWorkerBackendSelection;
       try {
-        const activeWorker = ensureWorker();
-        if (!activeWorker) {
-          throw new Error("Graphwar pathfinding worker is unavailable");
-        }
-        return task(activeWorker);
+        selection = createBackendSelection();
+        admission.backendGeneration = selection.generation;
       } catch (error) {
-        if (!(error instanceof GraphwarWasmFault) || backendConfiguration.backend.type !== "wasm") {
-          throw error;
-        }
-        options.onWasmFault?.({
-          fault: error.toDescriptor(),
-          generation: backendConfiguration.generation,
-          role: "pathfinding-master",
-          type: "wasm-fault",
-          context: { type: "initialization" },
-        });
-        resetWorker();
-        backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(backendConfiguration.generation + 1);
+        rejectAdmission(admission, normalizeError(error, "Graphwar pathfinding backend selection failed"));
+        return;
+      }
+      void selection.promise.then(
+        (configuration) => {
+          try {
+            startAdmission(admission, configuration);
+          } catch (error) {
+            resetWorker();
+            rejectAdmission(admission, normalizeError(error, "Graphwar pathfinding task could not start"));
+          }
+        },
+        (error: unknown) =>
+          rejectAdmission(admission, normalizeError(error, "Graphwar pathfinding backend selection failed")),
+      );
+    });
+  }
+
+  /** 只有仍权威的 admission 可以选择 backend、创建 Worker 并安装 outer task。 */
+  function startAdmission(admission: PendingPathfindingAdmission, configuration: GraphwarWorkerBackendConfiguration) {
+    if (pendingAdmission !== admission || admission.isSettled) {
+      return;
+    }
+    if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
+      resetWorker();
+      backendConfiguration = configuration;
+    }
+    let activeWorker: Worker;
+    try {
+      const selectedWorker = ensureWorker();
+      if (!selectedWorker) {
+        throw new Error("Graphwar pathfinding worker is unavailable");
+      }
+      activeWorker = selectedWorker;
+    } catch (error) {
+      if (!(error instanceof GraphwarWasmFault) || backendConfiguration.backend.type !== "wasm") {
+        rejectAdmission(admission, normalizeError(error, "Graphwar pathfinding worker is unavailable"));
+        return;
+      }
+      const faultMessage = {
+        fault: error.toDescriptor(),
+        generation: backendConfiguration.generation,
+        role: "pathfinding-master",
+        type: "wasm-fault",
+        context: { type: "initialization" },
+      } satisfies Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>;
+      const replacementGeneration = options.onWasmFault?.(faultMessage);
+      const fallbackReason = `${error.code}: ${error.message}`;
+      resetWorker();
+      backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(
+        replacementGeneration ?? backendConfiguration.generation + 1,
+        fallbackReason,
+      );
+      try {
         const fallbackWorker = ensureWorker();
         if (!fallbackWorker) {
           throw new Error("Graphwar pathfinding worker is unavailable", { cause: error });
         }
-        return task(fallbackWorker);
+        activeWorker = fallbackWorker;
+      } catch (fallbackError) {
+        resetWorker();
+        rejectAdmission(
+          admission,
+          normalizeError(fallbackError, "Graphwar pathfinding TypeScript fallback worker is unavailable"),
+        );
+        return;
       }
+    }
+
+    pendingAdmission = undefined;
+    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
+    const authoritativeRequest = { ...admission.request, attempt } satisfies GraphwarPathfindingWorkerRequest;
+    const ownedRequest = cloneGraphwarPathfindingWorkerRequest(authoritativeRequest);
+    const taskIdentity =
+      admission.request.task.type === "build-one-click-clear-dag-edges"
+        ? {
+            expectedDagJobTypes: new Map(admission.request.task.input.jobs.map((job) => [job.id, job.type])),
+            taskType: admission.request.task.type,
+          }
+        : { taskType: admission.request.task.type };
+    pendingTask = {
+      attempt,
+      backendExecution: backendConfiguration.backendExecution,
+      id: admission.request.id,
+      onIncumbent: admission.onIncumbent,
+      onPreview: admission.onPreview,
+      reject: admission.reject,
+      resolve: admission.resolve,
+      shouldCollectDiagnostics: admission.shouldCollectDiagnostics,
+      request: { id: ownedRequest.id, task: ownedRequest.task },
+      ...taskIdentity,
     };
-    return options.createBackendSelection
-      ? createBackendSelection().promise.then(runWithConfiguration)
-      : runWithConfiguration(backendConfiguration);
+    try {
+      activeWorker.postMessage(ownedRequest);
+    } catch (error) {
+      attemptGate.cancelOuterTask(attempt);
+      pendingTask = undefined;
+      admission.isSettled = true;
+      admission.reject(error);
+    }
   }
 
-  /** 发送单个 Worker 请求，并记录当前等待响应的任务。 */
-  function runWorkerTask<TResult>(
-    activeWorker: Worker,
-    request: Omit<GraphwarPathfindingWorkerRequest, "attempt">,
-    options?: GraphwarPathfindingRunOptions,
-  ) {
-    nextRequestId += 1;
-    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
-    const authoritativeRequest = { ...request, attempt } satisfies GraphwarPathfindingWorkerRequest;
-    const ownedRequest = cloneGraphwarPathfindingWorkerRequest(authoritativeRequest);
-    return new Promise<TResult>((resolve, reject) => {
-      const taskIdentity =
-        request.task.type === "build-one-click-clear-dag-edges"
-          ? {
-              expectedDagJobTypes: new Map(request.task.input.jobs.map((job) => [job.id, job.type])),
-              taskType: request.task.type,
-            }
-          : { taskType: request.task.type };
-      pendingTask = {
-        attempt,
-        id: request.id,
-        onIncumbent: options?.onIncumbent,
-        onPreview: options?.onPreview,
-        reject,
-        resolve: resolve as PendingPathfindingWorkerTask["resolve"],
-        shouldCollectDiagnostics: options?.shouldCollectDiagnostics === true,
-        request: { id: ownedRequest.id, task: ownedRequest.task },
-        ...taskIdentity,
-      };
-      try {
-        activeWorker.postMessage(ownedRequest);
-      } catch (error) {
-        attemptGate.cancelOuterTask(attempt);
-        pendingTask = undefined;
-        reject(error);
-      }
-    });
+  /** Selection 失败只拒绝仍在等待的 admission。 */
+  function rejectAdmission(admission: PendingPathfindingAdmission, error: Error) {
+    if (pendingAdmission !== admission || admission.isSettled) {
+      return;
+    }
+    pendingAdmission = undefined;
+    admission.isSettled = true;
+    admission.reject(error);
+  }
+
+  function cancelAdmission() {
+    const admission = pendingAdmission;
+    if (!admission) {
+      return;
+    }
+    pendingAdmission = undefined;
+    if (!admission.isSettled) {
+      admission.isSettled = true;
+      admission.reject(new GraphwarPathfindingCancelledError());
+    }
   }
 
   /** 取消当前寻路并重建 Worker，避免旧任务继续占用 CPU。 */
   function cancel() {
+    cancelAdmission();
     if (!pendingTask) {
       return;
     }
@@ -365,11 +452,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
 
   /** 关闭 runner 时释放 Worker，并让挂起任务按取消处理。 */
   function close() {
-    if (pendingTask) {
-      attemptGate.cancelOuterTask(pendingTask.attempt);
-      pendingTask.reject(new GraphwarPathfindingCancelledError());
-      pendingTask = undefined;
-    }
+    cancel();
     resetWorker();
   }
 
@@ -416,6 +499,9 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
         rejectPendingProtocolResponse();
         return;
       }
+      if (response.progress.diagnostics) {
+        response.progress.diagnostics.backendExecution = pendingTask.backendExecution;
+      }
       pendingTask.onIncumbent(response.progress);
       return;
     }
@@ -455,6 +541,9 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     }
     const completedTask = pendingTask;
     pendingTask = undefined;
+    if ("diagnostics" in response.result && response.result.diagnostics) {
+      response.result.diagnostics.backendExecution = completedTask.backendExecution;
+    }
     attemptGate.completeOuterTask(completedTask.attempt);
     completedTask.resolve(response.result as GraphwarPathfindingWorkerSuccessResponse["result"]);
     resetWorkerIfCacheInvalidated();
@@ -468,10 +557,21 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     if (worker !== sourceWorker) {
       return;
     }
+    if (
+      message.context.type !== "initialization" &&
+      (!pendingTask || !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, pendingTask.attempt))
+    ) {
+      return;
+    }
     options.onWasmFault?.(message);
-    resetWorker();
     if (pendingTask) {
       void replayAfterWasmFault(pendingTask, message);
+    } else {
+      replayGenerationAsTypescript(
+        message.generation,
+        Math.max(message.generation + 1, backendConfiguration.generation + 1),
+        `${message.fault.code}: ${message.fault.message}`,
+      );
     }
   }
 
@@ -483,10 +583,30 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     if (pendingTask !== task) {
       return;
     }
-    attemptGate.cancelOuterTask(task.attempt);
-    const fallbackGeneration = Math.max(message.generation + 1, backendConfiguration.generation + 1);
-    backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration);
-    task.attempt = attemptGate.beginOuterTask(fallbackGeneration);
+    replayGenerationAsTypescript(
+      message.generation,
+      Math.max(message.generation + 1, backendConfiguration.generation + 1),
+      `${message.fault.code}: ${message.fault.message}`,
+    );
+  }
+
+  /** 页面级 fuse 终止 master，并从当前 owned request 安装同一公开任务的 TS attempt。 */
+  function replayGenerationAsTypescript(failedGeneration: number, fallbackGeneration: number, fallbackReason: string) {
+    const admission = pendingAdmission;
+    if (backendConfiguration.generation !== failedGeneration && admission?.backendGeneration !== failedGeneration) {
+      return false;
+    }
+    const task = pendingTask;
+    resetWorker();
+    backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration, fallbackReason);
+    if (admission?.backendGeneration === failedGeneration) {
+      startAdmission(admission, backendConfiguration);
+    }
+    if (!task || task.attempt.backendGeneration !== failedGeneration) {
+      return true;
+    }
+    task.attempt = attemptGate.replaceAttempt(task.attempt, fallbackGeneration);
+    task.backendExecution = backendConfiguration.backendExecution;
     try {
       const fallbackWorker = ensureWorker();
       if (!fallbackWorker) {
@@ -497,6 +617,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     } catch (error) {
       rejectPendingTask(error instanceof Error ? error : new Error(String(error)));
     }
+    return true;
   }
 
   /** 将当前请求的畸形消息作为协议错误拒绝，并丢弃不可信 Worker。 */
@@ -545,6 +666,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     close,
     findSmartPath,
     findRoute,
+    replayGenerationAsTypescript,
   };
 }
 
@@ -564,9 +686,20 @@ function areBackendConfigurationsEqual(
 function cloneGraphwarPathfindingWorkerRequest(
   request: GraphwarPathfindingWorkerRequest,
 ): GraphwarPathfindingWorkerRequest {
+  const clonedRequest = cloneGraphwarPathfindingWorkerRequestWithoutAttempt(request);
+  return {
+    attempt: cloneGraphwarBackendAttemptIdentity(request.attempt),
+    id: clonedRequest.id,
+    task: clonedRequest.task,
+  };
+}
+
+/** 在任何异步 backend 等待前拥有完整 request，attempt 仅在真正开始时附加。 */
+function cloneGraphwarPathfindingWorkerRequestWithoutAttempt(
+  request: Omit<GraphwarPathfindingWorkerRequest, "attempt">,
+): Omit<GraphwarPathfindingWorkerRequest, "attempt"> {
   if (request.task.type === "find-route") {
     return {
-      attempt: cloneGraphwarBackendAttemptIdentity(request.attempt),
       id: request.id,
       task: {
         input: cloneGraphwarPathfindingRouteInput(request.task.input),
@@ -576,7 +709,6 @@ function cloneGraphwarPathfindingWorkerRequest(
   }
   if (request.task.type === "find-smart-path") {
     return {
-      attempt: cloneGraphwarBackendAttemptIdentity(request.attempt),
       id: request.id,
       task: {
         ...(request.task.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
@@ -587,7 +719,6 @@ function cloneGraphwarPathfindingWorkerRequest(
   }
   if (request.task.type === "build-one-click-clear-dag-edges") {
     return {
-      attempt: cloneGraphwarBackendAttemptIdentity(request.attempt),
       id: request.id,
       task: {
         input: cloneGraphwarOneClickClearDagEdgeBuildRequest(request.task.input),
@@ -597,7 +728,6 @@ function cloneGraphwarPathfindingWorkerRequest(
   }
 
   return {
-    attempt: cloneGraphwarBackendAttemptIdentity(request.attempt),
     id: request.id,
     task: {
       ...(request.task.shouldCollectDiagnostics ? { shouldCollectDiagnostics: true as const } : {}),
@@ -606,6 +736,10 @@ function cloneGraphwarPathfindingWorkerRequest(
       type: "build-one-click-clear-path",
     },
   };
+}
+
+function normalizeError(error: unknown, fallbackMessage: string) {
+  return error instanceof Error ? error : new Error(error === undefined ? fallbackMessage : String(error));
 }
 
 /** Copies attempt identity without retaining a reactive or caller-owned object. */

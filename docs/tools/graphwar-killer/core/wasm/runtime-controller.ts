@@ -103,11 +103,12 @@ export function createGraphwarWasmRuntimeController(dependencies: GraphwarWasmRu
 
     const previousState = state;
     const generation = incrementGeneration(previousState.generation);
-    setState({ generation, reason: normalizeFaultReason(error), type: "degraded" });
+    const reason = normalizeFaultReason(error);
+    setState({ generation, reason, type: "degraded" });
     if (previousState.type === "loading") {
       previousState.abortController.abort();
     }
-    resolveLoadingAsTypescript(previousState.generation, generation);
+    resolveLoadingAsTypescript(previousState.generation, generation, reason);
     return true;
   }
 
@@ -129,9 +130,12 @@ export function createGraphwarWasmRuntimeController(dependencies: GraphwarWasmRu
       }
       return { generation: selectionState.generation, promise: selection.promise };
     }
+    const fallbackReason = selectionState.type === "degraded" ? selectionState.reason : undefined;
     return {
       generation: selectionState.generation,
-      promise: Promise.resolve(createGraphwarTypescriptWorkerBackendConfiguration(selectionState.generation)),
+      promise: Promise.resolve(
+        createGraphwarTypescriptWorkerBackendConfiguration(selectionState.generation, fallbackReason),
+      ),
     };
   }
 
@@ -162,14 +166,19 @@ export function createGraphwarWasmRuntimeController(dependencies: GraphwarWasmRu
     }
     // 主动关闭会先换代，因此只有仍权威的异常 abort 才会到达这里，并应按 loader fault 熔断。
     const replayGeneration = incrementGeneration(generation);
-    setState({ generation: replayGeneration, reason: normalizeFaultReason(error), type: "degraded" });
-    resolveLoadingAsTypescript(generation, replayGeneration);
+    const reason = normalizeFaultReason(error);
+    setState({ generation: replayGeneration, reason, type: "degraded" });
+    resolveLoadingAsTypescript(generation, replayGeneration, reason);
   }
 
-  function resolveLoadingAsTypescript(loadingGeneration: number, typescriptGeneration: number) {
+  function resolveLoadingAsTypescript(
+    loadingGeneration: number,
+    typescriptGeneration: number,
+    fallbackReason?: string,
+  ) {
     const selection = loadingSelections.get(loadingGeneration);
     loadingSelections.delete(loadingGeneration);
-    selection?.resolve(createGraphwarTypescriptWorkerBackendConfiguration(typescriptGeneration));
+    selection?.resolve(createGraphwarTypescriptWorkerBackendConfiguration(typescriptGeneration, fallbackReason));
   }
 
   function setState(nextState: GraphwarWasmRuntimeState) {

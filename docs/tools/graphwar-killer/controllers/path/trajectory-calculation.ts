@@ -1,4 +1,8 @@
-import { isGraphwarWasmFault, type GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import {
+  isGraphwarWasmFault,
+  type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendExecution,
+} from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import {
   runGraphwarWasmExpressionBatch,
@@ -116,6 +120,8 @@ export interface GraphwarTrajectoryCalculationWorkerRequest {
 export interface GraphwarTrajectoryCalculationWorkerResponse {
   /** Exact request attempt; stale or mismatched results cannot commit. */
   attempt: GraphwarBackendAttemptIdentity;
+  /** Atomic requested/effective backend record for trajectory diagnostics. */
+  backendExecution: GraphwarBackendExecution;
   id: number;
   outcome: GraphwarTrajectoryCalculationOutcome;
 }

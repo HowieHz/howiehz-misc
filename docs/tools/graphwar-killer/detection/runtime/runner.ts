@@ -1,10 +1,12 @@
 /** 主线程侧 Graphwar 截图识别 runner，集中管理 Worker 生命周期、取消和同步 fallback。 */
 import {
+  createGraphwarBackendFallbackExecution,
   createGraphwarTypescriptWorkerBackendConfiguration,
   graphwarBackendAttemptIdentitiesAreEqual,
   isGraphwarBackendControlMessage,
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
+  type GraphwarBackendExecution,
   type GraphwarWorkerBackendConfiguration,
   type GraphwarWorkerBackendSelection,
   GraphwarWasmFault,
@@ -62,18 +64,24 @@ export interface GraphwarDetectionRunOptions<
   commitResult?: (
     result: TResult,
     timings: readonly GraphwarDetectionWorkerTimingEntry[],
+    backendExecution: GraphwarBackendExecution,
     context: GraphwarAuthoritativeResultCommitContext,
   ) => Promise<void> | void;
   /** Worker 进入耗时阶段时通知页面更新状态。 */
   onStage?: (stage: GraphwarDetectionWorkerStage) => void;
   /** Worker 或同步 fallback 完成后返回各识别阶段的准确耗时。 */
-  onTimings?: (timings: readonly GraphwarDetectionWorkerTimingEntry[]) => void;
+  onTimings?: (
+    timings: readonly GraphwarDetectionWorkerTimingEntry[],
+    backendExecution: GraphwarBackendExecution,
+  ) => void;
 }
 
 /** 当前权威 detection outer task；Worker 与同步 fallback 共用同一 commit gate。 */
 interface PendingDetectionAttempt {
   /** 当前 outer task 中唯一可提交的 backend attempt。 */
   attempt: GraphwarBackendAttemptIdentity;
+  /** Outer-task backend state survives a typed-fault replacement Worker. */
+  backendExecution: GraphwarBackendExecution;
   /** 发送给 Worker 的请求 id。 */
   id: number;
   /** 当前 attempt 的所有非终态事件都必须通过 coordinator publish。 */
@@ -95,6 +103,12 @@ export interface GraphwarDetectionRunnerOptions {
 }
 
 type GraphwarDetectionAttemptResult = GraphwarDetectionWorkerSuccessResponse extends infer TResponse
+  ? TResponse extends GraphwarDetectionWorkerSuccessResponse
+    ? Pick<TResponse, "backendExecution" | "result" | "taskType" | "timings">
+    : never
+  : never;
+
+type GraphwarDetectionSynchronousResult = GraphwarDetectionWorkerSuccessResponse extends infer TResponse
   ? TResponse extends GraphwarDetectionWorkerSuccessResponse
     ? Pick<TResponse, "result" | "taskType" | "timings">
     : never
@@ -194,7 +208,11 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
       if (initializationFault) {
         const replacementGeneration = options.onWasmFault?.(initializationFault);
         if (replacementGeneration !== undefined) {
-          coordinator.replayGenerationAsTypescript(initializationFault.generation, replacementGeneration);
+          coordinator.replayGenerationAsTypescript(
+            initializationFault.generation,
+            replacementGeneration,
+            `${initializationFault.fault.code}: ${initializationFault.fault.message}`,
+          );
         }
       }
       if (worker === createdWorker) {
@@ -275,10 +293,15 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
     const task = coordinator.beginTask(taskInput, createBackendSelection(), {
       commitResult: async (completed, context) => {
         if (runOptions?.commitResult) {
-          await runOptions.commitResult(completed.result as TResult, completed.timings, context);
+          await runOptions.commitResult(
+            completed.result as TResult,
+            completed.timings,
+            completed.backendExecution,
+            context,
+          );
           return;
         }
-        context.commit(() => runOptions?.onTimings?.(completed.timings));
+        context.commit(() => runOptions?.onTimings?.(completed.timings, completed.backendExecution));
       },
       onEvent: (event) => runOptions?.onStage?.(event.stage),
     });
@@ -303,10 +326,14 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
   function executeAttempt(
     context: GraphwarAuthoritativeAttemptContext<GraphwarDetectionWorkerRequest["task"], GraphwarDetectionAttemptEvent>,
   ) {
+    let backendExecution = context.backendConfiguration.backendExecution;
     const activeWorker = ensureWorker(context.backendConfiguration);
     if (!activeWorker) {
       const completed = runDetectionTaskSynchronously(context.snapshot, (stage) => context.publish({ stage }));
-      return { cancel: () => undefined, result: Promise.resolve(completed) };
+      if (backendExecution.requested === "wasm") {
+        backendExecution = createGraphwarBackendFallbackExecution("Web Worker is unavailable");
+      }
+      return { cancel: () => undefined, result: Promise.resolve({ ...completed, backendExecution }) };
     }
 
     const request: GraphwarDetectionWorkerRequest = {
@@ -320,6 +347,7 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
       rejectAttempt = reject;
       const attempt: PendingDetectionAttempt = {
         attempt: request.attempt,
+        backendExecution,
         id: request.id,
         publish: context.publish,
         reject,
@@ -404,7 +432,7 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
       return;
     }
     pendingAttempt = undefined;
-    attempt.resolve(response);
+    attempt.resolve({ ...response, backendExecution: attempt.backendExecution });
   }
 
   /** Root 或 nested Worker 的 typed fault 直接通知页面 fuse，不进入 detection infrastructure fallback。 */
@@ -416,19 +444,26 @@ export function createGraphwarDetectionRunner(options: GraphwarDetectionRunnerOp
       return;
     }
     const attempt = pendingAttempt;
-    if (
-      attempt &&
-      message.context.type !== "initialization" &&
-      !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, attempt.attempt)
-    ) {
-      return;
+    const authoritativeAttempt = attempt?.attempt ?? activeTask?.getAttempt();
+    if (message.context.type !== "initialization") {
+      if (
+        !authoritativeAttempt ||
+        !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, authoritativeAttempt)
+      ) {
+        return;
+      }
     }
     const replacementGeneration = options.onWasmFault?.(message);
-    if (
-      replacementGeneration !== undefined &&
-      coordinator.replayGenerationAsTypescript(message.generation, replacementGeneration)
-    ) {
-      return;
+    if (replacementGeneration !== undefined) {
+      if (
+        coordinator.replayGenerationAsTypescript(
+          message.generation,
+          replacementGeneration,
+          `${message.fault.code}: ${message.fault.message}`,
+        )
+      ) {
+        return;
+      }
     }
     if (attempt) {
       rejectAttemptFromWorker(attempt, new GraphwarWasmFault(message.fault.code, message.fault.message));
@@ -549,7 +584,7 @@ function detectObjectsInBoundsSynchronously(
 function runDetectionTaskSynchronously(
   task: GraphwarDetectionWorkerRequest["task"],
   onStage: (stage: GraphwarDetectionWorkerStage) => void,
-): GraphwarDetectionAttemptResult {
+): GraphwarDetectionSynchronousResult {
   if (task.type === "detect-bounds-only") {
     return { ...detectBoundsSynchronously(task, onStage), taskType: "detect-bounds-only" };
   }

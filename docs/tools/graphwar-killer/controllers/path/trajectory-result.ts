@@ -1,6 +1,10 @@
 import { computed, nextTick, ref, shallowRef, watch } from "vue";
 
-import type { GraphwarBackendControlMessage, GraphwarWorkerBackendSelection } from "../../core/algorithm-backend";
+import type {
+  GraphwarBackendControlMessage,
+  GraphwarBackendExecution,
+  GraphwarWorkerBackendSelection,
+} from "../../core/algorithm-backend";
 import type {
   AlgorithmMode,
   BoundsRect,
@@ -32,7 +36,7 @@ export type { GraphwarTrajectoryWarningReason } from "./trajectory-calculation";
 export type GraphwarTrajectoryCalculationStatus =
   | { type: "idle" }
   | { type: "in-progress" }
-  | { elapsedMs: number; type: "success" }
+  | { backendExecution: GraphwarBackendExecution; elapsedMs: number; type: "success" }
   | { message: string; stage: GraphwarTrajectoryCalculationFailureStage; type: "failure" };
 
 /** 同一公式、执行角和轨迹组成的原子结果；显示度数不能代替 Agent 使用的原始弧度。 */
@@ -95,7 +99,7 @@ export interface GraphwarValidatedTrajectorySnapshot {
 interface GraphwarTrajectoryResultOptions {
   /** 页面唯一 backend controller；每次权威任务读取同一 generation selection。 */
   createBackendSelection?: () => GraphwarWorkerBackendSelection;
-  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => number | undefined;
   /** 碰撞采样应使用页面当前障碍和边界收缩配置。 */
   getCollisionSettings: () => GraphwarTrajectoryCollisionSettings | undefined;
   /** 模拟容差无效时不能把缺失碰撞设置误当成“无障碍”。 */
@@ -200,6 +204,8 @@ export interface GraphwarTrajectoryResultController {
   plottedTrajectory: ReadonlyRef<GraphwarPublishedTrajectory | undefined>;
   /** 直接预览搜索 Worker 已验证的公式和轨迹快照。 */
   publishIncumbentPreview: (snapshot: GraphwarValidatedTrajectorySnapshot) => void;
+  /** 页面级 WASM fuse 时从当前输入快照替换为 TS cold attempt。 */
+  replayGenerationAsTypescript: (failedGeneration: number, replacementGeneration: number, reason: string) => boolean;
   /** 当前展示轨迹的提示原因。 */
   trajectoryWarningReason: ReadonlyRef<GraphwarTrajectoryWarningReason | undefined>;
   /** 当前展示的 Y''= 是否按显式两位小数执行角回放后未命中。 */
@@ -475,7 +481,7 @@ export function useGraphwarTrajectoryResult(
     const generation = activeGeneration;
     void runner
       .run(input)
-      .then(({ elapsedMs, outcome }) => {
+      .then(({ backendExecution, elapsedMs, outcome }) => {
         if (generation !== activeGeneration) {
           return;
         }
@@ -497,7 +503,7 @@ export function useGraphwarTrajectoryResult(
           };
           return;
         }
-        calculationStatus.value = { elapsedMs, type: "success" };
+        calculationStatus.value = { backendExecution, elapsedMs, type: "success" };
         successTimer = setTimeout(() => {
           if (generation === activeGeneration && calculationStatus.value.type === "success") {
             calculationStatus.value = { type: "idle" };
@@ -704,6 +710,7 @@ export function useGraphwarTrajectoryResult(
     plottedTrajectory,
     pathError,
     publishIncumbentPreview,
+    replayGenerationAsTypescript: runner.replayGenerationAsTypescript,
     secondOrderLaunchAngleDegrees,
     secondOrderLaunchAngleRadians,
     simulatorLaunchAngleRadians,

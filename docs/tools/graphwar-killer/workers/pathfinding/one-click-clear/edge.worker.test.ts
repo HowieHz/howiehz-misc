@@ -43,6 +43,7 @@ beforeAll(async () => {
   handleMessage?.({
     data: {
       backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
       generation: 0,
       role: "one-click-clear-edge",
       type: "backend-init",

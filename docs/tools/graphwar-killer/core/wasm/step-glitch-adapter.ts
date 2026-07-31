@@ -39,6 +39,7 @@ import {
   validateGraphwarWasmEnumValue,
   validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
+  validateGraphwarWasmPathError,
   validateGraphwarWasmProtectionBits,
   validateGraphwarWasmU32,
   writeGraphwarWasmBytes,
@@ -110,18 +111,41 @@ const STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH = 72;
 const STEP_GLITCH_PRODUCTION_RESULT_MAGIC = 0x5347_5052;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC = 0x5347_4556;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION = 1;
-const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 288;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 296;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET = 248;
 const FORMULA_INPUT_BYTE_LENGTH = 176;
 const FORMULA_RESULT_BYTE_LENGTH = 48;
 const FORMULA_LAUNCH_RESULT_BYTE_LENGTH = 80;
 const TRAJECTORY_EVIDENCE_BYTE_LENGTH = 104;
+const TRAJECTORY_EVIDENCE_CURRENT_X_OFFSET = 40;
+const TRAJECTORY_EVIDENCE_CURRENT_Y_OFFSET = 48;
+const TRAJECTORY_EVIDENCE_CURRENT_DY_OFFSET = 56;
+const TRAJECTORY_EVIDENCE_PREVIOUS_X_OFFSET = 64;
+const TRAJECTORY_EVIDENCE_PREVIOUS_Y_OFFSET = 72;
+const TRAJECTORY_EVIDENCE_PREVIOUS_DY_OFFSET = 80;
+const TRAJECTORY_EVIDENCE_SAMPLE_INDEX_OFFSET = 88;
+const TRAJECTORY_EVIDENCE_REACHED_ORDERED_COUNT_OFFSET = 92;
+const TRAJECTORY_EVIDENCE_REACHED_REQUIRED_COUNT_OFFSET = 96;
 const FORMULA_ALGORITHM_STEP = 2;
 const FORMULA_EQUATION_DY = 2;
 const FORMULA_EQUATION_DDY = 3;
 const FORMULA_FLAG_STEP_OVERFLOW_PROTECTION = 1;
+const FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE = 2;
 const FORMULA_FLAG_STEP_GLITCH_MODE = 8;
 const FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS = 16;
+const TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT = 1;
+const TRAJECTORY_EVIDENCE_FLAG_HAS_DY = 2;
+const TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY = 4;
+const TRAJECTORY_EVIDENCE_FLAG_SKIP_INITIAL_STOP = 8;
+const TRAJECTORY_EVIDENCE_FLAG_CAN_CONTINUE_TO_LATER_FRONTIER = 16;
+const TRAJECTORY_STOP_REASON_STOP_X = 1;
+const TRAJECTORY_STOP_REASON_MAX_STEPS = 3;
+const TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS = 4;
+const TRAJECTORY_STOP_REASON_OBSTACLE = 6;
+const TRAJECTORY_STOP_REASON_TARGET = 7;
+const TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT = 1;
+const TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR = 2;
+const TRAJECTORY_RESULT_FLAG_USED_CONTINUATION = 4;
 const FORMULA_INPUT_ALGORITHM_OFFSET = 0;
 const FORMULA_INPUT_EQUATION_OFFSET = 4;
 const FORMULA_INPUT_DECIMAL_PLACES_OFFSET = 8;
@@ -201,6 +225,7 @@ export type GraphwarWasmStepGlitchCommandInput =
     }
   | {
       controlX: number;
+      finalValidation: GraphwarWasmStepGlitchFinalValidationInput;
       path: readonly PixelPoint[];
       targetSequence: readonly GraphwarTrajectoryTargetCircle[];
       windows?:
@@ -294,6 +319,7 @@ export type GraphwarWasmPackedStepGlitchCommandInput =
     }
   | {
       controlX: number;
+      finalValidation: GraphwarWasmPackedStepGlitchFinalValidation;
       path: GraphwarWasmPackedPointSoA;
       targetSequenceRecords: GraphwarWasmMemorySlice;
       windows: { count: number; mode: number; pointer: number };
@@ -631,6 +657,7 @@ export interface GraphwarWasmStepGlitchOwnedTrajectory {
   readonly finalBisectionCount: number;
   readonly finalRk4StepCount: number;
   readonly obstacleHitIndex: number;
+  readonly pathError?: number;
   readonly pointDys: readonly number[];
   readonly points: readonly GraphPoint[];
   readonly previousPoint?: GraphPoint;
@@ -648,7 +675,6 @@ export interface GraphwarWasmStepGlitchOwnedTrajectory {
 }
 
 export interface GraphwarWasmStepGlitchOwnedContinuation {
-  readonly bytes: Uint8Array;
   readonly flags: number;
   readonly protection: readonly number[];
   readonly sampleIndex: number;
@@ -1213,6 +1239,44 @@ function productionEvidenceUint32ArraysEqual(left: readonly number[], right: rea
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function validateOwnedProductionWindowIdentity(
+  command: GraphwarWasmStepGlitchCommandInput,
+  windows: readonly ({ endX: number; isPresent: boolean; startX: number } | undefined)[],
+  segmentCount: number,
+  flags: number,
+) {
+  if (command.type !== "replay") return;
+  const commandWindows = command.windows ?? { type: "automatic" as const };
+  const hasFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) !== 0;
+  if (commandWindows.type === "automatic") {
+    if (hasFixedWindows || windows.some((window) => window !== undefined)) {
+      productionEvidenceFault("Automatic replay evidence carries fixed Step-glitch windows");
+    }
+    return;
+  }
+  if (!hasFixedWindows || commandWindows.segments.length !== segmentCount || windows.length !== segmentCount) {
+    productionEvidenceFault("Explicit replay evidence window identity has an invalid segment count");
+  }
+  for (let index = 0; index < segmentCount; index += 1) {
+    const expected = commandWindows.segments[index];
+    const actual = windows[index];
+    if (expected === undefined) {
+      if (actual !== undefined && (actual.isPresent || !Object.is(actual.startX, 0) || !Object.is(actual.endX, 0))) {
+        productionEvidenceFault(`Explicit replay evidence absent window ${index} is not canonical`);
+      }
+      continue;
+    }
+    if (
+      actual === undefined ||
+      !actual.isPresent ||
+      !Object.is(actual.startX, expected.startX) ||
+      !Object.is(actual.endX, expected.endX)
+    ) {
+      productionEvidenceFault(`Explicit replay evidence window ${index} differs from the command`);
+    }
+  }
+}
+
 function productionEvidenceRewriteRelativePointer(
   bytes: Uint8Array,
   evidencePointer: number,
@@ -1480,6 +1544,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     (flags &
       ~(
         FORMULA_FLAG_STEP_OVERFLOW_PROTECTION |
+        FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE |
         FORMULA_FLAG_STEP_GLITCH_MODE |
         FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS
       )) !==
@@ -1492,8 +1557,10 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     decimalPlaces !== expectedSettings.decimalPlaces ||
     !Object.is(steepness, expectedSettings.steepness) ||
     !Object.is(formulaPathSteepness, expectedSettings.formulaPathSteepness ?? expectedSettings.steepness) ||
-    (flags & FORMULA_FLAG_STEP_GLITCH_MODE) === 0 ||
-    ((flags & FORMULA_FLAG_STEP_OVERFLOW_PROTECTION) !== 0) !== expectedSettings.isStepOverflowProtectionEnabled
+    ((flags & FORMULA_FLAG_STEP_GLITCH_MODE) !== 0) !== expectedSettings.isStepGlitchModeEnabled ||
+    ((flags & FORMULA_FLAG_STEP_OVERFLOW_PROTECTION) !== 0) !== expectedSettings.isStepOverflowProtectionEnabled ||
+    ((flags & FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE) !== 0) !==
+      (equation === "ddy" && expectedSettings.secondOrderLaunchAngleMode === "display-rounded")
   ) {
     productionEvidenceFault("Step-glitch evidence formula settings differ from the retained Formula Mode");
   }
@@ -1590,6 +1657,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     }
     return { endX, isPresent, startX };
   });
+  validateOwnedProductionWindowIdentity(command, stepGlitchWindows, segmentCount, flags);
 
   const formulaPointCount = validateGraphwarWasmU32(
     header.getUint32(264, true),
@@ -1716,13 +1784,20 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     if (value < -1 || value >= pointCount)
       productionEvidenceFault("Step-glitch evidence tracked hit index is outside points");
   }
+  const expectedTrackedTargetCount = finalValidation.type === "validated" ? finalValidation.trackedTargets.length : 0;
+  if (trackedTargetHitIndexes.length !== expectedTrackedTargetCount) {
+    productionEvidenceFault("Step-glitch evidence tracked target count differs from final validation");
+  }
   const trajectory = decodeOwnedProductionTrajectory(
     header,
+    path,
     points,
     [...pointDys],
     visiblePixels,
     trackedTargetHitIndexes,
     context.formulaMode.settings.equation,
+    context,
+    command,
   );
   if (command.type === "replay") {
     if (!productionEvidencePixelsEqual(path, command.path))
@@ -1782,6 +1857,9 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     header,
     protection,
     outputMinimumPointer,
+    trajectory,
+    context.formulaMode.settings.equation,
+    trajectory.stopReason,
   );
   rewriteProductionEvidencePointersRelativeToBase(
     evidenceBytes,
@@ -1793,18 +1871,6 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     formulaMaterialResultPointer,
     finalValidationPointer,
   );
-  if (continuation) {
-    const continuationView = new DataView(
-      continuation.bytes.buffer,
-      continuation.bytes.byteOffset,
-      continuation.bytes.byteLength,
-    );
-    continuationView.setUint32(
-      TRAJECTORY_EVIDENCE_PROTECTION_POINTER_OFFSET,
-      header.getUint32(52, true) - evidencePointer,
-      true,
-    );
-  }
   return {
     bytes: evidenceBytes,
     finalValidation,
@@ -1853,7 +1919,7 @@ function decodeOwnedProductionFinalValidation(
   byteLength: number,
   outputMinimumPointer: number,
 ): GraphwarWasmStepGlitchOwnedFinalValidation {
-  const expected = command.type === "scan" ? command.finalValidation : { type: "none" as const };
+  const expected = command.finalValidation;
   if (expected.type === "none") {
     if (pointer !== 0 || byteLength !== 0) productionEvidenceFault("Unexpected final-validation evidence");
     return { type: "none" };
@@ -1924,24 +1990,50 @@ function decodeOwnedProductionFinalValidation(
 
 function decodeOwnedProductionTrajectory(
   header: DataView,
+  path: readonly PixelPoint[],
   points: readonly GraphPoint[],
   pointDys: readonly number[],
   visiblePixels: readonly PixelPoint[],
   trackedTargetHitIndexes: readonly number[],
   equation: "dy" | "ddy",
+  context: GraphwarWasmStepGlitchContextInput,
+  command: GraphwarWasmStepGlitchCommandInput,
 ): GraphwarWasmStepGlitchOwnedTrajectory {
+  const stopReason = validateGraphwarWasmEnumValue(
+    header.getInt32(128, true),
+    [1, 2, 3, 4, 5, 6, 7] as const,
+    "stepGlitch.evidence.stopReason",
+  );
+  if (stopReason === TRAJECTORY_STOP_REASON_TARGET) {
+    productionEvidenceFault("Step-glitch evidence stopped on target completion without the required command flag");
+  }
   const stateFlags = header.getUint32(236, true);
-  if ((stateFlags & ~7) !== 0) productionEvidenceFault("Step-glitch evidence state flags are invalid");
-  const hasPreviousPoint = (stateFlags & 1) !== 0;
-  const hasDy = (stateFlags & 2) !== 0;
-  const hasPreviousDy = (stateFlags & 4) !== 0;
+  if (
+    (stateFlags &
+      ~(
+        TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT |
+        TRAJECTORY_EVIDENCE_FLAG_HAS_DY |
+        TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY
+      )) !==
+    0
+  ) {
+    productionEvidenceFault("Step-glitch evidence state flags are invalid");
+  }
+  const hasPreviousPoint = (stateFlags & TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT) !== 0;
+  const hasDy = (stateFlags & TRAJECTORY_EVIDENCE_FLAG_HAS_DY) !== 0;
+  const hasPreviousDy = (stateFlags & TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY) !== 0;
+  const sampleIndex = header.getUint32(232, true);
+  const expectedStateFlags =
+    (sampleIndex > 0 ? TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT : 0) |
+    (equation === "ddy" ? TRAJECTORY_EVIDENCE_FLAG_HAS_DY : 0) |
+    (equation === "ddy" && sampleIndex > 0 ? TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY : 0);
+  if (stateFlags !== expectedStateFlags) {
+    productionEvidenceFault("Step-glitch evidence state flags do not match its equation and sample index");
+  }
   const currentDy = productionEvidenceFinite(header.getFloat64(200, true), "stepGlitch.evidence.currentDy");
   const previousDy = productionEvidenceFinite(header.getFloat64(224, true), "stepGlitch.evidence.previousDy");
-  if (hasDy !== (equation === "ddy")) {
-    productionEvidenceFault("Step-glitch evidence derivative state differs from the equation");
-  }
-  if (equation !== "ddy" && (hasDy || hasPreviousDy)) {
-    productionEvidenceFault("First-order Step-glitch evidence contains derivative state");
+  if (!hasDy && !Object.is(currentDy, 0)) {
+    productionEvidenceFault("Step-glitch evidence contains a current derivative without its flag");
   }
   if (!hasPreviousDy && !Object.is(previousDy, 0)) {
     productionEvidenceFault("Step-glitch evidence contains an absent previous derivative");
@@ -1952,8 +2044,10 @@ function decodeOwnedProductionTrajectory(
   ) {
     productionEvidenceFault("Step-glitch evidence contains an absent previous point");
   }
-  const sampleIndex = header.getUint32(232, true);
-  if (sampleIndex >= points.length) productionEvidenceFault("Step-glitch evidence sample index is outside points");
+  const expectedSampleIndex = stopReason === TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS ? points.length : points.length - 1;
+  if (sampleIndex !== expectedSampleIndex) {
+    productionEvidenceFault("Step-glitch evidence sample index does not match its published points");
+  }
   const targetHitIndex = header.getInt32(132, true);
   const requiredTargetsHitIndex = header.getInt32(136, true);
   if (
@@ -1967,6 +2061,7 @@ function decodeOwnedProductionTrajectory(
   const rk4StepCount = header.getUint32(152, true);
   const bisectionCount = header.getUint32(156, true);
   const acceptedSamplePointCount = header.getUint32(164, true);
+  const replayCount = header.getUint32(168, true);
   const finalRk4StepCount = header.getUint32(172, true);
   const finalBisectionCount = header.getUint32(176, true);
   const finalAcceptedSamplePointCount = header.getUint32(180, true);
@@ -1977,31 +2072,145 @@ function decodeOwnedProductionTrajectory(
   ) {
     productionEvidenceFault("Step-glitch evidence final counters exceed aggregate counters");
   }
+  if (replayCount < 1 || acceptedSamplePointCount < points.length || finalAcceptedSamplePointCount < points.length) {
+    productionEvidenceFault("Step-glitch evidence counters do not cover its published points");
+  }
+  const currentPoint = createGraphPoint(
+    productionEvidenceFinite(header.getFloat64(184, true), "stepGlitch.evidence.currentX"),
+    productionEvidenceFinite(header.getFloat64(192, true), "stepGlitch.evidence.currentY"),
+  );
+  const previousPoint = hasPreviousPoint
+    ? createGraphPoint(
+        productionEvidenceFinite(header.getFloat64(208, true), "stepGlitch.evidence.previousX"),
+        productionEvidenceFinite(header.getFloat64(216, true), "stepGlitch.evidence.previousY"),
+      )
+    : undefined;
+  const lastPoint = points.at(-1);
+  if (!lastPoint) productionEvidenceFault("Step-glitch evidence has no terminal point");
+  const lastPointDy = pointDys.at(-1);
+  if (lastPointDy === undefined) productionEvidenceFault("Step-glitch evidence has no terminal derivative");
+  if (stopReason === TRAJECTORY_STOP_REASON_OUT_OF_BOUNDS) {
+    if (
+      !previousPoint ||
+      !productionEvidencePointsEqual([previousPoint], [lastPoint]) ||
+      (equation === "ddy" && !Object.is(previousDy, lastPointDy))
+    ) {
+      productionEvidenceFault("Out-of-bounds Step-glitch evidence does not retain its last published point");
+    }
+    const minX = Math.min(context.bounds.minX, context.bounds.maxX);
+    const maxX = Math.max(context.bounds.minX, context.bounds.maxX);
+    const minY = Math.min(context.bounds.minY, context.bounds.maxY);
+    const maxY = Math.max(context.bounds.minY, context.bounds.maxY);
+    if (currentPoint.x >= minX && currentPoint.x <= maxX && currentPoint.y >= minY && currentPoint.y <= maxY) {
+      productionEvidenceFault("Out-of-bounds Step-glitch evidence retained an in-bounds state");
+    }
+  } else {
+    if (!productionEvidencePointsEqual([currentPoint], [lastPoint])) {
+      productionEvidenceFault("Step-glitch evidence terminal state differs from its last published point");
+    }
+    if (equation === "ddy" && !Object.is(currentDy, lastPointDy)) {
+      productionEvidenceFault("Step-glitch evidence terminal derivative differs from its last published point");
+    }
+    if (points.length > 1) {
+      const penultimatePoint = points[points.length - 2];
+      const penultimateDy = pointDys[pointDys.length - 2];
+      if (
+        !previousPoint ||
+        !penultimatePoint ||
+        !productionEvidencePointsEqual([previousPoint], [penultimatePoint]) ||
+        (equation === "ddy" && !Object.is(previousDy, penultimateDy))
+      ) {
+        productionEvidenceFault("Step-glitch evidence previous state differs from its penultimate point");
+      }
+    }
+  }
+  if (stopReason === TRAJECTORY_STOP_REASON_STOP_X && command.type === "replay" && currentPoint.x < command.controlX) {
+    productionEvidenceFault("Step-glitch evidence stopped before its requested frontier");
+  }
+  if (stopReason === TRAJECTORY_STOP_REASON_MAX_STEPS && sampleIndex !== GRAPHWAR_FUNC_MAX_STEPS - 1) {
+    productionEvidenceFault("Step-glitch evidence max-steps state stopped early");
+  }
   const obstacleHitIndex = header.getInt32(140, true);
   const blockedPoint = obstacleHitIndex >= 0 ? points[obstacleHitIndex] : undefined;
-  if (obstacleHitIndex < -1 || obstacleHitIndex >= points.length || (obstacleHitIndex >= 0 && !blockedPoint))
+  if (
+    obstacleHitIndex < -1 ||
+    obstacleHitIndex >= points.length ||
+    (obstacleHitIndex >= 0 && !blockedPoint) ||
+    obstacleHitIndex >= 0 !== (stopReason === TRAJECTORY_STOP_REASON_OBSTACLE) ||
+    (obstacleHitIndex >= 0 && obstacleHitIndex !== points.length - 1)
+  ) {
     productionEvidenceFault("Step-glitch evidence obstacle index is invalid");
+  }
+  const resultFlags = header.getUint32(284, true);
+  if (
+    (resultFlags &
+      ~(
+        TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT |
+        TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR |
+        TRAJECTORY_RESULT_FLAG_USED_CONTINUATION
+      )) !==
+    0
+  ) {
+    productionEvidenceFault("Step-glitch evidence trajectory flags are invalid");
+  }
+  if (((resultFlags & TRAJECTORY_RESULT_FLAG_OBSTACLE_HIT) !== 0) !== obstacleHitIndex >= 0) {
+    productionEvidenceFault("Step-glitch evidence obstacle flag disagrees with its stop state");
+  }
+  const finalValidation = command.finalValidation;
+  const hasExpectedPathError =
+    finalValidation.type === "validate" &&
+    path.some(
+      (point, index) =>
+        index > 0 && !finalValidation.targetControlPoints.some((targetPoint) => pixelPointsEqual(targetPoint, point)),
+    );
+  if (((resultFlags & TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) !== 0) !== hasExpectedPathError) {
+    productionEvidenceFault("Step-glitch evidence path-error state differs from final validation");
+  }
+  const rawPathError = header.getFloat64(288, true);
+  if (!hasExpectedPathError && !Object.is(rawPathError, 0)) {
+    productionEvidenceFault("Step-glitch evidence contains a path error without final validation");
+  }
+  const pathError = hasExpectedPathError ? validateGraphwarWasmPathError(rawPathError) : undefined;
+  const orderedTargets =
+    command.type === "replay"
+      ? command.targetSequence
+      : orderedTargetSequence(context.requiredTargets, command.hitTarget);
+  if (
+    header.getUint32(144, true) > orderedTargets.length ||
+    header.getUint32(148, true) > context.requiredTargets.length
+  ) {
+    productionEvidenceFault("Step-glitch evidence target state exceeds its command identity");
+  }
+  if (
+    targetHitIndex >= 0 !== (orderedTargets.length > 0 && header.getUint32(144, true) === orderedTargets.length) ||
+    requiredTargetsHitIndex >= 0 !==
+      (context.requiredTargets.length > 0 && header.getUint32(148, true) === context.requiredTargets.length)
+  ) {
+    productionEvidenceFault("Step-glitch evidence target completion indexes disagree with reached counts");
+  }
+  if (
+    obstacleHitIndex >= 0 &&
+    ((targetHitIndex >= 0 && targetHitIndex >= obstacleHitIndex) ||
+      (requiredTargetsHitIndex >= 0 && requiredTargetsHitIndex >= obstacleHitIndex))
+  ) {
+    productionEvidenceFault("Step-glitch evidence target completion occurs after its obstacle stop");
+  }
   return {
     acceptedSamplePointCount: header.getUint32(164, true),
     bisectionCount: header.getUint32(156, true),
     ...(blockedPoint ? { blockedPoint: createGraphPoint(blockedPoint.x, blockedPoint.y) } : {}),
     currentDy,
-    currentPoint: createGraphPoint(
-      productionEvidenceFinite(header.getFloat64(184, true), "stepGlitch.evidence.currentX"),
-      productionEvidenceFinite(header.getFloat64(192, true), "stepGlitch.evidence.currentY"),
-    ),
+    currentPoint,
     finalAcceptedSamplePointCount,
     finalBisectionCount,
     finalRk4StepCount,
     obstacleHitIndex,
+    ...(pathError === undefined ? {} : { pathError }),
     pointDys: [...pointDys],
     points: points.map((point) => createGraphPoint(point.x, point.y)),
     ...(hasPreviousPoint
       ? {
-          previousPoint: createGraphPoint(
-            productionEvidenceFinite(header.getFloat64(208, true), "stepGlitch.evidence.previousX"),
-            productionEvidenceFinite(header.getFloat64(216, true), "stepGlitch.evidence.previousY"),
-          ),
+          previousPoint,
         }
       : {}),
     previousDy,
@@ -2011,7 +2220,7 @@ function decodeOwnedProductionTrajectory(
     requiredTargetsHitIndex,
     rk4StepCount,
     sampleIndex,
-    stopReason: header.getInt32(128, true),
+    stopReason,
     targetHitIndex,
     trackedTargetHitIndexes: [...trackedTargetHitIndexes],
     visiblePixels: visiblePixels.map((point) => createPixelPoint(point.x, point.y)),
@@ -2034,6 +2243,8 @@ function validateOwnedProductionTargetIdentity(
   let requiredTargetsHitIndex = -1;
   let reachedTargetCount = 0;
   let targetHitIndex = -1;
+  const trackedTargets = command.finalValidation.type === "validate" ? command.finalValidation.trackedTargets : [];
+  const trackedTargetHitIndexes = trackedTargets.map(() => -1);
   for (let index = 1; index < visiblePixels.length; index += 1) {
     for (let targetIndex = 0; targetIndex < requiredTargets.length; targetIndex += 1) {
       if (
@@ -2064,6 +2275,17 @@ function validateOwnedProductionTargetIdentity(
       requiredTargetsHitIndex < 0
     )
       requiredTargetsHitIndex = index;
+    for (let trackedIndex = 0; trackedIndex < trackedTargets.length; trackedIndex += 1) {
+      if (
+        trackedTargetHitIndexes[trackedIndex] === -1 &&
+        productionEvidenceTargetHit(
+          productionEvidenceValue(visiblePixels, index, `evidence.visiblePixels[${index}]`),
+          productionEvidenceValue(trackedTargets, trackedIndex, `command.trackedTargets[${trackedIndex}]`),
+        )
+      ) {
+        trackedTargetHitIndexes[trackedIndex] = index;
+      }
+    }
   }
   if (
     trajectory.reachedTargetCount !== reachedTargetCount ||
@@ -2075,6 +2297,9 @@ function validateOwnedProductionTargetIdentity(
   }
   if (orderedTargets.length > 0 && reachedTargetCount < orderedTargets.length)
     productionEvidenceFault("Step-glitch evidence did not reach its ordered target");
+  if (!productionEvidenceUint32ArraysEqual(trajectory.trackedTargetHitIndexes, trackedTargetHitIndexes)) {
+    productionEvidenceFault("Step-glitch evidence tracked target indexes differ from the command identity");
+  }
 }
 
 function decodeOwnedProductionContinuation(
@@ -2084,6 +2309,9 @@ function decodeOwnedProductionContinuation(
   header: DataView,
   protection: readonly number[],
   outputMinimumPointer: number,
+  trajectory: GraphwarWasmStepGlitchOwnedTrajectory,
+  equation: "dy" | "ddy",
+  stopReason: number,
 ): GraphwarWasmStepGlitchOwnedContinuation | undefined {
   const pointer = header.getUint32(268, true);
   const byteLength = header.getUint32(272, true);
@@ -2103,18 +2331,80 @@ function decodeOwnedProductionContinuation(
     outputMinimumPointer,
   );
   const view = new DataView(runtime.buffer, pointer, byteLength);
+  const flags = view.getUint32(TRAJECTORY_EVIDENCE_FLAGS_OFFSET, true);
+  if ((flags & ~31) !== 0) productionEvidenceFault("Continuation evidence contains unsupported flags");
+  const hasPreviousPoint = (flags & TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT) !== 0;
+  const hasDy = (flags & TRAJECTORY_EVIDENCE_FLAG_HAS_DY) !== 0;
+  const hasPreviousDy = (flags & TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY) !== 0;
+  const expectedStateFlags =
+    (trajectory.previousPoint ? TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_POINT : 0) |
+    (equation === "ddy" ? TRAJECTORY_EVIDENCE_FLAG_HAS_DY : 0) |
+    (equation === "ddy" && trajectory.previousPoint ? TRAJECTORY_EVIDENCE_FLAG_HAS_PREVIOUS_DY : 0);
   if (
     view.getUint32(TRAJECTORY_EVIDENCE_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true) ||
     view.getUint32(TRAJECTORY_EVIDENCE_PROTECTION_COUNT_OFFSET, true) !== protection.length ||
-    (view.getUint32(TRAJECTORY_EVIDENCE_FLAGS_OFFSET, true) & ~31) !== 0
+    (flags & 7) !== expectedStateFlags ||
+    hasPreviousPoint !== (trajectory.previousPoint !== undefined) ||
+    hasDy !== (equation === "ddy") ||
+    hasPreviousDy !== (equation === "ddy" && trajectory.previousPoint !== undefined) ||
+    view.getUint32(TRAJECTORY_EVIDENCE_SAMPLE_INDEX_OFFSET, true) !== trajectory.sampleIndex ||
+    view.getUint32(TRAJECTORY_EVIDENCE_REACHED_ORDERED_COUNT_OFFSET, true) !== trajectory.reachedTargetCount ||
+    view.getUint32(TRAJECTORY_EVIDENCE_REACHED_REQUIRED_COUNT_OFFSET, true) !== trajectory.reachedRequiredTargetCount
   ) {
     productionEvidenceFault("Continuation evidence does not match its protection or flags");
   }
+  const currentX = productionEvidenceFinite(
+    view.getFloat64(TRAJECTORY_EVIDENCE_CURRENT_X_OFFSET, true),
+    "continuation.currentX",
+  );
+  const currentY = productionEvidenceFinite(
+    view.getFloat64(TRAJECTORY_EVIDENCE_CURRENT_Y_OFFSET, true),
+    "continuation.currentY",
+  );
+  const currentDy = view.getFloat64(TRAJECTORY_EVIDENCE_CURRENT_DY_OFFSET, true);
+  if (!Object.is(currentX, trajectory.currentPoint.x) || !Object.is(currentY, trajectory.currentPoint.y)) {
+    productionEvidenceFault("Continuation evidence current point differs from the trajectory state");
+  }
+  if (hasDy) {
+    if (!Number.isFinite(currentDy) || !Object.is(currentDy, trajectory.currentDy)) {
+      productionEvidenceFault("Continuation evidence current derivative differs from the trajectory state");
+    }
+  } else if (!Object.is(currentDy, 0)) {
+    productionEvidenceFault("Continuation evidence contains an absent current derivative");
+  }
+  const previousX = view.getFloat64(TRAJECTORY_EVIDENCE_PREVIOUS_X_OFFSET, true);
+  const previousY = view.getFloat64(TRAJECTORY_EVIDENCE_PREVIOUS_Y_OFFSET, true);
+  const previousDy = view.getFloat64(TRAJECTORY_EVIDENCE_PREVIOUS_DY_OFFSET, true);
+  if (hasPreviousPoint) {
+    if (
+      !trajectory.previousPoint ||
+      !Object.is(productionEvidenceFinite(previousX, "continuation.previousX"), trajectory.previousPoint.x) ||
+      !Object.is(productionEvidenceFinite(previousY, "continuation.previousY"), trajectory.previousPoint.y)
+    ) {
+      productionEvidenceFault("Continuation evidence previous point differs from the trajectory state");
+    }
+  } else if (!Object.is(previousX, 0) || !Object.is(previousY, 0)) {
+    productionEvidenceFault("Continuation evidence contains an absent previous point");
+  }
+  if (hasPreviousDy) {
+    if (!Number.isFinite(previousDy) || !trajectory.previousPoint || !Object.is(previousDy, trajectory.previousDy)) {
+      productionEvidenceFault("Continuation evidence previous derivative differs from the trajectory state");
+    }
+  } else if (!Object.is(previousDy, 0)) {
+    productionEvidenceFault("Continuation evidence contains an absent previous derivative");
+  }
+  const shouldSkipInitialStop = stopReason !== TRAJECTORY_STOP_REASON_TARGET;
+  const canContinueToLaterFrontier = stopReason === TRAJECTORY_STOP_REASON_STOP_X;
+  if (
+    ((flags & TRAJECTORY_EVIDENCE_FLAG_SKIP_INITIAL_STOP) !== 0) !== shouldSkipInitialStop ||
+    ((flags & TRAJECTORY_EVIDENCE_FLAG_CAN_CONTINUE_TO_LATER_FRONTIER) !== 0) !== canContinueToLaterFrontier
+  ) {
+    productionEvidenceFault("Continuation evidence stop flags differ from the trajectory result");
+  }
   return {
-    bytes: new Uint8Array(runtime.buffer, pointer, byteLength).slice(),
-    flags: view.getUint32(TRAJECTORY_EVIDENCE_FLAGS_OFFSET, true),
+    flags,
     protection: [...protection],
-    sampleIndex: view.getUint32(88, true),
+    sampleIndex: view.getUint32(TRAJECTORY_EVIDENCE_SAMPLE_INDEX_OFFSET, true),
   };
 }
 
@@ -2158,6 +2448,7 @@ function rewriteProductionEvidencePointersRelativeToBase(
     [60, header.getUint32(60, true), "formulaInput"],
     [68, header.getUint32(68, true), "launchResult"],
     [76, header.getUint32(76, true), "materialResult"],
+    [84, header.getUint32(84, true), "material"],
     [240, header.getUint32(240, true), "finalValidation"],
     [256, header.getUint32(256, true), "formulaPointX"],
     [260, header.getUint32(260, true), "formulaPointY"],
@@ -2253,6 +2544,10 @@ function runGraphwarWasmStepGlitchProductionRaw(
           "output",
         );
       }
+      const finalValidation = packGraphwarWasmStepGlitchFinalValidationDescriptor(
+        runtime,
+        packed.input.finalValidation,
+      );
       inputView.setUint32(4, packed.input.path.x.pointer, true);
       inputView.setUint32(8, packed.input.path.y.pointer, true);
       inputView.setUint32(12, packed.input.path.length, true);
@@ -2263,8 +2558,8 @@ function runGraphwarWasmStepGlitchProductionRaw(
       inputView.setUint32(24, packed.input.windows.mode, true);
       inputView.setUint32(36, 0, true);
       inputView.setFloat64(40, packed.input.controlX, true);
-      inputView.setUint32(48, 0, true);
-      inputView.setUint32(52, 0, true);
+      inputView.setUint32(48, finalValidation.pointer, true);
+      inputView.setUint32(52, finalValidation.length, true);
       inputView.setUint32(56, 0, true);
       inputView.setUint32(60, 0, true);
       commandId = STEP_GLITCH_COMMAND_REPLAY;
@@ -2506,6 +2801,14 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
     runtime.resetArenaAfterFault(contextMark);
     throw error;
   }
+}
+
+/** Production smart/one-click callers use the same retained command context as the focused adapter tests. */
+export function createGraphwarWasmStepGlitchContext(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmStepGlitchContextInput,
+): GraphwarWasmStepGlitchGeometryContextCreateResult {
+  return createGraphwarWasmStepGlitchGeometryTestContext(runtime, input);
 }
 
 function prepareGraphwarWasmStepGlitchCandidateFormula(
@@ -4405,6 +4708,14 @@ export function packGraphwarWasmStepGlitchCommandInput(
   command: GraphwarWasmStepGlitchCommandInput,
   minimumPointer = 0,
 ): GraphwarWasmStepGlitchCommandPackResult {
+  const packedFinalValidation = packGraphwarWasmStepGlitchCommandFinalValidation(
+    arena,
+    command.finalValidation,
+    minimumPointer,
+  );
+  if (!packedFinalValidation) {
+    return { status: "invalid-input" };
+  }
   if (command.type === "replay") {
     if (
       !Number.isFinite(command.controlX) ||
@@ -4423,6 +4734,7 @@ export function packGraphwarWasmStepGlitchCommandInput(
     return {
       input: {
         controlX: command.controlX,
+        finalValidation: packedFinalValidation,
         path: packGraphwarWasmPointSoA(arena, command.path, minimumPointer),
         targetSequenceRecords: packTargets(arena, command.targetSequence, minimumPointer),
         windows: packGraphwarWasmStepGlitchCandidateWindows(arena, command.path.length - 1, windows),
@@ -4432,15 +4744,6 @@ export function packGraphwarWasmStepGlitchCommandInput(
     };
   }
 
-  const finalValidation = command.finalValidation;
-  let simulationMaskCacheId = 0;
-  if (finalValidation.type === "validate") {
-    simulationMaskCacheId = validateGraphwarWasmU32(
-      finalValidation.simulationMaskCacheId,
-      "simulationMaskCacheId",
-      "input",
-    );
-  }
   if (!targetIsValid(command.hitTarget) || !isGraphwarTrajectoryPoint(command.targetPoint)) {
     return { status: "invalid-input" };
   }
@@ -4453,25 +4756,9 @@ export function packGraphwarWasmStepGlitchCommandInput(
   if (!graphXAdvancesStrictly(sourceGraphPoint.x, targetGraphPoint.x)) {
     return { status: "invalid-input" };
   }
-  if (finalValidation.type === "validate") {
-    if (
-      !finalValidation.targetControlPoints.every(isGraphwarTrajectoryPoint) ||
-      !targetsAreValid(finalValidation.trackedTargets)
-    ) {
-      return { status: "invalid-input" };
-    }
-  }
   return {
     input: {
-      finalValidation:
-        finalValidation.type === "none"
-          ? { type: "none" }
-          : {
-              simulationMaskCacheId,
-              targetControlPoints: packGraphwarWasmPointSoA(arena, finalValidation.targetControlPoints, minimumPointer),
-              trackedTargetRecords: packTargets(arena, finalValidation.trackedTargets, minimumPointer),
-              type: "validate",
-            },
+      finalValidation: packedFinalValidation,
       targetValues: writeGraphwarWasmFloat64Values(
         arena,
         new Float64Array([
@@ -4486,6 +4773,33 @@ export function packGraphwarWasmStepGlitchCommandInput(
       type: "scan",
     },
     status: "ready",
+  };
+}
+
+function packGraphwarWasmStepGlitchCommandFinalValidation(
+  arena: GraphwarWasmArenaMemorySource,
+  finalValidation: GraphwarWasmStepGlitchFinalValidationInput,
+  minimumPointer: number,
+): GraphwarWasmPackedStepGlitchFinalValidation | undefined {
+  if (finalValidation.type === "none") {
+    return { type: "none" };
+  }
+  const simulationMaskCacheId = validateGraphwarWasmU32(
+    finalValidation.simulationMaskCacheId,
+    "simulationMaskCacheId",
+    "input",
+  );
+  if (
+    !finalValidation.targetControlPoints.every(isGraphwarTrajectoryPoint) ||
+    !targetsAreValid(finalValidation.trackedTargets)
+  ) {
+    return undefined;
+  }
+  return {
+    simulationMaskCacheId,
+    targetControlPoints: packGraphwarWasmPointSoA(arena, finalValidation.targetControlPoints, minimumPointer),
+    trackedTargetRecords: packTargets(arena, finalValidation.trackedTargets, minimumPointer),
+    type: "validate",
   };
 }
 

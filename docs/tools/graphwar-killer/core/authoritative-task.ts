@@ -122,7 +122,11 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
   }
 
   /** 同 generation 首个 fault 胜出：先撤销全部旧执行和 event lease，再替换 identity，最后启动 TS cold attempts。 */
-  function replayGenerationAsTypescript(failedGeneration: number, replacementGeneration: number) {
+  function replayGenerationAsTypescript(
+    failedGeneration: number,
+    replacementGeneration: number,
+    fallbackReason?: string,
+  ) {
     assertNewerGeneration(failedGeneration, replacementGeneration);
     if (!attemptGate.revokeGeneration(failedGeneration)) {
       return false;
@@ -142,7 +146,7 @@ export function createGraphwarAuthoritativeTaskCoordinator<TInput, TSnapshot, TR
       task.attempt = attemptGate.replaceAttempt(task.attempt, replacementGeneration);
       replacements.push(task);
     }
-    const configuration = createGraphwarTypescriptWorkerBackendConfiguration(replacementGeneration);
+    const configuration = createGraphwarTypescriptWorkerBackendConfiguration(replacementGeneration, fallbackReason);
     for (const task of replacements) {
       startAttempt(task, configuration);
     }

@@ -222,28 +222,6 @@ const liveClickPreviewWorkerCountText = computed({
             />
           </div>
         </div>
-        <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
-          <h3>
-            {{ locale.ui.settings.runtime.heading }}
-          </h3>
-          <ToggleField
-            id="graphwar-killer-wasm-acceleration"
-            :checked="panel.runtime.isEnabled"
-            :label="locale.ui.settings.runtime.wasmAcceleration"
-            :reason="panel.runtime.canToggle ? undefined : panel.temporaryDisabledReason"
-            :state="panel.runtime.canToggle ? 'normal' : 'busy'"
-            :title="panel.runtime.statusTitle ?? locale.ui.settings.runtime.wasmAccelerationTitle"
-            @toggle="emit('toggleWasmAcceleration')"
-          />
-          <p
-            class="graphwar-killer__setting-status"
-            :title="panel.runtime.statusTitle"
-          >
-            <span v-if="panel.runtime.state === 'loading'">{{ locale.ui.settings.runtime.loading }}</span>
-            <span v-else-if="panel.runtime.state === 'ready'">{{ locale.ui.settings.runtime.ready }}</span>
-            <span v-else-if="panel.runtime.state === 'degraded'">{{ locale.ui.settings.runtime.degraded }}</span>
-          </p>
-        </div>
         <div
           v-if="panel.isSolverSettingsVisible"
           class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group"
@@ -515,6 +493,30 @@ const liveClickPreviewWorkerCountText = computed({
         </div>
       </div>
     </fieldset>
+    <div class="graphwar-killer__advanced-settings-grid">
+      <div class="graphwar-killer__subpanel graphwar-killer__advanced-settings-group">
+        <h3>
+          {{ locale.ui.settings.runtime.heading }}
+        </h3>
+        <ToggleField
+          id="graphwar-killer-wasm-acceleration"
+          :checked="panel.runtime.isEnabled"
+          :label="locale.ui.settings.runtime.wasmAcceleration"
+          :reason="panel.runtime.canToggle ? undefined : panel.temporaryDisabledReason"
+          :state="panel.runtime.canToggle ? 'normal' : 'busy'"
+          :title="panel.runtime.statusTitle ?? locale.ui.settings.runtime.wasmAccelerationTitle"
+          @toggle="emit('toggleWasmAcceleration')"
+        />
+        <p
+          class="graphwar-killer__setting-status"
+          :title="panel.runtime.statusTitle"
+        >
+          <span v-if="panel.runtime.state === 'loading'">{{ locale.ui.settings.runtime.loading }}</span>
+          <span v-else-if="panel.runtime.state === 'ready'">{{ locale.ui.settings.runtime.ready }}</span>
+          <span v-else-if="panel.runtime.state === 'degraded'">{{ locale.ui.settings.runtime.degraded }}</span>
+        </p>
+      </div>
+    </div>
   </section>
 </template>
 

@@ -1,3 +1,4 @@
+import type { GraphwarBackendExecution } from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, GraphBounds, PixelPoint } from "../../core/types";
 import type { GraphwarDetectionBox } from "../../detection/objects";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
@@ -116,6 +117,7 @@ export interface GraphwarPathfindingDebugOutcome {
 /** Latest completed task report; source state and mask remain separate download files. */
 export interface GraphwarPathfindingDebugReport {
   attempts: GraphwarPathfindingDebugAttempt[];
+  backendExecution?: GraphwarBackendExecution;
   completedAt: string;
   elapsedMs: number;
   outcome: GraphwarPathfindingDebugOutcome;
@@ -205,9 +207,11 @@ export function finishGraphwarPathfindingDebugCapture(
   completedAtMs: number,
   completedAt = new Date(),
 ): GraphwarPathfindingDebugBundle {
+  const backendExecution = capture.attempts.findLast((attempt) => attempt.diagnostics)?.diagnostics?.backendExecution;
   return {
     report: {
       attempts: structuredClone(capture.attempts),
+      ...(backendExecution ? { backendExecution: structuredClone(backendExecution) } : {}),
       completedAt: completedAt.toISOString(),
       elapsedMs: Math.max(0, completedAtMs - capture.startedAtMs),
       outcome: { ...outcome },
@@ -303,7 +307,8 @@ export function summarizeGraphwarPathfindingDiagnostics(
     if (!attempt.diagnostics) {
       continue;
     }
-    summary ??= createEmptyGraphwarPathfindingDiagnostics();
+    summary ??= createEmptyGraphwarPathfindingDiagnostics(attempt.diagnostics.backendExecution);
+    summary.backendExecution = structuredClone(attempt.diagnostics.backendExecution);
     addGraphwarPathfindingDebugCounters(summary.counters, attempt.diagnostics.counters);
     addGraphwarPathfindingDebugTimings(summary.timings, attempt.diagnostics.timings);
     if (attempt.diagnostics.stepGlitch) {
@@ -366,8 +371,11 @@ function getGraphwarPathfindingDebugErrorType(error: unknown) {
 }
 
 /** Creates a zero accumulator only after at least one real Worker diagnostics object exists. */
-function createEmptyGraphwarPathfindingDiagnostics(): GraphwarPathfindingDiagnostics {
+function createEmptyGraphwarPathfindingDiagnostics(
+  backendExecution: GraphwarBackendExecution,
+): GraphwarPathfindingDiagnostics {
   return {
+    backendExecution: structuredClone(backendExecution),
     counters: {
       acceptedSamplePointCount: 0,
       formulaTermEvaluationCount: 0,

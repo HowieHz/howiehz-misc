@@ -152,6 +152,7 @@ beforeAll(async () => {
   await import("./main.worker");
   dispatch({
     backend: { module: emptyModule, type: "wasm" },
+    backendExecution: { effective: "wasm", requested: "wasm" },
     generation: 1,
     role: "detection-main",
     type: "backend-init",
@@ -520,11 +521,10 @@ class FakeTemplateWorker {
     }
   }
 
-  postMessage(message: GraphwarBackendControlMessage | GraphwarSoldierTemplateWorkerRequest) {
-    if (isGraphwarBackendControlMessage(message)) {
-      if (message.type !== "backend-init") {
-        throw new Error("Template Worker only accepts backend initialization control messages");
-      }
+  postMessage(
+    message: Extract<GraphwarBackendControlMessage, { type: "backend-init" }> | GraphwarSoldierTemplateWorkerRequest,
+  ) {
+    if ("type" in message) {
       if (laneBehavior === "module-clone") {
         queueMicrotask(() =>
           this.emit({

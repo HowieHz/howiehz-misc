@@ -1,5 +1,6 @@
 import { nextTick, ref, type Ref } from "vue";
 
+import type { GraphwarBackendExecution } from "../../core/algorithm-backend";
 import { nowMs } from "../../core/time";
 import type { BoundsRect } from "../../core/types";
 import type { GraphwarDetectionBox, GraphwarObjectsDetectionResult } from "../../detection/objects";
@@ -40,6 +41,7 @@ interface GraphwarDetectionWorkflowOptions {
       runId: number,
       startedAt: number,
       timings: readonly DetectionDebugTimingEntry[],
+      backendExecution?: GraphwarBackendExecution,
       completedAt?: number,
     ) => void;
     measureStage: <TResult>(
@@ -105,6 +107,8 @@ export interface GraphwarDetectionWorkflowController {
   isInProgress: Ref<boolean>;
   /** 判断异步检测回调是否仍属于当前运行。 */
   isActiveRun: (runId: number) => boolean;
+  /** 页面级 WASM fuse 时撤销同 generation attempt，并保留公开检测任务进行 TS cold replay。 */
+  replayGenerationAsTypescript: (failedGeneration: number, replacementGeneration: number, reason?: string) => boolean;
   /** 延迟重新识别，合并连续设置变化，避免每次输入都立即读像素。 */
   schedule: () => void;
   /** 设置检测状态主文案，并清掉上一轮警告详情。 */
@@ -344,7 +348,7 @@ export function useGraphwarDetectionWorkflow(
       await detectionRunner.detectBounds(
         { imageData: detectionInput.imageData },
         {
-          commitResult: async (result, workerTimings, context) => {
+          commitResult: async (result, workerTimings, backendExecution, context) => {
             if (!(await waitForResultPaint(activeRunId))) {
               return;
             }
@@ -353,9 +357,9 @@ export function useGraphwarDetectionWorkflow(
               if (!result.edgeRect) {
                 clearDetectedObjects();
                 setStatus(options.getLocale().status.detection.noBounds, "error");
-                options.debug.finishTimings(activeRunId, startedAt, timings);
+                options.debug.finishTimings(activeRunId, startedAt, timings, backendExecution);
               } else {
-                applyBoundsResult(result.edgeRect, activeRunId, startedAt, timings);
+                applyBoundsResult(result.edgeRect, activeRunId, startedAt, timings, backendExecution);
                 options.effects.setToolModeToPath();
               }
               isDebugTimingFinalized = true;
@@ -398,7 +402,7 @@ export function useGraphwarDetectionWorkflow(
           thresholds: detectionInput.thresholds,
         },
         {
-          commitResult: async (result, workerTimings, context) => {
+          commitResult: async (result, workerTimings, backendExecution, context) => {
             if (!(await waitForResultPaint(activeRunId))) {
               return;
             }
@@ -407,10 +411,10 @@ export function useGraphwarDetectionWorkflow(
               if (!result.edgeRect) {
                 clearDetectedObjects();
                 setStatus(options.getLocale().status.detection.noBounds, "error");
-                options.debug.finishTimings(activeRunId, startedAt, timings);
+                options.debug.finishTimings(activeRunId, startedAt, timings, backendExecution);
               } else {
                 options.effects.applyDetectedBounds(result.edgeRect);
-                applyResult(result.objects, "auto", activeRunId, true, startedAt, timings);
+                applyResult(result.objects, "auto", activeRunId, true, startedAt, timings, backendExecution);
                 options.effects.setToolModeToPath();
               }
               isDebugTimingFinalized = true;
@@ -461,13 +465,13 @@ export function useGraphwarDetectionWorkflow(
           thresholds: detectionInput.thresholds,
         },
         {
-          commitResult: async (result, workerTimings, context) => {
+          commitResult: async (result, workerTimings, backendExecution, context) => {
             if (!(await waitForResultPaint(activeRunId))) {
               return;
             }
             context.commit(() => {
               timings.push(...options.debug.createTimingEntriesFromWorker(workerTimings));
-              applyResult(result, "current", activeRunId, false, startedAt, timings);
+              applyResult(result, "current", activeRunId, false, startedAt, timings, backendExecution);
               isDebugTimingFinalized = true;
             });
           },
@@ -492,6 +496,7 @@ export function useGraphwarDetectionWorkflow(
     activeRunId: number,
     startedAt = nowMs(),
     timings: DetectionDebugTimingEntry[] = [],
+    backendExecution?: GraphwarBackendExecution,
   ) {
     options.debug.measureStage(timings, "updating-results", () => {
       options.effects.applyDetectedBounds(edgeRect);
@@ -505,7 +510,7 @@ export function useGraphwarDetectionWorkflow(
       setStatus(options.getLocale().status.detection.detectedBounds(elapsed()), "success");
       completedAt = nowMs();
     });
-    options.debug.finishTimings(activeRunId, startedAt, timings, completedAt);
+    options.debug.finishTimings(activeRunId, startedAt, timings, backendExecution, completedAt);
   }
 
   /** 将 Worker 返回的士兵/障碍识别结果写回页面状态。 */
@@ -516,6 +521,7 @@ export function useGraphwarDetectionWorkflow(
     shouldFlashBounds = false,
     startedAt = nowMs(),
     timings: DetectionDebugTimingEntry[] = [],
+    backendExecution?: GraphwarBackendExecution,
   ) {
     options.effects.clearSmartPathfindingStatus();
     options.debug.measureStage(timings, "updating-results", () => {
@@ -542,7 +548,7 @@ export function useGraphwarDetectionWorkflow(
       setStatusWarnings(result.warnings);
       completedAt = nowMs();
     });
-    options.debug.finishTimings(activeRunId, startedAt, timings, completedAt);
+    options.debug.finishTimings(activeRunId, startedAt, timings, backendExecution, completedAt);
   }
 
   /** Result remains provisional while the browser drains the paint queued before its final commit. */
@@ -601,6 +607,7 @@ export function useGraphwarDetectionWorkflow(
     dispose,
     isInProgress,
     isActiveRun,
+    replayGenerationAsTypescript: detectionRunner.replayGenerationAsTypescript,
     schedule,
     setStatus,
     status,

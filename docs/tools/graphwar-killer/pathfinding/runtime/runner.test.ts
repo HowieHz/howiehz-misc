@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isGraphwarBackendControlMessage, type GraphwarBackendControlMessage } from "../../core/algorithm-backend";
+import {
+  createGraphwarTypescriptWorkerBackendConfiguration,
+  createGraphwarWasmWorkerBackendConfiguration,
+  isGraphwarBackendControlMessage,
+  type GraphwarBackendControlMessage,
+  type GraphwarWorkerBackendConfiguration,
+  type GraphwarWorkerBackendSelection,
+} from "../../core/algorithm-backend";
 import { createPixelPoint } from "../../core/types";
 import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
@@ -15,9 +22,13 @@ import type {
 import { createGraphwarPathfindingRunner, isGraphwarPathfindingCancelledError } from "./runner";
 
 const originalWorkerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+const emptyWasmModule = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
 
 beforeEach(() => {
+  FakeWorker.constructorAttempts = 0;
+  FakeWorker.constructorFailureAttempts.clear();
   FakeWorker.instances.length = 0;
+  FakeWorker.wasmBackendInitializationFailures = 0;
   Object.defineProperty(globalThis, "Worker", {
     configurable: true,
     value: FakeWorker,
@@ -33,6 +44,112 @@ afterEach(() => {
 });
 
 describe("Graphwar pathfinding runner incumbents", () => {
+  it.each(["cancel", "close"] as const)(
+    "%s immediately settles backend admission without creating a Worker after selection resolves",
+    async (action) => {
+      const deferred = createDeferredBackendSelection(4);
+      const runner = createGraphwarPathfindingRunner({ createBackendSelection: () => deferred.selection });
+      const result = runner.buildOneClickClearPath(createInput());
+
+      runner[action]();
+
+      await expect(result).rejects.toSatisfy(isGraphwarPathfindingCancelledError);
+      deferred.resolve(createGraphwarTypescriptWorkerBackendConfiguration(4));
+      await Promise.resolve();
+      expect(FakeWorker.instances).toHaveLength(0);
+      runner.close();
+    },
+  );
+
+  it("rejects backend selection failure without creating a Worker", async () => {
+    const deferred = createDeferredBackendSelection(4);
+    const runner = createGraphwarPathfindingRunner({ createBackendSelection: () => deferred.selection });
+    const result = runner.buildOneClickClearPath(createInput());
+
+    deferred.reject(new Error("selection failed"));
+
+    await expect(result).rejects.toThrow("selection failed");
+    expect(FakeWorker.instances).toHaveLength(0);
+    runner.close();
+  });
+
+  it("rejects when a synchronous WASM init fault cannot create its TypeScript fallback Worker", async () => {
+    FakeWorker.wasmBackendInitializationFailures = 1;
+    FakeWorker.constructorFailureAttempts.add(2);
+    const deferred = createDeferredBackendSelection(4);
+    const runner = createGraphwarPathfindingRunner({
+      createBackendSelection: () => deferred.selection,
+      onWasmFault: vi.fn(() => 9),
+    });
+    const result = runner.buildOneClickClearPath(createInput());
+
+    deferred.resolve(createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule));
+
+    await expect(result).rejects.toThrow("constructor failed");
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(FakeWorker.instances[0].terminated).toBe(true);
+    runner.close();
+  });
+
+  it("supersedes a loading request and starts only the latest owned mask snapshot", async () => {
+    const selections = [createDeferredBackendSelection(4), createDeferredBackendSelection(4)];
+    let selectionIndex = 0;
+    const runner = createGraphwarPathfindingRunner({
+      createBackendSelection: () => selections[selectionIndex++].selection,
+    });
+    const first = runner.buildOneClickClearPath(createInput());
+    const firstCancelled = first.catch((error: unknown) => error);
+    const latestInput = createInput();
+    latestInput.routeObstacleMask[0] = 3;
+    const latest = runner.buildOneClickClearPath(latestInput);
+    latestInput.routeObstacleMask[0] = 9;
+
+    selections[0].resolve(createGraphwarTypescriptWorkerBackendConfiguration(4));
+    await Promise.resolve();
+    expect(FakeWorker.instances).toHaveLength(0);
+    await expect(firstCancelled).resolves.toSatisfy(isGraphwarPathfindingCancelledError);
+
+    selections[1].resolve(createGraphwarTypescriptWorkerBackendConfiguration(4));
+    await Promise.resolve();
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+    expect(request.task.input.routeObstacleMask[0]).toBe(3);
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(latest).resolves.toMatchObject({ result: { targetIds: ["target"] } });
+    runner.close();
+  });
+
+  it("replays a loading admission on TypeScript without waiting for the failed selection", async () => {
+    const deferred = createDeferredBackendSelection(4);
+    const runner = createGraphwarPathfindingRunner({ createBackendSelection: () => deferred.selection });
+    const result = runner.buildOneClickClearPath(createInput());
+
+    expect(runner.replayGenerationAsTypescript(4, 5, "trap: sibling failed")).toBe(true);
+
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+    expect(request.attempt.backendGeneration).toBe(5);
+    expect(worker.controlMessages[0]).toMatchObject({ backend: { type: "typescript" }, generation: 5 });
+    deferred.resolve(createGraphwarTypescriptWorkerBackendConfiguration(4));
+    await Promise.resolve();
+    expect(FakeWorker.instances).toHaveLength(1);
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(result).resolves.toMatchObject({ result: { targetIds: ["target"] } });
+    runner.close();
+  });
+
   it("preserves the deletion preference in the cloned Worker request", async () => {
     const runner = createGraphwarPathfindingRunner();
     const input = createInput();
@@ -42,7 +159,13 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const request = getOneClickClearRequest(worker, 0);
 
     expect(worker.controlMessages).toEqual([
-      { backend: { type: "typescript" }, generation: 0, role: "pathfinding-master", type: "backend-init" },
+      {
+        backend: { type: "typescript" },
+        backendExecution: { effective: "typescript", requested: "typescript" },
+        generation: 0,
+        role: "pathfinding-master",
+        type: "backend-init",
+      },
     ]);
     expect(request.task.input.isDeleteOptimizationEnabled).toBe(true);
     expect(request.attempt.backendGeneration).toBe(0);
@@ -54,6 +177,148 @@ describe("Graphwar pathfinding runner incumbents", () => {
       type: "success",
     });
     await resultPromise;
+    runner.close();
+  });
+
+  it("reports a successful requested WASM search as effective WASM", async () => {
+    const runner = createGraphwarPathfindingRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
+    });
+    const resultPromise = runner.buildOneClickClearPath(createInput(), { shouldCollectDiagnostics: true });
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      result: createResult(createGraphwarPathfindingDebugMetrics(false)),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      diagnostics: { backendExecution: { effective: "wasm", requested: "wasm" } },
+    });
+    runner.close();
+  });
+
+  it("reports typed WASM fault replay as requested WASM with an effective TS fallback", async () => {
+    const onWasmFault = vi.fn();
+    const runner = createGraphwarPathfindingRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
+      onWasmFault,
+    });
+    const resultPromise = runner.buildOneClickClearPath(createInput(), { shouldCollectDiagnostics: true });
+    const wasmWorker = getWorker(0);
+    const wasmRequest = getOneClickClearRequest(wasmWorker, 0);
+
+    wasmWorker.emit({
+      context: { attempt: wasmRequest.attempt, type: "task" },
+      fault: { code: "trap", message: "search trapped" },
+      generation: 4,
+      role: "pathfinding-master",
+      type: "wasm-fault",
+    });
+
+    const typescriptWorker = getWorker(1);
+    const replayRequest = getOneClickClearRequest(typescriptWorker, 0);
+    typescriptWorker.emit({
+      attempt: replayRequest.attempt,
+      id: replayRequest.id,
+      result: createResult(createGraphwarPathfindingDebugMetrics(false)),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+
+    expect(onWasmFault).toHaveBeenCalledOnce();
+    await expect(resultPromise).resolves.toMatchObject({
+      diagnostics: {
+        backendExecution: {
+          effective: "typescript",
+          fallbackReason: "trap: search trapped",
+          requested: "wasm",
+        },
+      },
+    });
+    runner.close();
+  });
+
+  it("reports synchronous WASM initialization once and uses the replacement generation", async () => {
+    FakeWorker.wasmBackendInitializationFailures = 1;
+    const onWasmFault = vi.fn(() => 9);
+    const runner = createGraphwarPathfindingRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
+      onWasmFault,
+    });
+
+    const resultPromise = runner.buildOneClickClearPath(createInput(), { shouldCollectDiagnostics: true });
+    const wasmWorker = getWorker(0);
+    const typescriptWorker = getWorker(1);
+    const replayRequest = getOneClickClearRequest(typescriptWorker, 0);
+
+    expect(onWasmFault).toHaveBeenCalledOnce();
+    expect(wasmWorker.terminated).toBe(true);
+    expect(typescriptWorker.controlMessages[0]).toMatchObject({
+      backend: { type: "typescript" },
+      backendExecution: {
+        effective: "typescript",
+        fallbackReason: "module-clone: Module could not be cloned",
+        requested: "wasm",
+      },
+      generation: 9,
+    });
+    expect(replayRequest.attempt.backendGeneration).toBe(9);
+    typescriptWorker.emit({
+      attempt: replayRequest.attempt,
+      id: replayRequest.id,
+      result: createResult(createGraphwarPathfindingDebugMetrics(false)),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(resultPromise).resolves.toMatchObject({
+      diagnostics: {
+        backendExecution: {
+          effective: "typescript",
+          fallbackReason: "module-clone: Module could not be cloned",
+          requested: "wasm",
+        },
+      },
+    });
+    runner.close();
+  });
+
+  it("ignores a typed fault from a superseded pathfinding task", async () => {
+    const onWasmFault = vi.fn(() => 9);
+    const runner = createGraphwarPathfindingRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
+      onWasmFault,
+    });
+    const first = runner.buildOneClickClearPath(createInput());
+    const firstCancelled = first.catch((error: unknown) => error);
+    const firstWorker = getWorker(0);
+    const firstRequest = getOneClickClearRequest(firstWorker, 0);
+    const second = runner.buildOneClickClearPath(createInput());
+    const secondWorker = getWorker(1);
+    const secondRequest = getOneClickClearRequest(secondWorker, 0);
+
+    firstWorker.emit({
+      context: { attempt: firstRequest.attempt, type: "task" },
+      fault: { code: "trap", message: "late pathfinding fault" },
+      generation: 4,
+      role: "pathfinding-master",
+      type: "wasm-fault",
+    });
+
+    await expect(firstCancelled).resolves.toSatisfy(isGraphwarPathfindingCancelledError);
+    expect(onWasmFault).not.toHaveBeenCalled();
+    secondWorker.emit({
+      attempt: secondRequest.attempt,
+      id: secondRequest.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(second).resolves.toMatchObject({ result: { targetIds: ["target"] } });
     runner.close();
   });
 
@@ -85,6 +350,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     });
 
     expect(onIncumbent).toHaveBeenCalledWith({ diagnostics, incumbent });
+    expect(diagnostics.backendExecution).toEqual({ effective: "typescript", requested: "typescript" });
     worker.emit({
       attempt: request.attempt,
       id: request.id,
@@ -247,7 +513,10 @@ describe("Graphwar pathfinding runner incumbents", () => {
 });
 
 class FakeWorker {
+  static constructorAttempts = 0;
+  static readonly constructorFailureAttempts = new Set<number>();
   static readonly instances: FakeWorker[] = [];
+  static wasmBackendInitializationFailures = 0;
   readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarPathfindingWorkerRequest[] = [];
   terminated = false;
@@ -258,6 +527,10 @@ class FakeWorker {
   };
 
   constructor() {
+    FakeWorker.constructorAttempts += 1;
+    if (FakeWorker.constructorFailureAttempts.has(FakeWorker.constructorAttempts)) {
+      throw new Error("constructor failed");
+    }
     FakeWorker.instances.push(this);
   }
 
@@ -275,6 +548,14 @@ class FakeWorker {
 
   postMessage(message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest) {
     if (isGraphwarBackendControlMessage(message)) {
+      if (
+        message.type === "backend-init" &&
+        message.backend.type === "wasm" &&
+        FakeWorker.wasmBackendInitializationFailures > 0
+      ) {
+        FakeWorker.wasmBackendInitializationFailures -= 1;
+        throw new DOMException("Module could not be cloned", "DataCloneError");
+      }
       this.controlMessages.push(message);
       return;
     }
@@ -324,6 +605,20 @@ function getOneClickClearRequest(worker: FakeWorker, index: number) {
     throw new Error("Expected one-click-clear Worker request");
   }
   return { attempt: request.attempt, id: request.id, task: request.task };
+}
+
+function createDeferredBackendSelection(generation: number) {
+  let resolve!: (configuration: GraphwarWorkerBackendConfiguration) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<GraphwarWorkerBackendConfiguration>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return {
+    reject,
+    resolve,
+    selection: { generation, promise } satisfies GraphwarWorkerBackendSelection,
+  };
 }
 
 /** 构造无需执行实际搜索的纯数据输入。 */
@@ -398,8 +693,11 @@ function createIncumbent(id: string): GraphwarOneClickClearIncumbent {
 }
 
 /** 构造 master Worker 的最终任务结果。 */
-function createResult(): GraphwarOneClickClearPathWorkerResult {
+function createResult(
+  diagnostics?: GraphwarOneClickClearPathWorkerResult["diagnostics"],
+): GraphwarOneClickClearPathWorkerResult {
   return {
+    ...(diagnostics ? { diagnostics } : {}),
     result: {
       elapsedMs: 1,
       expression: "x",

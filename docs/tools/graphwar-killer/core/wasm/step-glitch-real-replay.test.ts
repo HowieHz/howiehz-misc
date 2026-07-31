@@ -48,6 +48,18 @@ beforeAll(async () => {
 });
 
 describe("Graphwar WASM Step-glitch real candidate replay", () => {
+  it("accepts the legal display-rounded second-order launch flag", async () => {
+    const fixture = createFixture("ddy", new Uint8Array(planeCellCount), bounds, undefined, "display-rounded");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint: fixture.pixelPath[2] }),
+    );
+    expect(scan.status).toBe("hit");
+    expect(scan.evidence?.owned.formulaInput.flags).toBe(11);
+    context.dispose();
+  });
+
   it("returns one copied evidence range from production scan and replay commands", async () => {
     const fixture = createFixture("dy");
     const { context, runtime } = await createContext(fixture);
@@ -63,11 +75,10 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const evidenceView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength);
     const continuation = scan.evidence?.owned.continuation;
     if (!continuation) throw new Error("expected copied continuation evidence");
-    const continuationView = new DataView(
-      continuation.bytes.buffer,
-      continuation.bytes.byteOffset,
-      continuation.bytes.byteLength,
-    );
+    const continuationOffset = evidenceView.getUint32(268, true);
+    expect(continuationOffset).toBeGreaterThan(0);
+    const continuationView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset + continuationOffset, 104);
+    expect(continuation.sampleIndex).toBe(continuationView.getUint32(88, true));
     expect(continuationView.getUint32(32, true)).toBe(evidenceView.getUint32(52, true));
     expect(evidenceView.getUint32(248, true)).toBe(evidenceBytes.byteLength);
     expect(evidenceView.getUint32(240, true)).toBe(0);
@@ -76,14 +87,162 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     expect(evidenceView.getUint32(148, true)).toBe(0);
     const replay = context.replayRaw({
       controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: {
+        simulationMaskCacheId: 7,
+        targetControlPoints: [fixture.pixelPath[1]],
+        trackedTargets: [target],
+        type: "validate",
+      },
       path: fixture.pixelPath,
       targetSequence: [target],
       type: "replay",
       windows: { type: "automatic" },
     });
     expect(replay.status).toBe("hit");
+    expect(replay.evidence?.owned.finalValidation).toEqual({
+      simulationMaskCacheId: 7,
+      targetControlPoints: [fixture.pixelPath[1]],
+      trackedTargets: [target],
+      type: "validated",
+    });
+    expect(replay.evidence?.owned.trajectory.trackedTargetHitIndexes[0]).toBeGreaterThan(0);
     expect(replay.evidence?.bytes).not.toBe(evidenceBytes);
     expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    context.dispose();
+  });
+
+  it("runs command 19 final validation with tracked targets and owned hit indexes", async () => {
+    const fixture = createFixture("dy");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+
+    const replay = context.replayRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: {
+        simulationMaskCacheId: 17,
+        targetControlPoints: [fixture.pixelPath[2]],
+        trackedTargets: [target],
+        type: "validate",
+      },
+      path: fixture.pixelPath,
+      targetSequence: [target],
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+
+    expect(replay.status).toBe("hit");
+    expect(replay.evidence?.owned.finalValidation).toEqual({
+      simulationMaskCacheId: 17,
+      targetControlPoints: [fixture.pixelPath[2]],
+      trackedTargets: [target],
+      type: "validated",
+    });
+    expect(replay.evidence?.owned.trajectory.trackedTargetHitIndexes).toHaveLength(1);
+    expect(replay.evidence?.owned.trajectory.trackedTargetHitIndexes[0]).toBeGreaterThanOrEqual(0);
+    expect(replay.evidence?.owned.trajectory.pathError).toBeTypeOf("number");
+    expect(replay.evidence?.owned.trajectory.pathError).toBeGreaterThanOrEqual(0);
+    context.dispose();
+  });
+
+  it("keeps command 19 final validation valid when every path tail is a target control", async () => {
+    const fixture = createFixture("dy");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+
+    const replay = context.replayRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: {
+        simulationMaskCacheId: 19,
+        targetControlPoints: fixture.pixelPath.slice(1),
+        trackedTargets: [target],
+        type: "validate",
+      },
+      path: fixture.pixelPath,
+      targetSequence: [target],
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+
+    expect(replay.status).toBe("hit");
+    expect(replay.evidence?.owned.trajectory).not.toHaveProperty("pathError");
+    context.dispose();
+  });
+
+  it("runs command 18 final validation with tracked targets and owned hit indexes", async () => {
+    const fixture = createFixture("dy");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({
+        finalValidation: {
+          simulationMaskCacheId: 23,
+          targetControlPoints: [fixture.pixelPath[2]],
+          trackedTargets: [target],
+        },
+        hitTarget: target,
+        targetPoint: fixture.pixelPath[2],
+      }),
+    );
+
+    expect(scan.status).toBe("hit");
+    expect(scan.evidence?.owned.finalValidation).toEqual({
+      simulationMaskCacheId: 23,
+      targetControlPoints: [fixture.pixelPath[2]],
+      trackedTargets: [target],
+      type: "validated",
+    });
+    expect(scan.evidence?.owned.trajectory.trackedTargetHitIndexes).toHaveLength(1);
+    expect(scan.evidence?.owned.trajectory.trackedTargetHitIndexes[0]).toBeGreaterThanOrEqual(0);
+    expect(scan.evidence?.owned.trajectory.pathError).toBeTypeOf("number");
+    expect(scan.evidence?.owned.trajectory.pathError).toBeGreaterThanOrEqual(0);
+    context.dispose();
+  });
+
+  it("keeps command 18 final validation valid when every path tail is a target control", async () => {
+    const fixture = createFixture("dy");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({
+        finalValidation: {
+          simulationMaskCacheId: 25,
+          targetControlPoints: fixture.pixelPath.slice(1),
+          trackedTargets: [target],
+        },
+        hitTarget: target,
+        targetPoint: fixture.pixelPath[2],
+      }),
+    );
+
+    expect(scan.status).toBe("hit");
+    expect(scan.evidence?.owned.trajectory).not.toHaveProperty("pathError");
+    context.dispose();
+  });
+
+  it("preserves a legal infinite final-validation path error", async () => {
+    const fixture = createFixture("dy");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const path = [...fixture.pixelPath, createPixelPoint(GRAPHWAR_PLANE_LENGTH + 1, fixture.pixelPath[2].y)];
+
+    const replay = context.replayRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: {
+        simulationMaskCacheId: 29,
+        targetControlPoints: [fixture.pixelPath[1], fixture.pixelPath[2]],
+        trackedTargets: [target],
+        type: "validate",
+      },
+      path,
+      targetSequence: [target],
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+
+    expect(replay.status).toBe("hit");
+    expect(replay.evidence?.owned.trajectory.pathError).toBe(Number.POSITIVE_INFINITY);
     context.dispose();
   });
 
@@ -128,6 +287,59 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         new DataView(runtime.buffer).setUint32(evidencePointer + 248, 287, true);
       },
       name: "evidence header length mismatch",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setInt32(evidencePointer + 128, 0, true);
+      },
+      name: "trajectory stop reason outside the enum",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setInt32(evidencePointer + 128, 7, true);
+      },
+      name: "trajectory target-completion stop without its command flag",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const formulaInputPointer = evidenceView.getUint32(60, true);
+        new DataView(runtime.buffer).setUint32(formulaInputPointer + 12, 0, true);
+      },
+      name: "formula glitch-mode flag differs from the retained settings",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setFloat64(evidencePointer + 184, 0, true);
+      },
+      name: "terminal state differs from the last published point",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setUint32(evidencePointer + 232, 0xffff_ffff, true);
+      },
+      name: "terminal sample index differs from the published points",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setFloat64(evidencePointer + 288, Number.NaN, true);
+      },
+      name: "path error without final validation",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const continuationPointer = evidenceView.getUint32(268, true);
+        new DataView(runtime.buffer).setFloat64(continuationPointer + 40, 0, true);
+      },
+      name: "continuation current point differs from the trajectory state",
     },
     {
       mutate(view: DataView) {
@@ -1009,6 +1221,55 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it("rejects explicit replay evidence whose windows differ from the command", async () => {
+    const fixture = createFixture("dy");
+    const automatic = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      formulaMode: fixture.formulaMode,
+      points: graphPath,
+      soldierCenter: graphPath[0],
+    });
+    const segments = automatic.context.stepGlitchFormulaEvidence?.prefix.stepGlitchSegments;
+    if (!segments) throw new Error("expected Step-glitch formula evidence");
+    const windows = {
+      segments: segments.map((segment) =>
+        segment === undefined ? undefined : { endX: segment.endX, startX: segment.startX },
+      ),
+      type: "explicit",
+    } as const;
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 19) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 72);
+        const evidencePointer = resultView.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, resultView.getUint32(12, true));
+        const formulaInputPointer = evidenceView.getUint32(60, true);
+        const formulaInputView = new DataView(runtime.buffer, formulaInputPointer, 176);
+        const windowPointer = formulaInputView.getUint32(136, true);
+        const windowView = new DataView(runtime.buffer, windowPointer, 24);
+        windowView.setFloat64(8, windowView.getFloat64(8, true) + 0.25, true);
+        windowView.setFloat64(16, windowView.getFloat64(16, true) + 0.25, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.replayRaw({
+        controlX: graphPath[2].x,
+        finalValidation: { type: "none" },
+        path: fixture.pixelPath,
+        targetSequence: [],
+        type: "replay",
+        windows,
+      }),
+    ).toThrow();
+    spy.mockRestore();
+    context.dispose();
+  });
+
   it("keeps a target duplicated in required targets out of the ordered sequence", async () => {
     const fixture = createFixture("dy");
     const baseline = resolveFixtureReplay(fixture, graphPath[2].x, [], { type: "automatic" });
@@ -1504,6 +1765,7 @@ function createFixture(
   mask = new Uint8Array(planeCellCount),
   fixtureBounds = bounds,
   pixelPath = graphPath.map((point) => graphToImagePoint(point, fixtureBounds, boundsRect)),
+  secondOrderLaunchAngleMode: "display-rounded" | "full-precision" = "full-precision",
 ) {
   const settings = {
     algorithm: "step",
@@ -1511,7 +1773,7 @@ function createFixture(
     equation,
     isStepGlitchModeEnabled: true,
     isStepOverflowProtectionEnabled: true,
-    secondOrderLaunchAngleMode: "full-precision",
+    secondOrderLaunchAngleMode,
     steepness: 210,
     stepGlitchObstacleMask: mask,
   } satisfies GraphwarTrajectoryFormulaSettings;

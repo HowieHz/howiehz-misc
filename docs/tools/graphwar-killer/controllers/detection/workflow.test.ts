@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
+import type { GraphwarBackendExecution } from "../../core/algorithm-backend";
 import type { GraphwarAuthoritativeResultCommitContext } from "../../core/authoritative-task";
 import type { GraphwarObjectsDetectionResult } from "../../detection/objects";
 import {
@@ -87,8 +88,14 @@ describe("Graphwar detection workflow commit gate", () => {
     const replayResult = createObjectsResult(2);
     const oldTiming = [{ elapsedMs: 1, stage: "detecting-objects" }] satisfies GraphwarDetectionWorkerTimingEntry[];
     const replayTiming = [{ elapsedMs: 2, stage: "detecting-objects" }] satisfies GraphwarDetectionWorkerTimingEntry[];
+    const oldBackendExecution = { effective: "wasm", requested: "wasm" } satisfies GraphwarBackendExecution;
+    const replayBackendExecution = {
+      effective: "typescript",
+      fallbackReason: "trap: detection trapped",
+      requested: "wasm",
+    } satisfies GraphwarBackendExecution;
     const rejectedCommit = createCommitContext(() => false);
-    const oldCommitPromise = runOptions?.commitResult?.(oldResult, oldTiming, rejectedCommit);
+    const oldCommitPromise = runOptions?.commitResult?.(oldResult, oldTiming, oldBackendExecution, rejectedCommit);
     await vi.waitFor(() => expect(animationFrames).toHaveLength(1));
     animationFrames.shift()?.(1);
     await oldCommitPromise;
@@ -101,7 +108,12 @@ describe("Graphwar detection workflow commit gate", () => {
       publish();
       return true;
     });
-    const replayCommitPromise = runOptions?.commitResult?.(replayResult, replayTiming, acceptedCommit);
+    const replayCommitPromise = runOptions?.commitResult?.(
+      replayResult,
+      replayTiming,
+      replayBackendExecution,
+      acceptedCommit,
+    );
     await vi.waitFor(() => expect(animationFrames).toHaveLength(1));
     animationFrames.shift()?.(2);
     await replayCommitPromise;
@@ -110,7 +122,13 @@ describe("Graphwar detection workflow commit gate", () => {
 
     expect(applyDetectedObstacles).toHaveBeenCalledExactlyOnceWith(replayResult.obstacles);
     expect(createTimingEntriesFromWorker).toHaveBeenCalledExactlyOnceWith(replayTiming);
-    expect(finishTimings).toHaveBeenCalledOnce();
+    expect(finishTimings).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      [],
+      replayBackendExecution,
+      expect.any(Number),
+    );
     expect(workflow.isInProgress.value).toBe(false);
   });
 });

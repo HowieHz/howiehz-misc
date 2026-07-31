@@ -18,6 +18,7 @@ import {
   type GraphwarManagedController,
 } from "./controllers/managed/controller";
 import type { GraphwarTrajectoryCalculationWorkerRequest } from "./controllers/path/trajectory-calculation";
+import type { GraphwarBackendControlMessage } from "./core/algorithm-backend";
 import { createPixelPoint } from "./core/types";
 import GraphwarKillerPage from "./GraphwarKillerPage.vue";
 import { graphwarKillerLocale } from "./locale";
@@ -1440,6 +1441,124 @@ describe("Graphwar Killer page settings", () => {
     } finally {
       wrapper.unmount();
       vi.useRealTimers();
+    }
+  });
+
+  it("allows cancelling WASM loading and locks the switch after work starts", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          graphwarPathfindingRunner: { clearCache: () => void };
+          isGraphwarManagedModeEnabled: boolean;
+          isAdvancedSettingsVisible: boolean;
+          pathfindingCache: { invalidateResultCache: () => void };
+        };
+      }
+    ).setupState;
+
+    try {
+      const clearWorkerCache = vi.spyOn(page.graphwarPathfindingRunner, "clearCache");
+      const clearResultCache = vi.spyOn(page.pathfindingCache, "invalidateResultCache");
+      await wrapper.get("#graphwar-killer-advanced-settings").trigger("click");
+      const toggle = wrapper.get<HTMLButtonElement>("#graphwar-killer-wasm-acceleration");
+      expect(toggle.attributes("aria-checked")).toBe("false");
+      expect(wrapper.text()).not.toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+
+      await toggle.trigger("click");
+      await nextTick();
+      expect(toggle.attributes("aria-checked")).toBe("true");
+      expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+      expect(toggle.attributes("disabled")).toBeUndefined();
+      expect(clearResultCache).toHaveBeenCalledOnce();
+      expect(clearWorkerCache).toHaveBeenCalledOnce();
+
+      page.isGraphwarManagedModeEnabled = true;
+      await nextTick();
+      expect(toggle.attributes("disabled")).toBeUndefined();
+
+      await toggle.trigger("click");
+      await nextTick();
+      expect(toggle.attributes("aria-checked")).toBe("false");
+      expect(wrapper.text()).not.toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+      expect(toggle.attributes("disabled")).toBeDefined();
+      expect(clearResultCache).toHaveBeenCalledTimes(2);
+      expect(clearWorkerCache).toHaveBeenCalledTimes(2);
+    } finally {
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("broadcasts one global TypeScript replay for the first fault in a WASM generation", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
+    const page = (
+      wrapper.vm.$ as unknown as {
+        setupState: {
+          detectionWorkflow: {
+            replayGenerationAsTypescript: (failed: number, replacement: number, reason: string) => boolean;
+          };
+          graphwarPathfindingRunner: {
+            replayGenerationAsTypescript: (failed: number, replacement: number, reason: string) => boolean;
+          };
+          smartPathfindingSession: { clearPreview: () => void };
+          graphwarWasmRuntimeController: {
+            enable: () => Promise<WebAssembly.Module>;
+            getState: () => { generation: number; reason?: string; type: string };
+          };
+          reportWasmFault: (
+            message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+          ) => number | undefined;
+        };
+      }
+    ).setupState;
+
+    try {
+      void page.graphwarWasmRuntimeController.enable();
+      const detectionReplay = vi.spyOn(page.detectionWorkflow, "replayGenerationAsTypescript");
+      const pathfindingReplay = vi.spyOn(page.graphwarPathfindingRunner, "replayGenerationAsTypescript");
+      const clearSmartPreview = vi.spyOn(page.smartPathfindingSession, "clearPreview");
+      const fault = {
+        context: { type: "initialization" },
+        fault: { code: "trap", message: "trajectory trapped" },
+        generation: 1,
+        role: "trajectory",
+        type: "wasm-fault",
+      } satisfies Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>;
+
+      expect(page.reportWasmFault(fault)).toBe(2);
+      expect(page.graphwarWasmRuntimeController.getState()).toMatchObject({
+        generation: 2,
+        reason: "trap: trajectory trapped",
+        type: "degraded",
+      });
+      expect(detectionReplay).toHaveBeenCalledOnce();
+      expect(detectionReplay).toHaveBeenCalledWith(1, 2, "trap: trajectory trapped");
+      expect(pathfindingReplay).toHaveBeenCalledOnce();
+      expect(pathfindingReplay).toHaveBeenCalledWith(1, 2, "trap: trajectory trapped");
+      expect(clearSmartPreview).toHaveBeenCalledOnce();
+
+      expect(page.reportWasmFault(fault)).toBeUndefined();
+      expect(detectionReplay).toHaveBeenCalledOnce();
+      expect(pathfindingReplay).toHaveBeenCalledOnce();
+      expect(clearSmartPreview).toHaveBeenCalledOnce();
+    } finally {
+      wrapper.unmount();
+      vi.unstubAllGlobals();
     }
   });
 

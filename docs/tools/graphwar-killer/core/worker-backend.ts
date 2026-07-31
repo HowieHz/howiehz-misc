@@ -1,4 +1,6 @@
 import {
+  createGraphwarTypescriptWorkerBackendConfiguration,
+  createGraphwarWasmWorkerBackendConfiguration,
   createGraphwarTypescriptBackendContext,
   createGraphwarWasmBackendContext,
   GraphwarValidatedWasmRuntime,
@@ -60,6 +62,7 @@ export function createGraphwarWorkerBackendSlot(options: GraphwarWorkerBackendSl
   try {
     worker.postMessage({
       backend: configuration.backend,
+      backendExecution: configuration.backendExecution,
       generation: configuration.generation,
       role,
       type: "backend-init",
@@ -170,16 +173,12 @@ export function createGraphwarWorkerBackendRuntime(options: GraphwarWorkerBacken
         throw new Error(message);
       }
       const fault = new GraphwarWasmFault("abi", message);
-      state = {
-        configuration: { backend: value.backend, generation },
-        fault,
-        type: "failed",
-      };
+      state = { configuration: createConfiguration(value), fault, type: "failed" };
       postFault(generation, { type: "initialization" }, fault);
       return true;
     }
 
-    const configuration = { backend: value.backend, generation: value.generation };
+    const configuration = createConfiguration(value);
     const promise = initialize(configuration);
     state = { configuration, promise, type: "initializing" };
     return true;
@@ -266,6 +265,18 @@ export function createGraphwarWorkerBackendRuntime(options: GraphwarWorkerBacken
       throw new Error("Graphwar worker backend was not initialized");
     }
     return state.configuration.generation;
+  }
+
+  function createConfiguration(message: GraphwarBackendInitializationMessage) {
+    if (message.backend.type === "wasm") {
+      return createGraphwarWasmWorkerBackendConfiguration(message.generation, message.backend.module);
+    }
+    return createGraphwarTypescriptWorkerBackendConfiguration(
+      message.generation,
+      message.backendExecution.effective === "typescript" && message.backendExecution.requested === "wasm"
+        ? message.backendExecution.fallbackReason
+        : undefined,
+    );
   }
 
   function postFault(generation: number, context: GraphwarWasmFaultContext, fault: GraphwarWasmFault) {

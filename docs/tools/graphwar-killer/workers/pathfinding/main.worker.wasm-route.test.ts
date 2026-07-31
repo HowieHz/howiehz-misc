@@ -56,6 +56,7 @@ beforeAll(async () => {
   await import("./main.worker");
   dispatch({
     backend: { module: await WebAssembly.compile(await readGraphwarKernelBytes()), type: "wasm" },
+    backendExecution: { effective: "wasm", requested: "wasm" },
     generation: attempt.backendGeneration,
     role: "pathfinding-master",
     type: "backend-init",

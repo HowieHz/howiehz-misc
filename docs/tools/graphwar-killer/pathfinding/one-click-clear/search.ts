@@ -1,11 +1,21 @@
 /** 在当前 Graphwar 路径后追加一键清图路线；几何建路点和弹道命中圈分开建模。 */
-import { isGraphwarWasmFault } from "../../core/algorithm-backend";
+import { GraphwarWasmFault, isGraphwarWasmFault } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
 import { clonePixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import {
+  createGraphwarWasmStepGlitchContext,
+  createGraphwarWasmStepGlitchContextInput,
+  createGraphwarWasmStepGlitchScanCommandInput,
+} from "../../core/wasm/step-glitch-adapter";
+import type {
+  GraphwarWasmStepGlitchGeometryTestContext,
+  GraphwarWasmStepGlitchOwnedEvidence,
+} from "../../core/wasm/step-glitch-adapter";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
 import {
   graphwarByteArraysEqual,
@@ -264,6 +274,8 @@ export interface GraphwarOneClickClearOptions {
   simulationBoundaryExpansion: number;
   /** 当前公式采样设置。 */
   settings: GraphwarTrajectoryFormulaSettings;
+  /** Effective WASM backend; present only for the Worker-owned Step-glitch production branch. */
+  wasmRuntime?: GraphwarWasmKernelRuntime;
   /** Step 严格包络整路校验；由持有共用 summed-area 的 master Worker 注入。 */
   validateStepRoute?: (points: readonly PixelPoint[]) => boolean;
   /** 让出主线程控制权；页面用于响应取消和刷新状态。 */
@@ -732,6 +744,10 @@ async function buildOneClickClearStepGlitchPath(
     context.options = options;
   }
 
+  if (options.wasmRuntime) {
+    return buildOneClickClearStepGlitchPathWithWasm(context, targets, startedAt);
+  }
+
   const maskIndex = createGraphwarStepGlitchScanMaskIndex({
     boundaryExpansion: options.simulationBoundaryExpansion,
     bounds: options.bounds,
@@ -868,6 +884,339 @@ async function buildOneClickClearStepGlitchPath(
     finalFormulaEvidence,
   );
   return createOneClickClearSuccessResult(options, finalRoute, hitTargets, startedAt, workUnits);
+}
+
+/**
+ * Effective WASM Step-glitch search. The context is retained while the source prefix is unchanged; a successful target
+ * replaces that prefix and therefore replaces the context. Owned evidence is used directly for incumbent publication.
+ * It deliberately cannot become TS prefix evidence because the production ABI does not carry the complete prefix
+ * identity.
+ */
+async function buildOneClickClearStepGlitchPathWithWasm(
+  context: OneClickClearSearchContext,
+  targets: readonly OneClickClearTarget[],
+  startedAt: number,
+): Promise<GraphwarOneClickClearResult> {
+  const options = context.options;
+  const simulationMask = options.simulationMask;
+  const formulaMode = options.formulaMode;
+  if (!simulationMask || !options.wasmRuntime) {
+    return createOneClickClearFailure("preflight-blocked", startedAt, 0);
+  }
+
+  let route: OneClickClearRoute = {
+    pathPoints: [...options.pathPoints],
+    targetSequence: [],
+  };
+  let prefixEvidence = options.stepGlitchPrefixEvidence;
+  let scanner: GraphwarWasmStepGlitchGeometryTestContext | undefined;
+  let finalEvidence: GraphwarWasmStepGlitchOwnedEvidence | undefined;
+  let workUnits = 0;
+  let acceptedLayerGraphX: number | undefined;
+
+  try {
+    for (const target of targets) {
+      if (acceptedLayerGraphX === target.sortGraphX) {
+        continue;
+      }
+      if (options.isCancelled?.()) {
+        return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+      }
+
+      const requiredTargets = createOneClickClearPreviousTargets(route.targetSequence);
+      if (!scanner) {
+        const created = createOneClickClearStepGlitchWasmScanner(
+          options,
+          formulaMode,
+          simulationMask,
+          route.pathPoints,
+          requiredTargets,
+          prefixEvidence,
+          route.targetSequence.length === 0 ? options.prefixTarget : undefined,
+        );
+        if (created.status !== "ready") {
+          return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+        }
+        scanner = created.context;
+      }
+
+      const nextTargetSequence = [...route.targetSequence, target];
+      const isFinalTarget = target === targets.at(-1);
+      const scanStartedAt = nowMs();
+      const scan = scanner.scanRaw(
+        createGraphwarWasmStepGlitchScanCommandInput({
+          ...(isFinalTarget
+            ? {
+                finalValidation: {
+                  simulationMaskCacheId: options.simulationMaskCacheId,
+                  targetControlPoints: createOneClickClearTargetControlPoints(options, nextTargetSequence),
+                  trackedTargets: createOneClickClearTrackedTargets(options, {
+                    pathPoints: [...route.pathPoints, target.routePoint],
+                    targetSequence: nextTargetSequence,
+                  }).map((trackedTarget) => trackedTarget.hitCircle),
+                },
+              }
+            : {}),
+          hitTarget: target.hitCircle,
+          targetPoint: target.routePoint,
+        }),
+      );
+      options.onDebugTiming?.({
+        elapsedMs: Math.max(0, nowMs() - scanStartedAt),
+        stage: "scan-step-glitch",
+      });
+      workUnits += scan.expandedStates;
+
+      if (scan.status === "hit") {
+        const evidence = scan.evidence?.owned;
+        if (!evidence) {
+          throw new GraphwarWasmFault("abi", "One-Click Clear WASM scan returned no owned evidence");
+        }
+        acceptedLayerGraphX = target.sortGraphX;
+        route = {
+          incumbentEvidence: createOneClickClearWasmIncumbentEvidence(evidence, options.debugMetrics),
+          pathPoints: evidence.path.map(clonePixelPoint),
+          targetSequence: nextTargetSequence,
+        };
+        publishOneClickClearValidatedRoute(context, route);
+        finalEvidence = isFinalTarget ? evidence : undefined;
+        // The source path and required target set changed. Drop all old state, including any stale prefix evidence.
+        scanner.dispose();
+        scanner = undefined;
+        prefixEvidence = undefined;
+      } else if (scan.status === "invalid-input" || scan.status === "unsupported") {
+        return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+      }
+
+      await yieldOneClickClearControl(options);
+    }
+
+    if (route.targetSequence.length === 0) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+    }
+
+    let optimizedRoute = route;
+    if (options.isDeleteOptimizationEnabled) {
+      const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+        optimizeOneClickClearStepGlitchPathWithWasm(context, route, workUnits),
+      );
+      workUnits = optimized.workUnits;
+      if (optimized.status !== "ready") {
+        return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+      }
+      optimizedRoute = optimized.route;
+      finalEvidence = optimized.evidence;
+    }
+
+    if (!finalEvidence) {
+      const replay = measureOneClickClearDebugTiming(options, "validate-final", () =>
+        runOneClickClearStepGlitchWasmReplay(options, formulaMode, simulationMask, optimizedRoute),
+      );
+      workUnits += replay.expandedStates;
+      if (replay.status !== "hit" || !replay.evidence) {
+        return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+      }
+      finalEvidence = replay.evidence;
+    }
+
+    const finalRoute: OneClickClearRoute = {
+      ...optimizedRoute,
+      incumbentEvidence: createOneClickClearWasmIncumbentEvidence(finalEvidence, options.debugMetrics),
+      ...(finalEvidence.trajectory.pathError === undefined ? {} : { pathError: finalEvidence.trajectory.pathError }),
+    };
+    publishOneClickClearValidatedRoute(context, finalRoute);
+    const trackedTargets = createOneClickClearTrackedTargets(options, finalRoute);
+    const hitTargets = collectOneClickClearHitTargets(trackedTargets, finalEvidence.trajectory.trackedTargetHitIndexes);
+    return createOneClickClearSuccessResult(options, finalRoute, hitTargets, startedAt, workUnits);
+  } finally {
+    scanner?.dispose();
+  }
+}
+
+type OneClickClearStepGlitchWasmContextResult =
+  | { context: GraphwarWasmStepGlitchGeometryTestContext; status: "ready" }
+  | { status: "invalid-input" | "unsupported" };
+
+/** Packs one immutable source-prefix descriptor; no Worker-local scanner copy is allowed. */
+function createOneClickClearStepGlitchWasmScanner(
+  options: GraphwarOneClickClearSearchOptions,
+  formulaMode: GraphwarTrajectoryFormulaMode,
+  simulationMask: Uint8Array,
+  sourcePath: readonly PixelPoint[],
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
+  prefixEvidence: GraphwarStepGlitchPrefixEvidence | undefined,
+  prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
+): OneClickClearStepGlitchWasmContextResult {
+  if (!options.wasmRuntime) {
+    return { status: "unsupported" };
+  }
+  return createGraphwarWasmStepGlitchContext(
+    options.wasmRuntime,
+    createGraphwarWasmStepGlitchContextInput({
+      bounds: options.bounds,
+      boundsRect: options.boundsRect,
+      formulaMode,
+      ...(prefixEvidence ? { prefixEvidence } : {}),
+      ...(prefixTarget ? { prefixTarget } : {}),
+      requiredTargets,
+      simulationBoundaryExpansion: options.simulationBoundaryExpansion,
+      simulationMask,
+      sourcePath,
+    }),
+  );
+}
+
+interface OneClickClearStepGlitchWasmOptimizationResult {
+  evidence?: GraphwarWasmStepGlitchOwnedEvidence;
+  route: OneClickClearRoute;
+  status: "invalid-input" | "ready" | "unsupported";
+  workUnits: number;
+}
+
+/** Uses command 19 for every accepted/rejected deletion while retaining one source-prefix context. */
+async function optimizeOneClickClearStepGlitchPathWithWasm(
+  context: OneClickClearSearchContext,
+  route: OneClickClearRoute,
+  workUnits: number,
+): Promise<OneClickClearStepGlitchWasmOptimizationResult> {
+  const options = context.options;
+  const simulationMask = options.simulationMask;
+  if (!simulationMask || !options.wasmRuntime) {
+    return { route, status: "unsupported", workUnits };
+  }
+  const created = createOneClickClearStepGlitchWasmScanner(
+    options,
+    options.formulaMode,
+    simulationMask,
+    options.pathPoints,
+    [],
+    options.stepGlitchPrefixEvidence,
+    options.prefixTarget,
+  );
+  if (created.status !== "ready") {
+    return { route, status: created.status, workUnits };
+  }
+
+  const scanner = created.context;
+  let optimized = route;
+  let evidence: GraphwarWasmStepGlitchOwnedEvidence | undefined;
+  const protectedTargetPoints = route.targetSequence.map((target) => target.routePoint);
+  const targetSequence = route.targetSequence.map((target) => target.hitCircle);
+  const controlPoint = route.pathPoints.at(-1) ?? options.pathPoints.at(-1);
+  if (!controlPoint) {
+    scanner.dispose();
+    return { route, status: "ready", workUnits };
+  }
+  const controlX = imageToGraphPoint(controlPoint, options.bounds, options.boundsRect).x;
+  try {
+    for (let index = options.pathPoints.length; index < optimized.pathPoints.length;) {
+      if (options.isCancelled?.()) {
+        break;
+      }
+      const point = optimized.pathPoints[index];
+      if (point && protectedTargetPoints.some((protectedPoint) => pixelPointsEqual(protectedPoint, point))) {
+        index += 1;
+        continue;
+      }
+      const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
+      if (!oneClickClearPathFollowsGraphRule(options, candidatePath)) {
+        index += 1;
+        continue;
+      }
+      workUnits += 1;
+      const candidateRoute = { ...optimized, pathPoints: candidatePath };
+      const replay = scanner.replayRaw({
+        controlX,
+        finalValidation: {
+          simulationMaskCacheId: options.simulationMaskCacheId,
+          targetControlPoints: createOneClickClearTargetControlPoints(options, candidateRoute.targetSequence),
+          trackedTargets: createOneClickClearTrackedTargets(options, candidateRoute).map(
+            (trackedTarget) => trackedTarget.hitCircle,
+          ),
+          type: "validate",
+        },
+        path: candidatePath,
+        targetSequence,
+        type: "replay",
+        windows: { type: "automatic" },
+      });
+      if (replay.status === "hit" && replay.evidence) {
+        optimized = candidateRoute;
+        evidence = replay.evidence.owned;
+        continue;
+      }
+      index += 1;
+      await yieldOneClickClearControl(options);
+    }
+  } finally {
+    scanner.dispose();
+  }
+  return { ...(evidence ? { evidence } : {}), route: optimized, status: "ready", workUnits };
+}
+
+/** Final command-19 safety replay for a route changed by deletion or by a same-x target skip. */
+function runOneClickClearStepGlitchWasmReplay(
+  options: GraphwarOneClickClearSearchOptions,
+  formulaMode: GraphwarTrajectoryFormulaMode,
+  simulationMask: Uint8Array,
+  route: OneClickClearRoute,
+) {
+  const created = createOneClickClearStepGlitchWasmScanner(
+    options,
+    formulaMode,
+    simulationMask,
+    options.pathPoints,
+    [],
+    options.stepGlitchPrefixEvidence,
+    options.prefixTarget,
+  );
+  if (created.status !== "ready") {
+    return { expandedStates: 0, status: created.status } as const;
+  }
+  const scanner = created.context;
+  try {
+    const controlPoint = route.pathPoints.at(-1) ?? options.pathPoints.at(-1);
+    if (!controlPoint) {
+      return { expandedStates: 0, status: "miss" as const };
+    }
+    const replay = scanner.replayRaw({
+      controlX: imageToGraphPoint(controlPoint, options.bounds, options.boundsRect).x,
+      finalValidation: {
+        simulationMaskCacheId: options.simulationMaskCacheId,
+        targetControlPoints: createOneClickClearTargetControlPoints(options, route.targetSequence),
+        trackedTargets: createOneClickClearTrackedTargets(options, route).map(
+          (trackedTarget) => trackedTarget.hitCircle,
+        ),
+        type: "validate",
+      },
+      path: route.pathPoints,
+      targetSequence: route.targetSequence.map((target) => target.hitCircle),
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+    return {
+      expandedStates: replay.expandedStates,
+      ...(replay.evidence ? { evidence: replay.evidence.owned } : {}),
+      status: replay.status,
+    } as const;
+  } finally {
+    scanner.dispose();
+  }
+}
+
+/** Converts owned WASM evidence to the existing incumbent union without rebuilding formula/trajectory state. */
+function createOneClickClearWasmIncumbentEvidence(
+  evidence: GraphwarWasmStepGlitchOwnedEvidence,
+  debugMetrics?: GraphwarPathfindingDebugMetrics,
+) {
+  return {
+    formulaContext: evidence.formulaContext,
+    trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
+      evidence.trajectory.visiblePixels,
+      evidence.trajectory.obstacleHitIndex,
+      debugMetrics,
+    ),
+  } satisfies Extract<OneClickClearIncumbentEvidence, { formulaContext: GraphwarTrajectoryFormulaContext }>;
 }
 
 /** 执行一次候选路线生命周期：DAG 选路、增量验证、删点优化、最终复验。 */

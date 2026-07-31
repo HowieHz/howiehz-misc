@@ -1,8 +1,10 @@
 import {
+  createGraphwarBackendFallbackExecution,
   createGraphwarTypescriptWorkerBackendConfiguration,
   graphwarBackendAttemptIdentitiesAreEqual,
   type GraphwarBackendAttemptIdentity,
   type GraphwarBackendControlMessage,
+  type GraphwarBackendExecution,
   type GraphwarWorkerBackendConfiguration,
   type GraphwarWorkerBackendSelection,
 } from "../../core/algorithm-backend";
@@ -33,6 +35,8 @@ export function isGraphwarTrajectoryCancelledError(error: unknown) {
 
 /** 单次轨迹任务的原子结果和端到端耗时。 */
 export interface GraphwarTrajectoryRunResult {
+  /** Requested/effective algorithm backend for this stable outer task. */
+  backendExecution: GraphwarBackendExecution;
   /** 函数解算和轨迹模拟的原子结果。 */
   outcome: GraphwarTrajectoryCalculationOutcome;
   /** 从 run 调用到结果可写回页面的端到端耗时。 */
@@ -52,7 +56,7 @@ export interface GraphwarTrajectoryRunnerOptions {
   /** Worker 永久不可用时通知页面显示持续降级警告。 */
   onFallback?: (reason: string) => void;
   /** 任一 active/standby Worker 的明确 WASM fault，包含空闲初始化故障。 */
-  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => void;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => number | undefined;
   /** 每次主线程降级任务前先让浏览器绘制状态，再执行可能很慢的同步计算。 */
   waitForFallbackPaint?: () => Promise<void>;
 }
@@ -60,6 +64,7 @@ export interface GraphwarTrajectoryRunnerOptions {
 /** 当前权威轨迹任务及其换代和结算状态。 */
 interface PendingTrajectoryTask {
   attempt: GraphwarBackendAttemptIdentity;
+  backendExecution: GraphwarBackendExecution;
   id: number;
   input: GraphwarTrajectoryCalculationInput;
   reject: (reason?: unknown) => void;
@@ -69,11 +74,26 @@ interface PendingTrajectoryTask {
   workerFailureCount: number;
 }
 
+/** Backend selection 尚未完成时也必须拥有可取消的公开任务和输入快照。 */
+interface PendingTrajectoryAdmission {
+  backendGeneration: number;
+  input: GraphwarTrajectoryCalculationInput;
+  reject: (reason?: unknown) => void;
+  resolve: (value: GraphwarTrajectoryRunResult) => void;
+  isSettled: boolean;
+  startedAt: number;
+}
+
 /** 一个可复用 Worker 及其当前绑定任务。 */
 interface TrajectoryWorkerSlot {
   activeTask?: PendingTrajectoryTask;
   backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   worker: Worker;
+}
+
+interface TrajectoryWorkerInitializationWasmFault {
+  message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>;
+  replacementGeneration: number | undefined;
 }
 
 const WORKER_SLOT_TARGET = 2;
@@ -100,10 +120,10 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
   const now = options.now ?? nowMs;
   const workerSlots: TrajectoryWorkerSlot[] = [];
   let isClosed = false;
+  let pendingAdmission: PendingTrajectoryAdmission | undefined;
   let currentTask: PendingTrajectoryTask | undefined;
   let nextRequestId = 1;
-  let nextRunToken = 1;
-  let isWorkerFallbackActive = false;
+  let workerFallback: { reason: string } | undefined;
 
   /** 固定输入快照并启动 latest-wins 主轨迹任务。 */
   function run(input: GraphwarTrajectoryCalculationInput) {
@@ -112,9 +132,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return Promise.reject<GraphwarTrajectoryRunResult>(new GraphwarTrajectoryCancelledError());
     }
 
-    cancelCurrentTask();
-    const runToken = nextRunToken;
-    nextRunToken += 1;
+    cancel();
     // PostMessage 不能克隆 Vue reactive proxy；进入 runner 时统一固定为本次任务的纯数据快照。
     let taskInput: GraphwarTrajectoryCalculationInput;
     try {
@@ -124,47 +142,102 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
         normalizeError(error, "Graphwar trajectory input could not be cloned"),
       );
     }
-    const startWithConfiguration = (configuration: GraphwarWorkerBackendConfiguration) => {
-      if (isClosed || runToken !== nextRunToken - 1) {
-        throw new GraphwarTrajectoryCancelledError();
+    return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
+      const admission: PendingTrajectoryAdmission = {
+        backendGeneration: backendConfiguration.generation,
+        input: taskInput,
+        reject,
+        resolve,
+        isSettled: false,
+        startedAt,
+      };
+      pendingAdmission = admission;
+      if (!options.createBackendSelection) {
+        startAdmission(admission, backendConfiguration);
+        return;
       }
-      if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
-        for (const slot of [...workerSlots]) {
-          terminateWorkerSlot(slot);
-        }
-        backendConfiguration = configuration;
-        isWorkerFallbackActive = false;
-      }
-      const requestId = nextRequestId;
-      nextRequestId += 1;
-      const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
 
-      return new Promise<GraphwarTrajectoryRunResult>((resolve, reject) => {
-        const task: PendingTrajectoryTask = {
-          attempt,
-          id: requestId,
-          input: taskInput,
-          reject,
-          resolve,
-          isSettled: false,
-          startedAt,
-          workerFailureCount: 0,
-        };
-        currentTask = task;
-        if (isWorkerFallbackActive) {
-          void runOnMainThread(task);
-          return;
-        }
-        startWorkerTask(task);
-      });
+      let selection: GraphwarWorkerBackendSelection;
+      try {
+        selection = createBackendSelection();
+        admission.backendGeneration = selection.generation;
+      } catch (error) {
+        rejectAdmission(admission, normalizeError(error, "Graphwar trajectory backend selection failed"));
+        return;
+      }
+      void selection.promise.then(
+        (configuration) => startAdmission(admission, configuration),
+        (error: unknown) =>
+          rejectAdmission(admission, normalizeError(error, "Graphwar trajectory backend selection failed")),
+      );
+    });
+  }
+
+  /** 只有仍权威的 admission 可以创建 backend attempt 和 Worker。 */
+  function startAdmission(admission: PendingTrajectoryAdmission, configuration: GraphwarWorkerBackendConfiguration) {
+    if (isClosed || pendingAdmission !== admission || admission.isSettled) {
+      return;
+    }
+    pendingAdmission = undefined;
+    if (!areBackendConfigurationsEqual(configuration, backendConfiguration)) {
+      for (const slot of [...workerSlots]) {
+        terminateWorkerSlot(slot);
+      }
+      backendConfiguration = configuration;
+      workerFallback = undefined;
+    }
+    const requestId = nextRequestId;
+    nextRequestId += 1;
+    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
+
+    const task: PendingTrajectoryTask = {
+      attempt,
+      backendExecution: backendConfiguration.backendExecution,
+      id: requestId,
+      input: admission.input,
+      reject: admission.reject,
+      resolve: admission.resolve,
+      isSettled: false,
+      startedAt: admission.startedAt,
+      workerFailureCount: 0,
     };
-    return options.createBackendSelection
-      ? createBackendSelection().promise.then(startWithConfiguration)
-      : startWithConfiguration(backendConfiguration);
+    currentTask = task;
+    if (workerFallback) {
+      if (task.backendExecution.requested === "wasm") {
+        task.backendExecution = createGraphwarBackendFallbackExecution(workerFallback.reason);
+      }
+      void runOnMainThread(task);
+      return;
+    }
+    startWorkerTask(task);
+  }
+
+  /** Selection 失败只拒绝仍在等待的公开任务。 */
+  function rejectAdmission(admission: PendingTrajectoryAdmission, error: Error) {
+    if (pendingAdmission !== admission || admission.isSettled) {
+      return;
+    }
+    pendingAdmission = undefined;
+    admission.isSettled = true;
+    admission.reject(error);
+  }
+
+  /** 显式取消和 supersede 必须在 module 仍 loading 时立即结算 Promise。 */
+  function cancelAdmission() {
+    const admission = pendingAdmission;
+    if (!admission) {
+      return;
+    }
+    pendingAdmission = undefined;
+    if (!admission.isSettled) {
+      admission.isSettled = true;
+      admission.reject(new GraphwarTrajectoryCancelledError());
+    }
   }
 
   /** 取消权威任务；忙碌 Worker 必须硬终止，避免过期 Step 计算继续占用 CPU。 */
   function cancel() {
+    cancelAdmission();
     cancelCurrentTask();
   }
 
@@ -212,6 +285,10 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       postWorkerTask(created.slot, task);
       return;
     }
+    if (created.wasmFault) {
+      replayInitializationFault(created.wasmFault);
+      return;
+    }
     handleWorkerInfrastructureFailure(task, created.error);
   }
 
@@ -231,21 +308,40 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
 
-    while (!isClosed && !isWorkerFallbackActive && workerSlots.length < WORKER_SLOT_TARGET) {
-      if (!tryCreateWorkerSlot().slot) {
-        return;
+    while (!isClosed && !workerFallback && workerSlots.length < WORKER_SLOT_TARGET) {
+      const standby = tryCreateWorkerSlot();
+      if (standby.slot) {
+        continue;
       }
+      if (standby.wasmFault) {
+        replayInitializationFault(standby.wasmFault);
+      }
+      return;
     }
+  }
+
+  /** 同步 backend-init fault 与异步 typed fault 一样替换当前 attempt，不经过普通换槽重试。 */
+  function replayInitializationFault(fault: TrajectoryWorkerInitializationWasmFault) {
+    replayGenerationAsTypescript(
+      fault.message.generation,
+      fault.replacementGeneration ?? Math.max(fault.message.generation + 1, backendConfiguration.generation + 1),
+      `${fault.message.fault.code}: ${fault.message.fault.message}`,
+    );
   }
 
   /** 创建槽位并绑定协议事件，将构造失败统一转换成 Error。 */
   function tryCreateWorkerSlot():
-    | { error: Error; slot?: undefined }
-    | { error?: undefined; slot: TrajectoryWorkerSlot } {
+    | {
+        error: Error;
+        slot?: undefined;
+        wasmFault?: TrajectoryWorkerInitializationWasmFault;
+      }
+    | { error?: undefined; slot: TrajectoryWorkerSlot; wasmFault?: undefined } {
     let worker: Worker | undefined;
     try {
       worker = createWorker();
       let initializationFailure: Error | undefined;
+      let initializationWasmFault: TrajectoryWorkerInitializationWasmFault | undefined;
       let isInitializing = true;
       const backendSlot = createGraphwarWorkerBackendSlot({
         configuration: backendConfiguration,
@@ -257,8 +353,12 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
           }
         },
         onWasmFault: (message) => {
-          options.onWasmFault?.(message);
-          if (!isInitializing) {
+          if (isInitializing) {
+            initializationWasmFault = {
+              message,
+              replacementGeneration: options.onWasmFault?.(message),
+            };
+          } else {
             handleWorkerWasmFault(slot, message);
           }
         },
@@ -276,6 +376,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
             (failedState.type === "failed"
               ? failedState.error
               : new Error("Graphwar trajectory worker backend initialization failed")),
+          ...(initializationWasmFault ? { wasmFault: initializationWasmFault } : {}),
         };
       }
       worker.addEventListener(
@@ -327,6 +428,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     slot.activeTask = undefined;
     completeTask(task, () =>
       task.resolve({
+        backendExecution: task.backendExecution,
         elapsedMs: getElapsedMs(now, task.startedAt),
         outcome: response.outcome,
       }),
@@ -342,6 +444,15 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
     const task = slot.activeTask;
+    if (
+      message.context.type !== "initialization" &&
+      (!task ||
+        !isCurrentTask(task) ||
+        !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, task.attempt))
+    ) {
+      return;
+    }
+    options.onWasmFault?.(message);
     terminateWorkerSlot(slot);
     void replayAfterWasmFault(task ?? currentTask, message);
   }
@@ -354,19 +465,39 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     if (!task || !isCurrentTask(task)) {
       return;
     }
+    replayGenerationAsTypescript(
+      message.generation,
+      Math.max(message.generation + 1, backendConfiguration.generation + 1),
+      `${message.fault.code}: ${message.fault.message}`,
+    );
+  }
+
+  /** 页面级 fuse 撤销同 generation 的全部槽，并从当前任务快照安装 TS cold attempt。 */
+  function replayGenerationAsTypescript(failedGeneration: number, fallbackGeneration: number, fallbackReason: string) {
+    const admission = pendingAdmission;
+    if (backendConfiguration.generation !== failedGeneration && admission?.backendGeneration !== failedGeneration) {
+      return false;
+    }
     for (const workerSlot of [...workerSlots]) {
       terminateWorkerSlot(workerSlot);
     }
-    attemptGate.cancelOuterTask(task.attempt);
-    const fallbackGeneration = Math.max(message.generation + 1, backendConfiguration.generation + 1);
-    const fallbackConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration);
+    const fallbackConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(
+      fallbackGeneration,
+      fallbackReason,
+    );
     backendConfiguration = fallbackConfiguration;
-    task.attempt = attemptGate.beginOuterTask(fallbackGeneration);
-    task.workerFailureCount = 0;
-    isWorkerFallbackActive = false;
-    if (isCurrentTask(task)) {
+    workerFallback = undefined;
+    if (admission?.backendGeneration === failedGeneration) {
+      startAdmission(admission, fallbackConfiguration);
+    }
+    const task = currentTask;
+    if (task && !task.isSettled && task.attempt.backendGeneration === failedGeneration) {
+      task.attempt = attemptGate.replaceAttempt(task.attempt, fallbackGeneration);
+      task.backendExecution = fallbackConfiguration.backendExecution;
+      task.workerFailureCount = 0;
       startWorkerTask(task);
     }
+    return true;
   }
 
   /** 移除故障槽，并决定当前任务是否需要换槽重试。 */
@@ -398,8 +529,11 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
       return;
     }
 
-    if (!isWorkerFallbackActive) {
-      isWorkerFallbackActive = true;
+    if (!workerFallback) {
+      workerFallback = { reason: error.message };
+      if (task.backendExecution.requested === "wasm") {
+        task.backendExecution = createGraphwarBackendFallbackExecution(error.message);
+      }
       for (const slot of [...workerSlots]) {
         terminateWorkerSlot(slot);
       }
@@ -439,6 +573,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
     }
     completeTask(task, () =>
       task.resolve({
+        backendExecution: task.backendExecution,
         elapsedMs: getElapsedMs(now, task.startedAt),
         outcome,
       }),
@@ -490,6 +625,7 @@ export function createGraphwarTrajectoryRunner(options: GraphwarTrajectoryRunner
   return {
     cancel,
     close,
+    replayGenerationAsTypescript,
     run,
   };
 }

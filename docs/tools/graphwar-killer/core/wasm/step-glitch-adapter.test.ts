@@ -264,7 +264,13 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
       packGraphwarWasmStepGlitchCommandInput(
         arena,
         fixture.context,
-        { controlX: -6, path: [fixture.sourcePath[0]], targetSequence: [], type: "replay" },
+        {
+          controlX: -6,
+          finalValidation: { type: "none" },
+          path: [fixture.sourcePath[0]],
+          targetSequence: [],
+          type: "replay",
+        },
         8,
       ),
     ).toEqual({ status: "invalid-input" });
@@ -275,6 +281,7 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
         fixture.context,
         {
           controlX: -6,
+          finalValidation: { type: "none" },
           path: [createPixelPoint(97, 225), fixture.sourcePath[1]],
           targetSequence: [],
           type: "replay",

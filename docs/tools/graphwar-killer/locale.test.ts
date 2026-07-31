@@ -35,6 +35,17 @@ while (pendingEnglishLocaleValues.length > 0) {
 englishCompactTitles.push(englishGraphwarKillerLocale.ui.point.coordinateTitle("Path 1", "x"));
 
 describe("Chinese Graphwar Killer locale", () => {
+  it("describes the non-persistent experimental WASM runtime states", () => {
+    expect(graphwarKillerLocale.ui.settings.runtime).toEqual({
+      degraded: "⚠ 已降级",
+      heading: "运行设置",
+      loading: "正在加载…",
+      ready: "WASM 已就绪",
+      wasmAcceleration: "WASM 加速（实验性）",
+      wasmAccelerationTitle: "开启后优先使用 WASM 执行识图、公式、轨迹和寻路；不可用时自动回退 TypeScript，刷新后重置",
+    });
+  });
+
   it("describes shared One-Click Clear target assignment in labels and HTML titles", () => {
     expect(graphwarKillerLocale.ui.pathfinding.debugDetails).not.toHaveProperty("build-dag-targets");
     expect(graphwarKillerLocale.ui.pathfinding.debugDetails["assign-clear-targets"]).toEqual({
@@ -137,6 +148,18 @@ describe("Chinese Graphwar Killer locale", () => {
 });
 
 describe("English Graphwar Killer locale", () => {
+  it("describes the non-persistent experimental WASM runtime states", () => {
+    expect(englishGraphwarKillerLocale.ui.settings.runtime).toEqual({
+      degraded: "⚠ Degraded",
+      heading: "Runtime",
+      loading: "Loading…",
+      ready: "WASM ready",
+      wasmAcceleration: "WASM acceleration (experimental)",
+      wasmAccelerationTitle:
+        "Prefer WASM for recognition, formulas, trajectories, and pathfinding; fall back to TypeScript when unavailable. Resets on refresh",
+    });
+  });
+
   it("describes shared One-Click Clear target assignment in labels and HTML titles", () => {
     expect(englishGraphwarKillerLocale.ui.pathfinding.debugDetails).not.toHaveProperty("build-dag-targets");
     expect(englishGraphwarKillerLocale.ui.pathfinding.debugDetails["assign-clear-targets"]).toEqual({

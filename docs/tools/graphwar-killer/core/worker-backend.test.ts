@@ -20,6 +20,8 @@ const attempt = {
   backendGeneration: 4,
   outerTaskId: 1,
 } satisfies GraphwarBackendAttemptIdentity;
+const typescriptBackendExecution = { effective: "typescript", requested: "typescript" } as const;
+const wasmBackendExecution = { effective: "wasm", requested: "wasm" } as const;
 
 class TestValidatedRuntime extends GraphwarValidatedWasmRuntime {
   readonly testId: string;
@@ -39,6 +41,7 @@ describe("Graphwar Worker backend control", () => {
     });
     const initialization = {
       backend: { type: "typescript" as const },
+      backendExecution: typescriptBackendExecution,
       generation: 4,
       role: "trajectory" as const,
       type: "backend-init" as const,
@@ -67,6 +70,7 @@ describe("Graphwar Worker backend control", () => {
     });
     runtime.handleMessage({
       backend: { module, type: "wasm" },
+      backendExecution: wasmBackendExecution,
       generation: 4,
       role: "detection-main",
       type: "backend-init",
@@ -76,7 +80,11 @@ describe("Graphwar Worker backend control", () => {
     expect(instantiateRuntime).toHaveBeenCalledOnce();
     finishInstantiation?.(new TestValidatedRuntime("detection-main"));
     await expect(ready).resolves.toMatchObject({ generation: 4, type: "wasm" });
-    expect(runtime.getNestedConfiguration(attempt)).toEqual({ backend: { module, type: "wasm" }, generation: 4 });
+    expect(runtime.getNestedConfiguration(attempt)).toEqual({
+      backend: { module, type: "wasm" },
+      backendExecution: wasmBackendExecution,
+      generation: 4,
+    });
     expect(outbound.at(-1)).toEqual({
       backend: "wasm",
       generation: 4,
@@ -97,6 +105,7 @@ describe("Graphwar Worker backend control", () => {
     });
     runtime.handleMessage({
       backend: { module, type: "wasm" },
+      backendExecution: wasmBackendExecution,
       generation: 4,
       role: "pathfinding-master",
       type: "backend-init",
@@ -129,6 +138,7 @@ describe("Graphwar Worker backend control", () => {
     expect(messages).toEqual([
       {
         backend: { type: "typescript" },
+        backendExecution: typescriptBackendExecution,
         generation: 4,
         role: "live-click-preview",
         type: "backend-init",
@@ -238,6 +248,7 @@ describe("Graphwar Worker backend control", () => {
     });
     runtime.handleMessage({
       backend: { module, type: "wasm" },
+      backendExecution: wasmBackendExecution,
       generation: 4,
       role: "trajectory",
       type: "backend-init",
@@ -274,6 +285,7 @@ describe("Graphwar Worker backend control", () => {
     });
     runtime.handleMessage({
       backend: { module, type: "wasm" },
+      backendExecution: wasmBackendExecution,
       generation: 4,
       role: "detection-main",
       type: "backend-init",
@@ -304,6 +316,7 @@ describe("Graphwar Worker backend control", () => {
     });
     runtime.handleMessage({
       backend: { type: "typescript" },
+      backendExecution: typescriptBackendExecution,
       generation: 4,
       role: "detection-main",
       type: "backend-init",
@@ -354,6 +367,7 @@ describe("Graphwar Worker backend control", () => {
     });
     runtime.handleMessage({
       backend: { type: "typescript" },
+      backendExecution: typescriptBackendExecution,
       generation: 4,
       role: "trajectory",
       type: "backend-init",
@@ -363,6 +377,7 @@ describe("Graphwar Worker backend control", () => {
     expect(() =>
       runtime.handleMessage({
         backend: { type: "typescript" },
+        backendExecution: typescriptBackendExecution,
         generation: 4,
         role: "trajectory",
         type: "backend-init",

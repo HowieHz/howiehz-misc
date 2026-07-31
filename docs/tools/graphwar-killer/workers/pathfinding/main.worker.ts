@@ -25,6 +25,12 @@ import type { GraphBounds, PixelPoint } from "../../core/types";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
+  createGraphwarWasmStepGlitchContext,
+  createGraphwarWasmStepGlitchContextInput,
+  createGraphwarWasmStepGlitchScanCommandInput,
+  type GraphwarWasmStepGlitchGeometryTestContext,
+} from "../../core/wasm/step-glitch-adapter";
+import {
   createGraphwarWorkerBackendRuntime,
   createGraphwarWorkerBackendSlot,
   executeGraphwarWorkerTask,
@@ -542,7 +548,10 @@ async function findSmartPath(
   const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
   const pathSearchPolicy = resolveGraphwarPathSearchPolicy(formulaMode.contract, input.routeMode);
   const debugMetrics = shouldCollectDiagnostics
-    ? createGraphwarPathfindingDebugMetrics(pathSearchPolicy.type === "step-glitch")
+    ? createGraphwarPathfindingDebugMetrics(
+        pathSearchPolicy.type === "step-glitch",
+        wasmRuntime ? { effective: "wasm", requested: "wasm" } : { effective: "typescript", requested: "typescript" },
+      )
     : undefined;
   const result = await findSmartPathResult(
     id,
@@ -581,6 +590,7 @@ async function findSmartPathResult(
           timings,
           { ...pathSearchPolicy, runtime: { simulationMask: input.simulationMask } },
           debugMetrics,
+          wasmRuntime,
         )
       : { failureReason: "route", timings };
   }
@@ -728,6 +738,7 @@ function findStepGlitchSmartPath(
   timings: GraphwarSmartPathfindingWorkerTiming[],
   pathSearchPolicy: Extract<SmartPathSearchRuntimePolicy, { type: "step-glitch" }>,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): GraphwarSmartPathfindingPathResult {
   const simulationMask = pathSearchPolicy.runtime.simulationMask;
   const scannerFormulaMode =
@@ -737,6 +748,9 @@ function findStepGlitchSmartPath(
           ...formulaMode.settings,
           stepGlitchObstacleMask: simulationMask,
         });
+  if (wasmRuntime) {
+    return findStepGlitchSmartPathWithWasm(input, scannerFormulaMode, timings, pathSearchPolicy, wasmRuntime);
+  }
   const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const scanResult = scanGraphwarStepGlitchPath({
     bounds: input.bounds,
@@ -818,6 +832,106 @@ function findStepGlitchSmartPath(
   }
   setMasterStepGlitchEvidence(input, path, resultPrefixEvidence);
   return { path, timings };
+}
+
+/** Effective WASM smart Step-glitch path: one retained context owns scan and deletion replays. */
+export function findStepGlitchSmartPathWithWasm(
+  input: GraphwarSmartPathfindingPathInput,
+  scannerFormulaMode: GraphwarTrajectoryFormulaMode,
+  timings: GraphwarSmartPathfindingWorkerTiming[],
+  pathSearchPolicy: Extract<SmartPathSearchRuntimePolicy, { type: "step-glitch" }>,
+  wasmRuntime: GraphwarWasmKernelRuntime,
+): GraphwarSmartPathfindingPathResult {
+  const simulationMask = pathSearchPolicy.runtime.simulationMask;
+  const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
+  const contextResult = createGraphwarWasmStepGlitchContext(
+    wasmRuntime,
+    createGraphwarWasmStepGlitchContextInput({
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      formulaMode: scannerFormulaMode,
+      ...(prefixEvidence ? { prefixEvidence } : {}),
+      ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
+      requiredTargets: [],
+      simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+      simulationMask,
+      sourcePath: input.sourcePath,
+    }),
+  );
+  if (contextResult.status !== "ready") {
+    return { failureReason: "route", timings };
+  }
+
+  const scanner = contextResult.context;
+  try {
+    const scanStartedAt = nowMs();
+    const scanResult = scanner.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({
+        hitTarget: input.hitTarget,
+        targetPoint: input.targetPoint,
+      }),
+    );
+    timings.push({ elapsedMs: Math.max(0, nowMs() - scanStartedAt), stage: "search-route" });
+    if (scanResult.status !== "hit") {
+      const blockedPoint = scanResult.blockedPoint
+        ? graphToImagePoint(scanResult.blockedPoint, input.bounds, input.boundsRect)
+        : undefined;
+      return {
+        ...(blockedPoint ? { blockedPoint } : {}),
+        failureReason: blockedPoint ? "trajectory" : "route",
+        timings,
+      };
+    }
+    const evidence = scanResult.evidence?.owned;
+    if (!evidence) {
+      throw new GraphwarWasmFault("abi", "Step-glitch WASM scan returned no owned evidence");
+    }
+    let path = [...evidence.path];
+    if (!pathFollowsGraphRule(path, input.bounds, input.boundsRect)) {
+      return { failureReason: "graph-rule", timings };
+    }
+    if (input.isDeleteOptimizationEnabled && path.length > 3) {
+      path = measureSyncStage(timings, "optimize-path", () =>
+        optimizeStepGlitchSmartPathWithWasm(scanner, input, path),
+      );
+    }
+    // The production evidence ABI intentionally carries no complete prefix evidence; do not publish a synthetic one.
+    return { path, timings };
+  } finally {
+    scanner.dispose();
+  }
+}
+
+/** WASM deletion replay keeps the same greedy acceptance order as the TypeScript scanner. */
+function optimizeStepGlitchSmartPathWithWasm(
+  scanner: GraphwarWasmStepGlitchGeometryTestContext,
+  input: GraphwarSmartPathfindingPathInput,
+  points: readonly PixelPoint[],
+): PixelPoint[] {
+  let optimized = [...points];
+  const firstOptimizableIndex = Math.max(1, input.sourcePath.length);
+  const controlX = imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x;
+  for (let index = firstOptimizableIndex; index < optimized.length - 1 && optimized.length > 2;) {
+    const candidatePath = [...optimized.slice(0, index), ...optimized.slice(index + 1)];
+    if (!pathFollowsGraphRule(candidatePath, input.bounds, input.boundsRect)) {
+      index += 1;
+      continue;
+    }
+    const replay = scanner.replayRaw({
+      controlX,
+      finalValidation: { type: "none" },
+      path: candidatePath,
+      targetSequence: [input.hitTarget],
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+    if (replay.status !== "hit") {
+      index += 1;
+      continue;
+    }
+    optimized = candidatePath;
+  }
+  return optimized;
 }
 
 /** 删除单目标邪道路线的非锚点，并随精确成功路径更新可发布公式前缀。 */
@@ -1205,7 +1319,10 @@ async function buildOneClickClearPath(
   const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
   const pathSearchSelection = resolveGraphwarPathSearchPolicy(formulaMode.contract, input.routeMode);
   const debugMetrics = shouldCollectDiagnostics
-    ? createGraphwarPathfindingDebugMetrics(pathSearchSelection.type === "step-glitch")
+    ? createGraphwarPathfindingDebugMetrics(
+        pathSearchSelection.type === "step-glitch",
+        wasmRuntime ? { effective: "wasm", requested: "wasm" } : { effective: "typescript", requested: "typescript" },
+      )
     : undefined;
   const routeMaskLookup = getMasterRouteMaskFromBase(input, pathSearchSelection.type === "step-stateful");
   timings.push({
@@ -1327,6 +1444,7 @@ async function buildOneClickClearPath(
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
       simulationMaskCacheId: input.simulationMaskCacheId,
+      ...(wasmRuntime ? { wasmRuntime } : {}),
       ...(pathSearchPolicy.type === "step-stateful"
         ? {
             validateStepRoute: (points) =>

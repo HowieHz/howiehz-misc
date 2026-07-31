@@ -4,7 +4,11 @@ import {
   type GraphwarTrajectoryCalculationWorkerRequest,
   type GraphwarTrajectoryCalculationWorkerResponse,
 } from "../../controllers/path/trajectory-calculation";
-import type { GraphwarBackendControlMessage, GraphwarBackendInitializationMessage } from "../../core/algorithm-backend";
+import type {
+  GraphwarBackendControlMessage,
+  GraphwarBackendExecution,
+  GraphwarBackendInitializationMessage,
+} from "../../core/algorithm-backend";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../core/worker-backend";
 
@@ -39,17 +43,27 @@ async function runTrajectoryRequest(request: GraphwarTrajectoryCalculationWorker
     backendRuntime,
     request.attempt,
     { attempt: request.attempt, type: "task" },
-    (backend) =>
-      backend.type === "wasm" && backend.runtime instanceof GraphwarWasmKernelRuntime
-        ? calculateGraphwarTrajectoryWithWasm(backend.runtime, request.input)
-        : calculateGraphwarTrajectory(request.input),
+    (backend) => {
+      const backendExecution: GraphwarBackendExecution =
+        backend.type === "wasm"
+          ? { effective: "wasm", requested: "wasm" }
+          : { effective: "typescript", requested: "typescript" };
+      return {
+        backendExecution,
+        outcome:
+          backend.type === "wasm" && backend.runtime instanceof GraphwarWasmKernelRuntime
+            ? calculateGraphwarTrajectoryWithWasm(backend.runtime, request.input)
+            : calculateGraphwarTrajectory(request.input),
+      };
+    },
   );
   if (execution.type === "wasm-fault") {
     return;
   }
   workerScope.postMessage({
     attempt: request.attempt,
+    backendExecution: execution.result.backendExecution,
     id: request.id,
-    outcome: execution.result,
+    outcome: execution.result.outcome,
   });
 }

@@ -1,4 +1,4 @@
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarBackendExecution } from "../../core/algorithm-backend";
 import type { BoundsRect } from "../../core/types";
 import type {
   GraphwarObjectsDetectionResult,
@@ -84,6 +84,7 @@ export interface GraphwarDetectionWorkerRequest {
 export type GraphwarDetectionWorkerSuccessResponse =
   | {
       attempt: GraphwarBackendAttemptIdentity;
+      backendExecution: GraphwarBackendExecution;
       id: number;
       result: GraphwarAutoDetectionResult;
       taskType: "detect-auto";
@@ -92,6 +93,7 @@ export type GraphwarDetectionWorkerSuccessResponse =
     }
   | {
       attempt: GraphwarBackendAttemptIdentity;
+      backendExecution: GraphwarBackendExecution;
       id: number;
       result: GraphwarBoundsOnlyDetectionResult;
       taskType: "detect-bounds-only";
@@ -100,6 +102,7 @@ export type GraphwarDetectionWorkerSuccessResponse =
     }
   | {
       attempt: GraphwarBackendAttemptIdentity;
+      backendExecution: GraphwarBackendExecution;
       id: number;
       result: GraphwarObjectsDetectionResult;
       taskType: "detect-bounds";

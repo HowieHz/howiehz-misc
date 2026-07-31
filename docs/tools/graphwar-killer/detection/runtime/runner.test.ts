@@ -6,11 +6,7 @@ import {
   isGraphwarBackendControlMessage,
   type GraphwarBackendControlMessage,
 } from "../../core/algorithm-backend";
-import type {
-  GraphwarDetectionWorkerRequest,
-  GraphwarDetectionWorkerResponse,
-  GraphwarDetectionWorkerTimingEntry,
-} from "./protocol";
+import type { GraphwarDetectionWorkerRequest, GraphwarDetectionWorkerResponse } from "./protocol";
 import { createGraphwarDetectionRunner, isGraphwarDetectionCancelledError } from "./runner";
 
 describe("Graphwar detection runner backend attempts", () => {
@@ -26,18 +22,24 @@ describe("Graphwar detection runner backend attempts", () => {
 
   it("publishes stage, timings and result only for the current request attempt", async () => {
     const stages: string[] = [];
-    const receivedTimings: (readonly GraphwarDetectionWorkerTimingEntry[])[] = [];
+    const onTimings = vi.fn();
     const runner = createGraphwarDetectionRunner();
     const result = runner.detectBounds(createInput(), {
       onStage: (stage) => stages.push(stage),
-      onTimings: (timings) => receivedTimings.push(timings),
+      onTimings,
     });
     await Promise.resolve();
     const worker = FakeWorker.instances[0];
     const request = worker.requests[0];
 
     expect(worker.controlMessages).toEqual([
-      { backend: { type: "typescript" }, generation: 0, role: "detection-main", type: "backend-init" },
+      {
+        backend: { type: "typescript" },
+        backendExecution: { effective: "typescript", requested: "typescript" },
+        generation: 0,
+        role: "detection-main",
+        type: "backend-init",
+      },
     ]);
     expect(request.attempt).toEqual({ attemptId: 1, backendGeneration: 0, outerTaskId: 1 });
     worker.emit({ ...request, stage: "detecting-bounds", type: "stage" });
@@ -45,7 +47,29 @@ describe("Graphwar detection runner backend attempts", () => {
 
     await expect(result).resolves.toEqual({ edgeRect: undefined });
     expect(stages).toEqual(["detecting-bounds"]);
-    expect(receivedTimings).toEqual([[{ elapsedMs: 1, stage: "detecting-bounds" }]]);
+    expect(onTimings).toHaveBeenCalledWith([{ elapsedMs: 1, stage: "detecting-bounds" }], {
+      effective: "typescript",
+      requested: "typescript",
+    });
+    runner.close();
+  });
+
+  it("reports a successful requested WASM detection as effective WASM", async () => {
+    const onTimings = vi.fn();
+    const runner = createGraphwarDetectionRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(3, createEmptyWasmModule()),
+    });
+    const result = runner.detectBounds(createInput(), { onTimings });
+    await Promise.resolve();
+    const worker = FakeWorker.instances[0];
+
+    worker.emit(createSuccessResponse(worker.requests[0]));
+
+    await expect(result).resolves.toEqual({ edgeRect: undefined });
+    expect(onTimings).toHaveBeenCalledWith([{ elapsedMs: 1, stage: "detecting-bounds" }], {
+      effective: "wasm",
+      requested: "wasm",
+    });
     runner.close();
   });
 
@@ -123,6 +147,30 @@ describe("Graphwar detection runner backend attempts", () => {
     expect(firstStage).not.toHaveBeenCalled();
     expect(secondStage).toHaveBeenCalledOnce();
     expect(secondRequest.attempt).toEqual({ attemptId: 2, backendGeneration: 0, outerTaskId: 2 });
+    runner.close();
+  });
+
+  it("ignores a typed fault from a superseded detection task", async () => {
+    const onWasmFault = vi.fn(() => 8);
+    const runner = createGraphwarDetectionRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(3, createEmptyWasmModule()),
+      onWasmFault,
+    });
+    const first = runner.detectBounds(createInput());
+    const firstCancelled = first.catch((error: unknown) => error);
+    await Promise.resolve();
+    const firstWorker = FakeWorker.instances[0];
+    const firstRequest = firstWorker.requests[0];
+    const second = runner.detectBounds(createInput());
+    await Promise.resolve();
+    const secondWorker = FakeWorker.instances[1];
+
+    firstWorker.emitRaw(createTaskFault(firstRequest, "late detection fault"));
+
+    expect(isGraphwarDetectionCancelledError(await firstCancelled)).toBe(true);
+    expect(onWasmFault).not.toHaveBeenCalled();
+    secondWorker.emit(createSuccessResponse(secondWorker.requests[0]));
+    await expect(second).resolves.toEqual({ edgeRect: undefined });
     runner.close();
   });
 
@@ -207,12 +255,13 @@ describe("Graphwar detection runner backend attempts", () => {
   it("cold-replays a typed fault from master RGBA after the WASM request was transferred", async () => {
     const module = createEmptyWasmModule();
     const onWasmFault = vi.fn(() => 8);
+    const onTimings = vi.fn();
     const input = createInput(new Uint8ClampedArray([1, 2, 3, 4]));
     const runner = createGraphwarDetectionRunner({
       backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(7, module),
       onWasmFault,
     });
-    const result = runner.detectBounds(input);
+    const result = runner.detectBounds(input, { onTimings });
     await Promise.resolve();
     const wasmWorker = FakeWorker.instances[0];
     const wasmRequest = wasmWorker.requests[0];
@@ -225,13 +274,28 @@ describe("Graphwar detection runner backend attempts", () => {
     expect(wasmWorker.isTerminated).toBe(true);
     expect(onWasmFault).toHaveBeenCalledOnce();
     expect(typescriptWorker.controlMessages).toEqual([
-      { backend: { type: "typescript" }, generation: 8, role: "detection-main", type: "backend-init" },
+      {
+        backend: { type: "typescript" },
+        backendExecution: {
+          effective: "typescript",
+          fallbackReason: "trap: faulted after transfer",
+          requested: "wasm",
+        },
+        generation: 8,
+        role: "detection-main",
+        type: "backend-init",
+      },
     ]);
     expect(replayRequest.attempt).toEqual({ attemptId: 2, backendGeneration: 8, outerTaskId: 1 });
     expect(replayRequest.task.imageData.data).toEqual(new Uint8ClampedArray([1, 2, 3, 4]));
     typescriptWorker.emit(createSuccessResponse(replayRequest));
 
     await expect(result).resolves.toEqual({ edgeRect: undefined });
+    expect(onTimings).toHaveBeenCalledWith([{ elapsedMs: 1, stage: "detecting-bounds" }], {
+      effective: "typescript",
+      fallbackReason: "trap: faulted after transfer",
+      requested: "wasm",
+    });
     runner.close();
   });
 
@@ -248,7 +312,17 @@ describe("Graphwar detection runner backend attempts", () => {
 
     expect(FakeWorker.instances[0].isTerminated).toBe(true);
     expect(replacementWorker.controlMessages).toEqual([
-      { backend: { type: "typescript" }, generation: 10, role: "detection-main", type: "backend-init" },
+      {
+        backend: { type: "typescript" },
+        backendExecution: {
+          effective: "typescript",
+          fallbackReason: "module-clone: module clone failed",
+          requested: "wasm",
+        },
+        generation: 10,
+        role: "detection-main",
+        type: "backend-init",
+      },
     ]);
     replacementWorker.emit(createSuccessResponse(replacementWorker.requests[0]));
 
@@ -266,7 +340,7 @@ describe("Graphwar detection runner backend attempts", () => {
       onWasmFault: () => 5,
     });
     const result = runner.detectBounds(createInput(), {
-      commitResult: async (completed, _timings, context) => {
+      commitResult: async (completed, _timings, _backendExecution, context) => {
         await new Promise<void>((resolve) => releaseCommits.push(resolve));
         context.commit(() => committed.push(completed.edgeRect ? "bounds" : "empty"));
       },
@@ -298,7 +372,7 @@ describe("Graphwar detection runner backend attempts", () => {
       const onWasmFault = vi.fn();
       const runner = createGraphwarDetectionRunner({ onWasmFault });
       const result = runner.detectBounds(createInput(), {
-        commitResult: async (_completed, _timings, context) => {
+        commitResult: async (_completed, _timings, _backendExecution, context) => {
           await new Promise<void>((resolve) => {
             releaseCommit = resolve;
           });
@@ -458,6 +532,7 @@ function createSuccessResponse(
 ): GraphwarDetectionWorkerResponse {
   return {
     attempt,
+    backendExecution: { effective: "typescript", requested: "typescript" },
     id: request.id,
     result: { edgeRect: undefined },
     taskType: "detect-bounds-only",

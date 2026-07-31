@@ -7,6 +7,7 @@ import {
   type GraphwarBackendAttemptIdentity,
   type GraphwarAlgorithmBackendContext,
   type GraphwarBackendControlMessage,
+  type GraphwarBackendExecution,
   type GraphwarBackendInitializationMessage,
   GraphwarWasmFault,
 } from "../../core/algorithm-backend";
@@ -88,7 +89,9 @@ interface SoldierTemplateWorkerTask {
 }
 
 /** Detection request id 与 backend attempt 必须作为一份下传身份同行。 */
-type GraphwarDetectionRequestContext = Pick<GraphwarDetectionWorkerRequest, "attempt" | "id">;
+type GraphwarDetectionRequestContext = Pick<GraphwarDetectionWorkerRequest, "attempt" | "id"> & {
+  backendExecution: GraphwarBackendExecution;
+};
 
 /** Task type 与 result 原子同行，构造响应时不靠类型断言恢复关联。 */
 type GraphwarDetectionSuccessPayload =
@@ -147,7 +150,7 @@ workerScope.addEventListener("message", (event) => {
 
 /** 分发主线程检测请求，并把所有异常转成 Worker 响应。 */
 async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
-  const requestContext: GraphwarDetectionRequestContext = { attempt: request.attempt, id: request.id };
+  const requestIdentity = { attempt: request.attempt, id: request.id };
   const timings: GraphwarDetectionWorkerTimingEntry[] = [];
   try {
     await executeGraphwarWorkerTask(
@@ -155,6 +158,13 @@ async function runDetectionRequest(request: GraphwarDetectionWorkerRequest) {
       request.attempt,
       { attempt: request.attempt, type: "task" },
       async (backendContext) => {
+        const requestContext: GraphwarDetectionRequestContext = {
+          ...requestIdentity,
+          backendExecution:
+            backendContext.type === "wasm"
+              ? { effective: "wasm", requested: "wasm" }
+              : { effective: "typescript", requested: "typescript" },
+        };
         if (backendContext.type === "wasm") {
           await runWasmDetectionTask(backendContext, requestContext, request.task, timings);
           return;

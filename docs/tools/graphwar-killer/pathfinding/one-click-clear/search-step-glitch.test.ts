@@ -5,8 +5,10 @@ import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { imageXToNearestPlaneColumn, planeXToImageX } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import { captureGraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
 import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
+import type { GraphwarTrajectoryFormulaContext } from "../../formula/trajectory/sampling";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 
 const scanMockState = vi.hoisted(() => ({
@@ -39,6 +41,15 @@ const samplingMockState = vi.hoisted(() => ({
   requiredTargets: [] as { x: number; y: number }[][],
   shouldStripStepGlitchFormulaEvidence: false,
   targetSequences: [] as { x: number; y: number }[][],
+}));
+const wasmMockState = vi.hoisted(() => ({
+  contexts: [] as {
+    dispose: ReturnType<typeof vi.fn>;
+    replayRaw: ReturnType<typeof vi.fn>;
+    scanRaw: ReturnType<typeof vi.fn>;
+  }[],
+  gatePoint: undefined as PixelPoint | undefined,
+  outcomes: [] as ("hit" | "miss" | "no-path")[],
 }));
 
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
@@ -228,6 +239,53 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
   };
 });
 
+vi.mock("../../core/wasm/step-glitch-adapter", () => ({
+  createGraphwarWasmStepGlitchContext: vi.fn((_runtime: unknown, input: { sourcePath: PixelPoint[] }) => {
+    const context = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn().mockImplementation(({ path }: { path: readonly PixelPoint[] }) => {
+        const outcome = wasmMockState.outcomes.shift() ?? "miss";
+        return outcome === "hit"
+          ? {
+              expandedStates: 1,
+              evidence: createMockWasmEvidence(path, { center: path.at(-1) ?? createPixelPoint(0, 0), radius: 1 }),
+              status: "hit",
+            }
+          : { expandedStates: 1, status: outcome };
+      }),
+      scanRaw: vi
+        .fn()
+        .mockImplementation(
+          ({
+            hitTarget,
+            targetPoint,
+          }: {
+            hitTarget: { center: PixelPoint; radius: number };
+            targetPoint: PixelPoint;
+          }) => {
+            const outcome = wasmMockState.outcomes.shift() ?? "no-path";
+            const path = [
+              ...input.sourcePath,
+              ...(wasmMockState.gatePoint ? [wasmMockState.gatePoint] : []),
+              targetPoint,
+            ];
+            return outcome === "hit"
+              ? {
+                  expandedStates: 1,
+                  evidence: createMockWasmEvidence(path, hitTarget),
+                  status: "hit",
+                }
+              : { expandedStates: 1, status: outcome };
+          },
+        ),
+    };
+    wasmMockState.contexts.push(context);
+    return { context, status: "ready" };
+  }),
+  createGraphwarWasmStepGlitchContextInput: vi.fn((input: unknown) => input),
+  createGraphwarWasmStepGlitchScanCommandInput: vi.fn((input: unknown) => input),
+}));
+
 import {
   buildGraphwarOneClickClearPath,
   type GraphwarOneClickClearDagEdgeBuildJob,
@@ -250,6 +308,9 @@ describe("Step glitch one-click-clear target retries", () => {
     scanMockState.outcomes.length = 0;
     scanMockState.scanners.length = 0;
     scanMockState.scans.length = 0;
+    wasmMockState.contexts.length = 0;
+    wasmMockState.gatePoint = undefined;
+    wasmMockState.outcomes.length = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
     samplingMockState.resolvedContinuationCalls = 0;
     samplingMockState.candidateTargetSequences.length = 0;
@@ -258,6 +319,31 @@ describe("Step glitch one-click-clear target retries", () => {
     samplingMockState.requiredTargets.length = 0;
     samplingMockState.shouldStripStepGlitchFormulaEvidence = false;
     samplingMockState.targetSequences.length = 0;
+  });
+
+  it("uses one shared WASM scan/replay implementation without TS scanner or trajectory sampling", async () => {
+    wasmMockState.outcomes.push("hit", "hit");
+    const start = toPixel(-11, 0);
+    wasmMockState.gatePoint = toPixel(-9, 0);
+    const target = toPixel(-6, 0);
+    const candidate = { isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" };
+    const options = {
+      ...createOptions(start, [candidate], createEmptyMask(), "visibility-graph", true),
+      wasmRuntime: {} as GraphwarWasmKernelRuntime,
+    };
+
+    const result = await buildGraphwarOneClickClearPath(options);
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.targetIds).toEqual(["target"]);
+      expect(result.pathPoints).toHaveLength(2);
+    }
+    expect(wasmMockState.contexts).toHaveLength(2);
+    expect(wasmMockState.contexts.every((context) => context.dispose.mock.calls.length === 1)).toBe(true);
+    expect(scanMockState.scanners).toHaveLength(0);
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
+    expect(samplingMockState.formulaContextCalls).toBe(0);
   });
 
   it.each([
@@ -774,6 +860,33 @@ function createOptions(
 
 function createEmptyMask() {
   return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+}
+
+function createMockWasmEvidence(path: readonly PixelPoint[], hitTarget?: { center: PixelPoint; radius: number }) {
+  const settings = {
+    algorithm: "step" as const,
+    decimalPlaces: 4,
+    equation: "dy" as const,
+    isStepGlitchModeEnabled: true,
+    isStepOverflowProtectionEnabled: true,
+    steepness: 67,
+    stepGlitchObstacleMask: createEmptyMask(),
+  };
+  const formulaContext = {
+    formulaPoints: path.map((point) => imageToGraphPoint(point, bounds, boundsRect)),
+    formulaResult: { expression: "wasm-step-glitch" },
+    settings,
+  } as unknown as GraphwarTrajectoryFormulaContext;
+  return {
+    owned: {
+      formulaContext,
+      path: path.map((point) => ({ ...point })),
+      trajectory: {
+        trackedTargetHitIndexes: hitTarget ? [0] : [],
+        visiblePixels: path.map((point) => ({ ...point })),
+      },
+    },
+  };
 }
 
 function toPixel(x: number, y: number) {

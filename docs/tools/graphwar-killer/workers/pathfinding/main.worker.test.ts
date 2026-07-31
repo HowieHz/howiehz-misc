@@ -3,10 +3,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { GraphwarBackendAttemptIdentity, GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import type {
   GraphwarStepGlitchFormulaBoundaryState,
   GraphwarStepGlitchFormulaPrefix,
 } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
 import type {
   GraphwarOneClickClearBuildOptions,
   GraphwarOneClickClearIncumbent,
@@ -24,6 +26,9 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   buildOneClickClearPath: vi.fn(),
+  createStepGlitchContext: vi.fn(),
+  createStepGlitchContextInput: vi.fn((input: unknown) => input),
+  createStepGlitchScanCommandInput: vi.fn((input: unknown) => ({ ...(input as object), type: "scan" })),
   scanStepGlitchPath: vi.fn(),
   validateTrajectory: vi.fn(),
 }));
@@ -60,6 +65,12 @@ vi.mock("../../pathfinding/smart/trajectory", () => ({
   createGraphwarSmartPathfindingTrajectoryResult: mocks.validateTrajectory,
 }));
 
+vi.mock("../../core/wasm/step-glitch-adapter", () => ({
+  createGraphwarWasmStepGlitchContext: mocks.createStepGlitchContext,
+  createGraphwarWasmStepGlitchContextInput: mocks.createStepGlitchContextInput,
+  createGraphwarWasmStepGlitchScanCommandInput: mocks.createStepGlitchScanCommandInput,
+}));
+
 const originalSelfDescriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
 const attempt = {
   attemptId: 1,
@@ -70,6 +81,7 @@ const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarPath
 let handleMessage:
   | ((event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest>) => void)
   | undefined;
+let findStepGlitchSmartPathWithWasm: typeof import("./main.worker").findStepGlitchSmartPathWithWasm | undefined;
 
 beforeAll(async () => {
   Object.defineProperty(globalThis, "self", {
@@ -86,10 +98,11 @@ beforeAll(async () => {
       postMessage,
     },
   });
-  await import("./main.worker");
+  ({ findStepGlitchSmartPathWithWasm } = await import("./main.worker"));
   handleMessage?.({
     data: {
       backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
       generation: 0,
       role: "pathfinding-master",
       type: "backend-init",
@@ -110,6 +123,9 @@ afterAll(() => {
 beforeEach(() => {
   postMessage.mockClear();
   mocks.buildOneClickClearPath.mockReset();
+  mocks.createStepGlitchContext.mockReset();
+  mocks.createStepGlitchContextInput.mockClear();
+  mocks.createStepGlitchScanCommandInput.mockClear();
   mocks.scanStepGlitchPath.mockReset();
   mocks.validateTrajectory.mockReset();
   mocks.validateTrajectory.mockReturnValue({ reachesTargetBeforeObstacle: true, visiblePixels: [] });
@@ -335,6 +351,41 @@ describe("Anytime one-click-clear progress", () => {
 });
 
 describe("Step glitch smart-path validation", () => {
+  it("uses the retained WASM scan/replay context without TS scanner or trajectory calls", () => {
+    const mask = createPlaneMask();
+    const input = createStepGlitchInput(mask, mask);
+    input.isDeleteOptimizationEnabled = true;
+    const wasmPath = [input.sourcePath[0], createPixelPoint(130, 225), createPixelPoint(160, 225), input.targetPoint];
+    const scanner = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn().mockReturnValueOnce({ status: "hit" }).mockReturnValueOnce({ status: "miss" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: wasmPath } },
+        status: "hit",
+      }),
+    };
+    mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    const run = findStepGlitchSmartPathWithWasm;
+    if (!run) {
+      throw new Error("WASM smart-path runner was not exported");
+    }
+
+    const result = run(
+      input,
+      createGraphwarTrajectoryFormulaMode(input.settings),
+      [],
+      { runtime: { simulationMask: mask }, type: "step-glitch" },
+      {} as GraphwarWasmKernelRuntime,
+    );
+
+    expect(result.path).toEqual([input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint]);
+    expect(scanner.scanRaw).toHaveBeenCalledOnce();
+    expect(scanner.replayRaw).toHaveBeenCalledTimes(2);
+    expect(scanner.dispose).toHaveBeenCalledOnce();
+    expect(mocks.scanStepGlitchPath).not.toHaveBeenCalled();
+    expect(mocks.validateTrajectory).not.toHaveBeenCalled();
+  });
+
   it("reuses the scanner replay when both validations share the same mask", async () => {
     const mask = createPlaneMask();
     const input = createStepGlitchInput(mask, mask);

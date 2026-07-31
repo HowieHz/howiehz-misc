@@ -61,6 +61,7 @@ beforeAll(async () => {
   await import("./edge.worker");
   dispatch({
     backend: { module: await WebAssembly.compile(await readGraphwarKernelBytes()), type: "wasm" },
+    backendExecution: { effective: "wasm", requested: "wasm" },
     generation: attempt.backendGeneration,
     role: "one-click-clear-edge",
     type: "backend-init",

@@ -1,5 +1,6 @@
 import { computed, ref, type ComputedRef } from "vue";
 
+import type { GraphwarBackendExecution } from "../../core/algorithm-backend";
 import { measureSyncStage, nowMs } from "../../core/time";
 import type {
   GraphwarDetectionWorkerTimingDetail,
@@ -79,6 +80,18 @@ export interface DetectionDebugTimingRow extends DetectionDebugTimingEntry {
   isElapsedVisible: boolean;
 }
 
+/** Detection timings either stop in the browser shell or atomically identify the executed algorithm backend. */
+export type GraphwarDetectionDebugTimingRecord =
+  | {
+      backendExecution: GraphwarBackendExecution;
+      timings: DetectionDebugTimingEntry[];
+      type: "backend";
+    }
+  | {
+      timings: DetectionDebugTimingEntry[];
+      type: "local";
+    };
+
 /** 单次智能寻路调试耗时记录。 */
 export interface SmartPathfindingDebugTimingEntry {
   /** 被测量的智能寻路阶段。 */
@@ -129,11 +142,14 @@ export interface GraphwarDebugTimingsController {
   ) => DetectionDebugTimingEntry[];
   /** 识别调试耗时展示行。 */
   detectionDebugTimingRows: ComputedRef<DetectionDebugTimingRow[]>;
+  /** Latest finalized detection timings and their atomic backend execution when an algorithm attempt ran. */
+  detectionDebugTimingRecord: ComputedRef<GraphwarDetectionDebugTimingRecord | undefined>;
   /** 汇总检测调试 timing。 */
   finishDetectionDebugTimings: (
     runId: number,
     startedAt: number,
     timings: readonly DetectionDebugTimingEntry[],
+    backendExecution?: GraphwarBackendExecution,
     completedAt?: number,
   ) => void;
   /** 汇总智能寻路调试 timing。 */
@@ -166,10 +182,12 @@ export interface GraphwarDebugTimingsController {
 
 /** 管理 Graphwar Killer 调试耗时的计时、聚合和展示行规则。 */
 export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): GraphwarDebugTimingsController {
-  const detectionDebugTimingEntries = ref<DetectionDebugTimingEntry[]>([]);
+  const detectionDebugTimingRecord = ref<GraphwarDetectionDebugTimingRecord>();
   const smartPathfindingDebugTimingEntries = ref<SmartPathfindingDebugTimingEntry[]>([]);
   const detectionDebugTimingRows = computed<DetectionDebugTimingRow[]>(() =>
-    detectionDebugTimingEntries.value.map((entry) => createDetectionDebugTimingRow(entry, options.getLocale())),
+    (detectionDebugTimingRecord.value?.timings ?? []).map((entry) =>
+      createDetectionDebugTimingRow(entry, options.getLocale()),
+    ),
   );
   const smartPathfindingDebugTimingRows = computed<SmartPathfindingDebugTimingRow[]>(() =>
     createSmartPathfindingDebugTimingRows(smartPathfindingDebugTimingEntries.value, options.getLocale()),
@@ -180,13 +198,17 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
     runId: number,
     startedAt: number,
     timings: readonly DetectionDebugTimingEntry[],
+    backendExecution?: GraphwarBackendExecution,
     completedAt = nowMs(),
   ) {
     if (!options.isDetectionRunActive(runId) || timings.length === 0) {
       return;
     }
 
-    detectionDebugTimingEntries.value = createFinalDebugTimingEntries(timings, completedAt - startedAt);
+    const finalizedTimings = createFinalDebugTimingEntries(timings, completedAt - startedAt);
+    detectionDebugTimingRecord.value = backendExecution
+      ? { backendExecution: structuredClone(backendExecution), timings: finalizedTimings, type: "backend" }
+      : { timings: finalizedTimings, type: "local" };
   }
 
   /** 汇总智能寻路 timing，并补齐阶段外耗时和总耗时。 */
@@ -208,6 +230,7 @@ export function useGraphwarDebugTimings(options: GraphwarDebugTimingsOptions): G
     },
     createDetectionDebugTimingEntriesFromWorker,
     detectionDebugTimingRows,
+    detectionDebugTimingRecord: computed(() => detectionDebugTimingRecord.value),
     finishDetectionDebugTimings,
     finishSmartPathfindingDebugTimings,
     measureDetectionDebugStage,

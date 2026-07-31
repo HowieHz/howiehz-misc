@@ -51,7 +51,10 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
     expect(controller.hasTargetMissWarning.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
-    expect(controller.calculationStatus.value.type).toBe("success");
+    expect(controller.calculationStatus.value).toMatchObject({
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      type: "success",
+    });
 
     setSolverPath(state, 0, 5);
     await nextTick();
@@ -489,7 +492,12 @@ class FakeWorker {
       throw new Error("Worker has no pending request");
     }
     const event = {
-      data: { attempt: request.attempt, id: request.id, outcome },
+      data: {
+        attempt: request.attempt,
+        backendExecution: { effective: "typescript", requested: "typescript" },
+        id: request.id,
+        outcome,
+      },
     } as MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>;
     for (const listener of this.messageListeners) {
       listener(event);

@@ -271,7 +271,7 @@ const { locale } = defineProps<{
 // 一个页面只持有一个 WASM module selection；所有 authoritative workflow 从这里读取 generation。
 const graphwarWasmRuntimeController = createGraphwarWasmRuntimeController();
 const graphwarWasmRuntimeState = shallowRef(graphwarWasmRuntimeController.getState());
-const isWasmAccelerationEnabled = ref(false);
+const isWasmAccelerationEnabled = computed(() => graphwarWasmRuntimeState.value.type !== "off");
 const stopWasmRuntimeSubscription = graphwarWasmRuntimeController.subscribe((state) => {
   graphwarWasmRuntimeState.value = state;
 });
@@ -289,24 +289,42 @@ function toggleWasmAcceleration() {
   if (!canToggleWasmAcceleration.value) {
     return;
   }
+  // Backend identity changes invalidate both complete results and the master Worker's derived route context.
+  invalidatePathfindingResultCache();
+  invalidatePathfindingWorkerCache();
   if (isWasmAccelerationEnabled.value) {
-    isWasmAccelerationEnabled.value = false;
-    clearLiveClickPreviewPointerPoint();
+    resetLiveClickPreviewBackend();
     graphwarWasmRuntimeController.disable();
     return;
   }
-  isWasmAccelerationEnabled.value = true;
-  clearLiveClickPreviewPointerPoint();
+  resetLiveClickPreviewBackend();
   void graphwarWasmRuntimeController.enable();
 }
 function reportWasmFault(message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) {
+  const fallbackReason = `${message.fault.code}: ${message.fault.message}`;
+  if (!graphwarWasmRuntimeController.degrade(message.generation, fallbackReason)) {
+    return undefined;
+  }
+  const replacementGeneration = graphwarWasmRuntimeController.getState().generation;
   // A fused generation cannot publish or reuse any result produced by the failed backend.
   // Do not cancel the active outer task here: its runner owns the typed-fault TS replay.
+  if (message.role !== "detection-main" && message.role !== "detection-template") {
+    detectionWorkflow.replayGenerationAsTypescript(message.generation, replacementGeneration, fallbackReason);
+  }
+  if (message.role !== "trajectory") {
+    replayTrajectoryGenerationAsTypescript(message.generation, replacementGeneration, fallbackReason);
+  }
+  if (message.role !== "pathfinding-master" && message.role !== "one-click-clear-edge") {
+    graphwarPathfindingRunner.replayGenerationAsTypescript(message.generation, replacementGeneration, fallbackReason);
+  }
   invalidatePathfindingResultCache();
   invalidatePathfindingWorkerCache();
   clearIncumbentPreview();
-  clearLiveClickPreviewPointerPoint();
-  graphwarWasmRuntimeController.degrade(message.generation, message);
+  clearSmartPathfindingPreview();
+  if (message.role !== "live-click-preview") {
+    resetLiveClickPreviewBackend();
+  }
+  return replacementGeneration;
 }
 
 const graphwarDefaultXLimitText = formatDoublePrecisionDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
@@ -804,10 +822,7 @@ const isActiveObjectDetectionReady = computed(() => {
 // 检测 workflow 应持有异步运行、状态绘制、debounce 和 worker 生命周期；跨 workflow 副作用由页面注入。
 const graphwarDetectionRunner = createGraphwarDetectionRunner({
   createBackendSelection: wasmBackendSelection,
-  onWasmFault: (message) => {
-    reportWasmFault(message);
-    return graphwarWasmRuntimeController.getState().generation;
-  },
+  onWasmFault: reportWasmFault,
 });
 const detectionWorkflow = useGraphwarDetectionWorkflow({
   boundsRect,
@@ -1259,6 +1274,7 @@ const {
   plottedCurvePoints,
   plottedTrajectory,
   publishIncumbentPreview: publishTrajectoryIncumbentPreview,
+  replayGenerationAsTypescript: replayTrajectoryGenerationAsTypescript,
   secondOrderLaunchAngleDegrees,
   secondOrderLaunchAngleRadians,
   simulatorLaunchAngleRadians,
@@ -1631,11 +1647,13 @@ const {
   lineSegments: liveClickPreviewLineSegments,
   points: liveClickPreviewPoints,
   renderedElapsedMs: liveClickPreviewRenderedElapsedMs,
+  resetBackend: resetLiveClickPreviewBackend,
   refreshPointerPathPointIndex: refreshLiveClickPreviewPointerPathPointIndex,
   schedulePointerPoint: scheduleLiveClickPreviewPointerPoint,
   setPointerPoint: setLiveClickPreviewPointerPoint,
 } = useGraphwarLiveClickPreview({
   createBackendSelection: wasmBackendSelection,
+  onWasmFault: reportWasmFault,
   geometry: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),

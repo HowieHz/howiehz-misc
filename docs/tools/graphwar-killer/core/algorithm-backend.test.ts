@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createGraphwarBackendExecution,
+  createGraphwarBackendFallbackExecution,
   createGraphwarTypescriptBackendContext,
   createGraphwarWasmBackendContext,
   GraphwarValidatedWasmRuntime,
@@ -81,6 +83,20 @@ describe("Graphwar algorithm backend contracts", () => {
     { effective: "typescript", fallbackReason: "unexpected", requested: "typescript" },
   ])("rejects backend execution half-state %#", (value) => {
     expect(isGraphwarBackendExecution(value)).toBe(false);
+  });
+
+  it("constructs direct and fallback execution diagnostics without half-states", () => {
+    expect(createGraphwarBackendExecution("typescript")).toEqual({
+      effective: "typescript",
+      requested: "typescript",
+    });
+    expect(createGraphwarBackendExecution("wasm")).toEqual({ effective: "wasm", requested: "wasm" });
+    expect(createGraphwarBackendFallbackExecution("  trap: export failed  ")).toEqual({
+      effective: "typescript",
+      fallbackReason: "trap: export failed",
+      requested: "wasm",
+    });
+    expect(() => createGraphwarBackendFallbackExecution(" ")).toThrow(TypeError);
   });
 
   it("validates the complete replaceable-attempt identity", () => {
@@ -201,12 +217,14 @@ describe("Graphwar algorithm backend contracts", () => {
     const messages = [
       {
         backend: { type: "typescript" },
+        backendExecution: { effective: "typescript", requested: "typescript" },
         generation: 0,
         role: "trajectory",
         type: "backend-init",
       },
       {
         backend: { module: emptyWasmModule, type: "wasm" },
+        backendExecution: { effective: "wasm", requested: "wasm" },
         generation: 1,
         role: "detection-main",
         type: "backend-init",
@@ -230,6 +248,20 @@ describe("Graphwar algorithm backend contracts", () => {
   });
 
   it.each([
+    {
+      backend: { module: emptyWasmModule, type: "wasm" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 1,
+      role: "trajectory",
+      type: "backend-init",
+    },
+    {
+      backend: { type: "typescript" },
+      backendExecution: { effective: "wasm", requested: "wasm" },
+      generation: 1,
+      role: "trajectory",
+      type: "backend-init",
+    },
     {
       backend: { module: emptyWasmModule, type: "typescript" },
       generation: 1,

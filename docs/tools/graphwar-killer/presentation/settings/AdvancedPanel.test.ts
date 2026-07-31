@@ -53,6 +53,34 @@ describe("AdvancedPanel", () => {
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
     expect(wrapper.classes()).toContain("graphwar-killer-control-surface");
+    const wasmToggle = wrapper.get("#graphwar-killer-wasm-acceleration");
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.heading);
+    expect(wasmToggle.attributes("aria-checked")).toBe("false");
+    await wasmToggle.trigger("click");
+    expect(wrapper.emitted("toggleWasmAcceleration")).toHaveLength(1);
+
+    await wrapper.setProps({
+      panel: { ...panel, runtime: { canToggle: true, isEnabled: true, state: "loading" } },
+    });
+    expect(wasmToggle.attributes("aria-checked")).toBe("true");
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+
+    await wrapper.setProps({
+      panel: { ...panel, runtime: { canToggle: true, isEnabled: true, state: "ready" } },
+    });
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.ready);
+
+    const degradedTitle = `${graphwarKillerLocale.ui.settings.runtime.degraded}: trap: test fault`;
+    await wrapper.setProps({
+      panel: {
+        ...panel,
+        runtime: { canToggle: true, isEnabled: true, state: "degraded", statusTitle: degradedTitle },
+      },
+    });
+    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.degraded);
+    expect(wasmToggle.attributes("title")).toBe(degradedTitle);
+
+    await wrapper.setProps({ panel });
     const routeToleranceInputs = wrapper
       .findAll("input")
       .filter((input) =>
@@ -138,7 +166,15 @@ describe("AdvancedPanel", () => {
     ).toBe(false);
 
     const reason = graphwarKillerLocale.ui.pathfinding.capabilityReasons["managed-lock"];
-    await wrapper.setProps({ panel: { ...panel, canInteract: false, temporaryDisabledReason: reason } });
+    await wrapper.setProps({
+      panel: {
+        ...panel,
+        canInteract: false,
+        runtime: { ...panel.runtime, canToggle: false },
+        temporaryDisabledReason: reason,
+      },
+    });
+    expect(wasmToggle.attributes("disabled")).toBeDefined();
     for (const [id, title] of [
       ["graphwar-killer-skip-unknown-characters", graphwarKillerLocale.ui.settings.skipUnknownCharactersTitle],
       ["graphwar-killer-parse-derivative-as-y", graphwarKillerLocale.ui.settings.parseDerivativeAsYTitle],

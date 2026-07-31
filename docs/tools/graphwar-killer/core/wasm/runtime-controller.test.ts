@@ -18,6 +18,7 @@ describe("Graphwar WASM runtime controller", () => {
     await expect(firstLoad).resolves.toBe(emptyModule);
     await expect(backendPromise).resolves.toEqual({
       backend: { module: emptyModule, type: "wasm" },
+      backendExecution: { effective: "wasm", requested: "wasm" },
       generation: 1,
     });
     expect(controller.getState()).toEqual({ generation: 1, module: emptyModule, type: "ready" });
@@ -44,6 +45,7 @@ describe("Graphwar WASM runtime controller", () => {
 
     await expect(controller.resolveWorkerBackend()).resolves.toEqual({
       backend: { module: emptyModule, type: "wasm" },
+      backendExecution: { effective: "wasm", requested: "wasm" },
       generation: 1,
     });
     expect(controller.getState()).toEqual({ generation: 1, module: emptyModule, type: "ready" });
@@ -67,10 +69,15 @@ describe("Graphwar WASM runtime controller", () => {
     const secondLoad = controller.enable();
 
     await expect(firstLoad).rejects.toThrow("Aborted");
-    await expect(oldSelection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(oldSelection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 2,
+    });
     await expect(secondLoad).resolves.toBe(emptyModule);
     await expect(controller.resolveWorkerBackend()).resolves.toEqual({
       backend: { module: emptyModule, type: "wasm" },
+      backendExecution: { effective: "wasm", requested: "wasm" },
       generation: 3,
     });
   });
@@ -91,7 +98,11 @@ describe("Graphwar WASM runtime controller", () => {
     controller.disable();
 
     await expect(load).rejects.toThrow("Aborted");
-    await expect(selection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(selection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 2,
+    });
     expect(controller.getState()).toEqual({ generation: 2, type: "off" });
   });
 
@@ -107,7 +118,11 @@ describe("Graphwar WASM runtime controller", () => {
     const selection = controller.resolveWorkerBackend();
 
     await expect(load).resolves.toBe(emptyModule);
-    await expect(selection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(selection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 2,
+    });
     expect(controller.getState()).toEqual({ generation: 2, type: "off" });
   });
 
@@ -120,6 +135,11 @@ describe("Graphwar WASM runtime controller", () => {
     expect(controller.getState()).toEqual({ generation: 2, reason: "trap: trajectory trapped", type: "degraded" });
     await expect(controller.resolveWorkerBackend()).resolves.toEqual({
       backend: { type: "typescript" },
+      backendExecution: {
+        effective: "typescript",
+        fallbackReason: "trap: trajectory trapped",
+        requested: "wasm",
+      },
       generation: 2,
     });
 
@@ -137,7 +157,11 @@ describe("Graphwar WASM runtime controller", () => {
     const load = controller.enable();
     const selection = controller.resolveWorkerBackend();
     await expect(load).rejects.toThrow("invalid bytes");
-    await expect(selection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(selection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", fallbackReason: "compile: invalid bytes", requested: "wasm" },
+      generation: 2,
+    });
     expect(controller.getState()).toEqual({ generation: 2, reason: "compile: invalid bytes", type: "degraded" });
   });
 
@@ -152,7 +176,15 @@ describe("Graphwar WASM runtime controller", () => {
     const selection = controller.resolveWorkerBackend();
 
     await expect(load).rejects.toThrow("WebAssembly is unavailable");
-    await expect(selection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(selection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: {
+        effective: "typescript",
+        fallbackReason: "WebAssembly is unavailable",
+        requested: "wasm",
+      },
+      generation: 2,
+    });
     expect(controller.getState()).toEqual({
       generation: 2,
       reason: "WebAssembly is unavailable",
@@ -180,7 +212,11 @@ describe("Graphwar WASM runtime controller", () => {
     finishFirstCompile?.(emptyModule);
     await Promise.resolve();
 
-    await expect(oldSelection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(oldSelection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 2,
+    });
     expect(controller.getState()).toEqual({ generation: 3, module: emptyModule, type: "ready" });
     expect(compileModule).toHaveBeenCalledTimes(2);
   });
@@ -200,7 +236,11 @@ describe("Graphwar WASM runtime controller", () => {
     const selection = controller.resolveWorkerBackend();
 
     await expect(load).rejects.toThrow("Unexpected abort");
-    await expect(selection).resolves.toEqual({ backend: { type: "typescript" }, generation: 2 });
+    await expect(selection).resolves.toEqual({
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", fallbackReason: "Unexpected abort", requested: "wasm" },
+      generation: 2,
+    });
     expect(controller.getState()).toEqual({ generation: 2, reason: "Unexpected abort", type: "degraded" });
   });
 });

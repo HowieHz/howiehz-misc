@@ -361,6 +361,7 @@ describe("Graphwar authoritative task coordinator", () => {
     expect(harness.attempts).toHaveLength(1);
     expect(harness.attempts[0]?.context.backendConfiguration).toEqual({
       backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
       generation: 2,
     });
     harness.attempts[0]?.resolve("typescript");

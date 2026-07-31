@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from "vue";
 
-import type { GraphwarWorkerBackendSelection } from "../../core/algorithm-backend";
+import type { GraphwarBackendControlMessage, GraphwarWorkerBackendSelection } from "../../core/algorithm-backend";
 import { imageToGraphPoint, normalizePathPoint, pixelPointsEqual } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type {
@@ -33,6 +33,7 @@ export { GRAPHWAR_LIVE_CLICK_PREVIEW_WORKER_COUNT_MAXIMUM };
 /** 实时点击预览控制器读取的页面状态和算法依赖。 */
 interface GraphwarLiveClickPreviewOptions {
   createBackendSelection?: () => GraphwarWorkerBackendSelection;
+  onWasmFault?: (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => number | undefined;
   /** 坐标映射应复用页面当前标定；bounds 无效时预览保持空结果。 */
   geometry: {
     boundsRect: ReadonlyRef<BoundsRect>;
@@ -141,6 +142,8 @@ export interface GraphwarLiveClickPreviewController {
   clearPointerPoint: () => void;
   /** 页面卸载时释放预览持有的浏览器帧。 */
   dispose: () => void;
+  /** Backend generation 变化时丢弃整个旧 Worker 池。 */
+  resetBackend: () => void;
   /** 路径点或选择半径变化后刷新当前悬停点的路径命中缓存。 */
   refreshPointerPathPointIndex: () => void;
   /** 高频 pointermove 应合并到每个浏览器绘制帧最多一次。 */
@@ -163,6 +166,7 @@ export function useGraphwarLiveClickPreview(
   const pointerPathPointIndex = ref<number>();
   const runner = createGraphwarLiveClickPreviewRunner({
     createBackendSelection: options.createBackendSelection,
+    onWasmFault: options.onWasmFault,
     workerCount: options.runtime.workerCount,
   });
   let activeRenderContext: GraphwarLiveClickPreviewRenderContext | undefined;
@@ -361,6 +365,12 @@ export function useGraphwarLiveClickPreview(
     runner.close();
   }
 
+  /** Backend 切换会重建懒加载池，避免空闲 Worker 保留已失效 generation。 */
+  function resetBackend() {
+    clearPointerPoint();
+    runner.close();
+  }
+
   watch(
     renderRequest,
     (request) => {
@@ -547,6 +557,7 @@ export function useGraphwarLiveClickPreview(
     points,
     renderedElapsedMs,
     refreshPointerPathPointIndex,
+    resetBackend,
     schedulePointerPoint,
     setPointerPoint,
   };

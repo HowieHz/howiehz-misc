@@ -67,6 +67,28 @@ export type GraphwarBackendExecution =
       requested: "wasm";
     };
 
+/** Creates the complete diagnostic state for an attempt that executes its selected backend directly. */
+export function createGraphwarBackendExecution(
+  backend: GraphwarAlgorithmBackendType,
+):
+  | Extract<GraphwarBackendExecution, { requested: "typescript" }>
+  | Extract<GraphwarBackendExecution, { effective: "wasm" }> {
+  return backend === "wasm"
+    ? { effective: "wasm", requested: "wasm" }
+    : { effective: "typescript", requested: "typescript" };
+}
+
+/** Creates the only legal cross-backend diagnostic state after a requested WASM attempt falls back to TypeScript. */
+export function createGraphwarBackendFallbackExecution(
+  fallbackReason: string,
+): Extract<GraphwarBackendExecution, { effective: "typescript"; requested: "wasm" }> {
+  const reason = fallbackReason.trim();
+  if (!reason) {
+    throw new TypeError("Graphwar backend fallback requires a non-empty reason");
+  }
+  return { effective: "typescript", fallbackReason: reason, requested: "wasm" };
+}
+
 /** 稳定外层任务与当前获准 commit 的可替换 backend attempt 身份。 */
 export interface GraphwarBackendAttemptIdentity {
   readonly attemptId: number;
@@ -180,11 +202,18 @@ export type GraphwarWorkerBackendInitialization =
       readonly type: "wasm";
     };
 
-/** 创建一个实际 Worker 时使用的 generation 与 backend 初始化材料。 */
-export interface GraphwarWorkerBackendConfiguration {
-  readonly backend: GraphwarWorkerBackendInitialization;
-  readonly generation: number;
-}
+/** Worker initialization and the caller-visible execution state must stay one legal atomic configuration. */
+export type GraphwarWorkerBackendConfiguration =
+  | {
+      readonly backend: Extract<GraphwarWorkerBackendInitialization, { type: "typescript" }>;
+      readonly backendExecution: Extract<GraphwarBackendExecution, { effective: "typescript" }>;
+      readonly generation: number;
+    }
+  | {
+      readonly backend: Extract<GraphwarWorkerBackendInitialization, { type: "wasm" }>;
+      readonly backendExecution: Extract<GraphwarBackendExecution, { effective: "wasm" }>;
+      readonly generation: number;
+    };
 
 /** Outer task 在入口原子取得的 generation 与最终固定 backend。 */
 export interface GraphwarWorkerBackendSelection {
@@ -195,27 +224,40 @@ export interface GraphwarWorkerBackendSelection {
 /** 默认关闭 WASM 时，所有现有 Worker 都使用同一份 TypeScript 初始化配置。 */
 export function createGraphwarTypescriptWorkerBackendConfiguration(
   generation: number,
-): GraphwarWorkerBackendConfiguration {
+  fallbackReason?: string,
+): Extract<GraphwarWorkerBackendConfiguration, { backend: { type: "typescript" } }> {
   assertGraphwarBackendGeneration(generation);
-  return Object.freeze({ backend: Object.freeze({ type: "typescript" as const }), generation });
+  const backendExecution: Extract<GraphwarBackendExecution, { effective: "typescript" }> = fallbackReason
+    ? createGraphwarBackendFallbackExecution(fallbackReason)
+    : { effective: "typescript", requested: "typescript" };
+  return Object.freeze({
+    backend: Object.freeze({ type: "typescript" as const }),
+    backendExecution: Object.freeze(backendExecution),
+    generation,
+  });
 }
 
 /** 页面 loader 编译成功后，为 Worker structured clone 绑定权威 module。 */
 export function createGraphwarWasmWorkerBackendConfiguration(
   generation: number,
   module: WebAssembly.Module,
-): GraphwarWorkerBackendConfiguration {
+): Extract<GraphwarWorkerBackendConfiguration, { backend: { type: "wasm" } }> {
   assertGraphwarBackendGeneration(generation);
   if (!isWebAssemblyModule(module)) {
     throw new TypeError("Graphwar WASM worker backend requires a WebAssembly.Module");
   }
-  return Object.freeze({ backend: Object.freeze({ module, type: "wasm" as const }), generation });
+  return Object.freeze({
+    backend: Object.freeze({ module, type: "wasm" as const }),
+    backendExecution: Object.freeze({ effective: "wasm" as const, requested: "wasm" as const }),
+    generation,
+  });
 }
 
 /** Backend 生命周期消息独立于业务 task id 与 result。 */
 export type GraphwarBackendControlMessage =
   | {
       backend: GraphwarWorkerBackendInitialization;
+      backendExecution: GraphwarBackendExecution;
       generation: number;
       role: GraphwarWorkerRole;
       type: "backend-init";
@@ -397,7 +439,17 @@ export function isGraphwarBackendControlMessage(value: unknown): value is Graphw
     return false;
   }
   if (value.type === "backend-init") {
-    return isGraphwarWorkerBackendInitialization(value.backend) && !("context" in value) && !("fault" in value);
+    if (
+      !isGraphwarWorkerBackendInitialization(value.backend) ||
+      !isGraphwarBackendExecution(value.backendExecution) ||
+      "context" in value ||
+      "fault" in value
+    ) {
+      return false;
+    }
+    return value.backend.type === "wasm"
+      ? value.backendExecution.effective === "wasm"
+      : value.backendExecution.effective === "typescript";
   }
   if (value.type === "backend-ready") {
     return isGraphwarAlgorithmBackendType(value.backend) && !("context" in value) && !("fault" in value);

@@ -107,6 +107,55 @@ describe("Graphwar WASM runtime boundary", () => {
     expect(() => runtime.runFormula(1, 0, 0)).toThrowError(GraphwarWasmFault);
   });
 
+  it("rejects malformed smart input before crossing the WASM boundary", async () => {
+    const arena = createSyntheticArenaInstance((previousCursor) => previousCursor);
+    const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
+    const runSmartPathfinding = vi.fn(() => 0);
+    rawExports.runSmartPathfinding = runSmartPathfinding;
+    const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
+      instantiate: async () => arena.instance,
+    });
+    const inputPointer = runtime.reserveArena(56, 4);
+
+    expect(() => runtime.runSmartPathfinding(inputPointer, 55)).toThrowError(GraphwarWasmFault);
+    expect(() => runtime.runSmartPathfinding(inputPointer + 2, 56)).toThrowError(GraphwarWasmFault);
+    expect(() => runtime.runSmartPathfinding(runtime.arenaCursor, 56)).toThrowError(GraphwarWasmFault);
+    expect(runSmartPathfinding).not.toHaveBeenCalled();
+  });
+
+  it("requires an atomic one-click work batch and accepts aligned flat records", async () => {
+    const arena = createSyntheticArenaInstance((previousCursor) => previousCursor);
+    const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
+    const reserveResult = (byteLength: number) => rawExports.reserveArena(byteLength, 8);
+    rawExports.runSmartPathfinding = () => reserveResult(32);
+    rawExports.beginOneClickClear = () => reserveResult(48);
+    rawExports.resumeOneClickClear = () => reserveResult(48);
+    const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
+      instantiate: async () => arena.instance,
+    });
+
+    const inputPointer = runtime.reserveArena(56, 4);
+    expect(runtime.runSmartPathfinding(inputPointer, 56) % 8).toBe(0);
+    expect(runtime.beginOneClickClear(inputPointer, 56) % 8).toBe(0);
+
+    const resumePointer = runtime.reserveArena(16, 4);
+    expect(runtime.resumeOneClickClear(resumePointer, 16) % 8).toBe(0);
+    expect(() => runtime.resumeOneClickClear(resumePointer, 15)).toThrowError(GraphwarWasmFault);
+    expect(() => runtime.resumeOneClickClear(resumePointer + 2, 16)).toThrowError(GraphwarWasmFault);
+  });
+
+  it("rejects a result pointer whose fixed record would extend past the arena cursor", async () => {
+    const arena = createSyntheticArenaInstance((previousCursor) => previousCursor);
+    const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
+    rawExports.runSmartPathfinding = () => rawExports.getArenaCursor() - 4;
+    const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
+      instantiate: async () => arena.instance,
+    });
+    const inputPointer = runtime.reserveArena(56, 4);
+
+    expect(() => runtime.runSmartPathfinding(inputPointer, 56)).toThrowError(GraphwarWasmFault);
+  });
+
   it("uploads the canonical game constants once and releases the initialization scratch", async () => {
     let uploadedConstants: number[] = [];
     const arena = createSyntheticArenaInstance(

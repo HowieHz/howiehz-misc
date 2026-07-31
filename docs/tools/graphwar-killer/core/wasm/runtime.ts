@@ -29,6 +29,11 @@ export const graphwarWasmRequiredFunctionExports = [
 
 type GraphwarWasmRequiredFunctionExport = (typeof graphwarWasmRequiredFunctionExports)[number];
 const graphwarWasmRuntimeConstructionToken = Symbol("GraphwarWasmRuntimeConstructionToken");
+const SMART_PATHFINDING_INPUT_BYTE_LENGTH = 56;
+const SMART_PATHFINDING_RESULT_BYTE_LENGTH = 32;
+const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 56;
+const ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH = 48;
+const ONE_CLICK_CLEAR_RESUME_INPUT_BYTE_LENGTH = 16;
 
 interface GraphwarWasmArenaExports {
   getArenaAllocatorCallCount: () => number;
@@ -51,6 +56,9 @@ interface GraphwarWasmAlgorithmExports {
   runDetectionTemplateShard: (inputPointer: number, inputByteLength: number) => number;
   runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
   runRouteTask: (command: number, inputPointer: number, inputByteLength: number) => number;
+  runSmartPathfinding: (inputPointer: number, inputByteLength: number) => number;
+  beginOneClickClear: (inputPointer: number, inputByteLength: number) => number;
+  resumeOneClickClear: (inputPointer: number, inputByteLength: number) => number;
   runTrajectory: (inputPointer: number, inputByteLength: number) => number;
 }
 
@@ -360,6 +368,63 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
     }
     return resultPointer;
   }
+
+  /** Executes the complete smart-pathfinding composition and validates its result record pointer. */
+  runSmartPathfinding(inputPointer: number, inputByteLength: number) {
+    validateFixedCommandInput(
+      this,
+      inputPointer,
+      inputByteLength,
+      SMART_PATHFINDING_INPUT_BYTE_LENGTH,
+      "smart-pathfinding",
+    );
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.runSmartPathfinding(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM smart-pathfinding command failed", "trap");
+    }
+    validateResultRecordPointer(this, resultPointer, SMART_PATHFINDING_RESULT_BYTE_LENGTH, "smart-pathfinding");
+    return resultPointer;
+  }
+
+  /** Starts a complete one-click-clear session and validates its result/session record pointer. */
+  beginOneClickClear(inputPointer: number, inputByteLength: number) {
+    validateFixedCommandInput(
+      this,
+      inputPointer,
+      inputByteLength,
+      ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH,
+      "one-click-clear",
+    );
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.beginOneClickClear(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM one-click-clear begin failed", "trap");
+    }
+    validateResultRecordPointer(this, resultPointer, ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH, "one-click-clear begin");
+    return resultPointer;
+  }
+
+  /** Resumes one exact one-click-clear session after an externally completed edge batch. */
+  resumeOneClickClear(inputPointer: number, inputByteLength: number) {
+    validateFixedCommandInput(
+      this,
+      inputPointer,
+      inputByteLength,
+      ONE_CLICK_CLEAR_RESUME_INPUT_BYTE_LENGTH,
+      "one-click-clear resume",
+    );
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.resumeOneClickClear(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM one-click-clear resume failed", "trap");
+    }
+    validateResultRecordPointer(this, resultPointer, ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH, "one-click-clear resume");
+    return resultPointer;
+  }
 }
 
 /** 加载并验证唯一 Graphwar kernel module，不在主线程实例化。 */
@@ -547,6 +612,51 @@ export function validateGraphwarWasmModule(module: WebAssembly.Module) {
     if (exportKinds.get(name) !== "function") {
       throw new GraphwarWasmFault("abi", `Graphwar WASM function export is missing: ${name}`);
     }
+  }
+}
+
+/** Fixed command records must already be allocated inside the retained arena before crossing the ABI. */
+function validateFixedCommandInput(
+  runtime: GraphwarWasmKernelRuntime,
+  inputPointer: number,
+  inputByteLength: number,
+  expectedByteLength: number,
+  commandName: string,
+) {
+  if (!isPositiveU32(inputPointer) || inputPointer % 4 !== 0) {
+    throw new GraphwarWasmFault("input", `Graphwar WASM ${commandName} input pointer is invalid`);
+  }
+  if (inputByteLength !== expectedByteLength) {
+    throw new GraphwarWasmFault(
+      "input",
+      `Graphwar WASM ${commandName} input must be exactly ${expectedByteLength} bytes`,
+    );
+  }
+  const cursor = runtime.arenaCursor;
+  if (inputPointer < runtime.arenaBase || inputPointer > 0xffff_ffff - inputByteLength) {
+    throw new GraphwarWasmFault("input", `Graphwar WASM ${commandName} input range is outside the arena`);
+  }
+  if (inputPointer + inputByteLength > cursor) {
+    throw new GraphwarWasmFault("input", `Graphwar WASM ${commandName} input range is not allocated`);
+  }
+}
+
+/** Result records are flat u32 envelopes; the full record must be retained before adapters read it. */
+function validateResultRecordPointer(
+  runtime: GraphwarWasmKernelRuntime,
+  resultPointer: number,
+  resultByteLength: number,
+  commandName: string,
+) {
+  if (!isPositiveU32(resultPointer) || resultPointer % 8 !== 0) {
+    throw new GraphwarWasmFault("output", `Graphwar WASM ${commandName} returned an invalid result pointer`);
+  }
+  const cursor = runtime.arenaCursor;
+  if (resultPointer < runtime.arenaBase || resultPointer > 0xffff_ffff - resultByteLength) {
+    throw new GraphwarWasmFault("output", `Graphwar WASM ${commandName} result range is outside the arena`);
+  }
+  if (resultPointer + resultByteLength > cursor) {
+    throw new GraphwarWasmFault("output", `Graphwar WASM ${commandName} result record is truncated`);
   }
 }
 

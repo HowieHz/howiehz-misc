@@ -192,6 +192,12 @@ import {
   TRAJECTORY_FINAL_COUNTER_ACCEPTED_SAMPLE_COUNT_OFFSET,
   TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH,
   TRAJECTORY_FINAL_COUNTER_RK4_STEP_COUNT_OFFSET,
+  TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH,
+  TRAJECTORY_REPLAY_METADATA_FINAL_COUNTER_POINTER_OFFSET,
+  TRAJECTORY_REPLAY_METADATA_FORMULA_INPUT_POINTER_OFFSET,
+  TRAJECTORY_REPLAY_METADATA_LAUNCH_RESULT_POINTER_OFFSET,
+  TRAJECTORY_REPLAY_METADATA_MATERIAL_RESULT_POINTER_OFFSET,
+  TRAJECTORY_REPLAY_METADATA_TRAJECTORY_RESULT_POINTER_OFFSET,
 } from "./trajectory-layout";
 
 function trap(): void {
@@ -206,6 +212,16 @@ export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
 
 /** Executes one complete raw request and optionally reports only the final stable scalar replay counters. */
 export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32, finalCounterPointer: u32): u32 {
+  return runTrajectoryRequestWithMetadata(inputPointer, inputByteLength, finalCounterPointer, 0);
+}
+
+/** Step-glitch production replay additionally retains the final launch/material source pointers. */
+export function runTrajectoryRequestWithMetadata(
+  inputPointer: u32,
+  inputByteLength: u32,
+  finalCounterPointer: u32,
+  metadataPointer: u32,
+): u32 {
   if (inputPointer == 0 && inputByteLength == 0) {
     return 0;
   }
@@ -217,6 +233,14 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32, fi
   if (finalCounterPointer != 0) {
     requireArenaRange(finalCounterPointer, TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH, sizeof<u32>());
     memory.fill(finalCounterPointer, 0, TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH);
+  }
+  if (metadataPointer != 0) {
+    requireArenaRange(metadataPointer, TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH, sizeof<u32>());
+    memory.fill(metadataPointer, 0, TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH);
+    store<u32>(
+      metadataPointer + TRAJECTORY_REPLAY_METADATA_FINAL_COUNTER_POINTER_OFFSET,
+      finalCounterPointer,
+    );
   }
   if (TRAJECTORY_INPUT_FORMULA_BYTE_LENGTH != 176) {
     trap();
@@ -472,7 +496,7 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32, fi
     return resultPointer;
   }
 
-  // Java's Function counters start after launch preparation and cover only its final integration loop.
+  // These project counters start after launch preparation and cover only the final integration loop.
   const finalAttemptRk4Start = getTrajectoryDebugCounter(
     debugCounterPointer,
     TRAJECTORY_DEBUG_RK4_STEP_COUNT_FIELD_OFFSET,
@@ -503,6 +527,20 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32, fi
   const materialResultPointer = load<u32>(
     launchResultPointer + FORMULA_LAUNCH_RESULT_MATERIAL_RESULT_POINTER_OFFSET,
   );
+  if (metadataPointer != 0) {
+    store<u32>(
+      metadataPointer + TRAJECTORY_REPLAY_METADATA_FORMULA_INPUT_POINTER_OFFSET,
+      launchInputPointer,
+    );
+    store<u32>(
+      metadataPointer + TRAJECTORY_REPLAY_METADATA_LAUNCH_RESULT_POINTER_OFFSET,
+      launchResultPointer,
+    );
+    store<u32>(
+      metadataPointer + TRAJECTORY_REPLAY_METADATA_MATERIAL_RESULT_POINTER_OFFSET,
+      materialResultPointer,
+    );
+  }
   store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET, observedProtectionPointer);
   store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_COUNT_OFFSET, segmentCount);
   const equation = load<i32>(inputPointer + 4);
@@ -871,6 +909,12 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32, fi
     store<u32>(resultPointer + TRAJECTORY_RESULT_TRACKED_TARGET_COUNT_OFFSET, trackedTargetCount);
   }
   endTrajectoryDebugCounters(debugCounterPointer);
+  if (metadataPointer != 0) {
+    store<u32>(
+      metadataPointer + TRAJECTORY_REPLAY_METADATA_TRAJECTORY_RESULT_POINTER_OFFSET,
+      resultPointer,
+    );
+  }
   commitArena(attemptMark);
   return resultPointer;
   }

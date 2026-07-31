@@ -364,7 +364,7 @@ test("guards the source and release configuration against managed hot-path alloc
   assert.equal((combinedSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 4);
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
   assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
-  assert.match(stepGlitchSource, /import \{ runTrajectoryRequest \} ;/);
+  assert.match(stepGlitchSource, /import \{ runTrajectoryRequest(?:, runTrajectoryRequestWithMetadata)? \} ;/);
   const prepareLaunchReferenceFiles = executableSources
     .filter(({ source }) => /\brunPrepareLaunch\b/.test(source))
     .map(({ file }) => file)

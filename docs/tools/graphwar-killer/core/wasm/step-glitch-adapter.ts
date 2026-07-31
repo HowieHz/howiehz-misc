@@ -4,7 +4,9 @@ import { graphXAdvancesStrictly } from "../../core/numbers";
 import { imagePointToPlaneGridPoint, planeColumnToForwardColumn } from "../../core/plane-grid";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
-import type { StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
+import { buildFormula } from "../../formula/generation/build";
+import type { CompiledGraphwarFormulaMaterials } from "../../formula/generation/build";
+import type { FormulaEvaluationOptions, StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
 import { graphwarByteArraysEqual } from "../../formula/trajectory/final-replay-snapshot";
 import type { GraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
 import {
@@ -68,6 +70,8 @@ const STEP_GLITCH_COMMAND_TRACE_DFS = 13;
 const STEP_GLITCH_COMMAND_PREPARE_CANDIDATE_FORMULA_FOR_TEST = 15;
 const STEP_GLITCH_COMMAND_REPLAY_CANDIDATE_FOR_TEST = 16;
 const STEP_GLITCH_COMMAND_TRACE_REAL_DFS_FOR_TEST = 17;
+const STEP_GLITCH_COMMAND_SCAN = 18;
+const STEP_GLITCH_COMMAND_REPLAY = 19;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
@@ -95,10 +99,64 @@ const STEP_GLITCH_REAL_DFS_INPUT_BYTE_LENGTH = 16;
 const STEP_GLITCH_REAL_DFS_TARGET_VALUE_COUNT = 5;
 const STEP_GLITCH_REAL_DFS_RESULT_BYTE_LENGTH = 40;
 const STEP_GLITCH_REAL_DFS_RESULT_MAGIC = 0x5347_5244;
-const STEP_GLITCH_REAL_DFS_TRACE_BYTE_LENGTH = 200;
+const STEP_GLITCH_REAL_DFS_TRACE_BYTE_LENGTH = 212;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_NONE = 0;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD = 1;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE = 2;
+const STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH = 24;
+const STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH = 64;
+const STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH = 32;
+const STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH = 72;
+const STEP_GLITCH_PRODUCTION_RESULT_MAGIC = 0x5347_5052;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC = 0x5347_4556;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION = 1;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 288;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET = 248;
+const FORMULA_INPUT_BYTE_LENGTH = 176;
+const FORMULA_RESULT_BYTE_LENGTH = 48;
+const FORMULA_LAUNCH_RESULT_BYTE_LENGTH = 80;
+const TRAJECTORY_EVIDENCE_BYTE_LENGTH = 104;
+const FORMULA_ALGORITHM_STEP = 2;
+const FORMULA_EQUATION_DY = 2;
+const FORMULA_EQUATION_DDY = 3;
+const FORMULA_FLAG_STEP_OVERFLOW_PROTECTION = 1;
+const FORMULA_FLAG_STEP_GLITCH_MODE = 8;
+const FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS = 16;
+const FORMULA_INPUT_ALGORITHM_OFFSET = 0;
+const FORMULA_INPUT_EQUATION_OFFSET = 4;
+const FORMULA_INPUT_DECIMAL_PLACES_OFFSET = 8;
+const FORMULA_INPUT_FLAGS_OFFSET = 12;
+const FORMULA_INPUT_POINT_COUNT_OFFSET = 16;
+const FORMULA_INPUT_POINT_X_POINTER_OFFSET = 20;
+const FORMULA_INPUT_POINT_Y_POINTER_OFFSET = 24;
+const FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET = 28;
+const FORMULA_INPUT_SIGN_PROTECTION_COUNT_OFFSET = 32;
+const FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET = 52;
+const FORMULA_INPUT_STEEPNESS_OFFSET = 56;
+const FORMULA_INPUT_BOUNDS_MIN_X_OFFSET = 64;
+const FORMULA_INPUT_BOUNDS_MAX_X_OFFSET = 72;
+const FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET = 80;
+const FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET = 88;
+const FORMULA_INPUT_SOLDIER_X_OFFSET = 96;
+const FORMULA_INPUT_SOLDIER_Y_OFFSET = 104;
+const FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET = 136;
+const FORMULA_INPUT_STEP_OVERFLOW_RANGE_COUNT_OFFSET = 148;
+const FORMULA_INPUT_PATH_STEEPNESS_OFFSET = 152;
+const FORMULA_INPUT_MASK_POINTER_OFFSET = 160;
+const FORMULA_INPUT_MASK_BYTE_LENGTH_OFFSET = 164;
+const FORMULA_RESULT_MATERIAL_POINTER_OFFSET = 4;
+const FORMULA_RESULT_PROTECTION_POINTER_OFFSET = 32;
+const FORMULA_RESULT_PROTECTION_COUNT_OFFSET = 36;
+const FORMULA_LAUNCH_RESULT_STATUS_OFFSET = 0;
+const FORMULA_LAUNCH_RESULT_MATERIAL_RESULT_POINTER_OFFSET = 48;
+const FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET = 60;
+const FORMULA_LAUNCH_RESULT_PROTECTION_COUNT_OFFSET = 64;
+const FORMULA_LAUNCH_RESULT_FORMULA_POINT_COUNT_OFFSET = 68;
+const FORMULA_LAUNCH_RESULT_FORMULA_POINT_X_POINTER_OFFSET = 72;
+const FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET = 76;
+const TRAJECTORY_EVIDENCE_PROTECTION_POINTER_OFFSET = 32;
+const TRAJECTORY_EVIDENCE_PROTECTION_COUNT_OFFSET = 36;
+const TRAJECTORY_EVIDENCE_FLAGS_OFFSET = 100;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -145,6 +203,9 @@ export type GraphwarWasmStepGlitchCommandInput =
       controlX: number;
       path: readonly PixelPoint[];
       targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+      windows?:
+        | { type: "automatic" }
+        | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
       type: "replay";
     };
 
@@ -235,6 +296,7 @@ export type GraphwarWasmPackedStepGlitchCommandInput =
       controlX: number;
       path: GraphwarWasmPackedPointSoA;
       targetSequenceRecords: GraphwarWasmMemorySlice;
+      windows: { count: number; mode: number; pointer: number };
       type: "replay";
     };
 
@@ -261,6 +323,13 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   replayCandidateForTest: (
     input: GraphwarWasmStepGlitchRealReplayTestInput,
   ) => GraphwarWasmStepGlitchRealReplayTestOutput;
+  /** Production raw ABI; deep evidence decoding is intentionally a later 8B3 boundary. */
+  replayRaw: (
+    input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "replay" }>,
+  ) => GraphwarWasmStepGlitchRawReplayOutput;
+  scanRaw: (
+    input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "scan" }>,
+  ) => GraphwarWasmStepGlitchRawScanOutput;
   traceGateFrontier: (
     input: GraphwarWasmStepGlitchGeometryFrontierInput,
   ) => GraphwarWasmStepGlitchGeometryFrontierTrace;
@@ -308,6 +377,9 @@ export type GraphwarWasmStepGlitchRealDfsReplaySummary =
   | {
       acceptedSamplePointCount: number;
       bisectionCount: number;
+      finalAcceptedSamplePointCount: number;
+      finalBisectionCount: number;
+      finalRk4StepCount: number;
       launchStatus: "invalid";
       minStepJumpCount: number;
       reachedRequiredTargetCount: number;
@@ -322,6 +394,9 @@ export type GraphwarWasmStepGlitchRealDfsReplaySummary =
       acceptedSamplePointCount: number;
       bisectionCount: number;
       blockedPoint?: GraphPoint;
+      finalAcceptedSamplePointCount: number;
+      finalBisectionCount: number;
+      finalRk4StepCount: number;
       launchStatus: "success";
       minStepJumpCount: number;
       obstacleHitIndex: number;
@@ -484,9 +559,11 @@ export type GraphwarWasmStepGlitchFinalValidationEvidence =
 /** Owned success evidence is copied from one WASM result before the command arena resets. */
 export interface GraphwarWasmStepGlitchReplayEvidence {
   finalValidation: GraphwarWasmStepGlitchFinalValidationEvidence;
-  formulaContext: GraphwarTrajectoryFormulaContext & {
-    stepGlitchFormulaEvidence: GraphwarStepGlitchFormulaEvidence;
-  };
+  /**
+   * Formula context reconstructed from fields carried by the production ABI. Prefix evidence is deliberately absent
+   * until that ABI carries its full identity.
+   */
+  formulaContext: GraphwarTrajectoryFormulaContext;
   trajectoryPoints: readonly PixelPoint[];
 }
 
@@ -531,6 +608,105 @@ export type GraphwarWasmStepGlitchReplayOutput =
       status: "miss";
     };
 
+export interface GraphwarWasmStepGlitchOwnedFormulaInput {
+  readonly bounds: GraphBounds;
+  readonly equation: "dy" | "ddy";
+  readonly flags: number;
+  readonly formulaPathSteepness: number;
+  readonly mask: Uint8Array;
+  readonly overflowProtectionRange?: { maxX: number; minX: number };
+  readonly points: readonly GraphPoint[];
+  readonly settings: Readonly<GraphwarTrajectoryFormulaSettings>;
+  readonly steepness: number;
+  readonly stepGlitchWindows: readonly ({ endX: number; isPresent: boolean; startX: number } | undefined)[];
+}
+
+export interface GraphwarWasmStepGlitchOwnedTrajectory {
+  readonly acceptedSamplePointCount: number;
+  readonly bisectionCount: number;
+  readonly blockedPoint?: GraphPoint;
+  readonly currentPoint: GraphPoint;
+  readonly currentDy: number;
+  readonly finalAcceptedSamplePointCount: number;
+  readonly finalBisectionCount: number;
+  readonly finalRk4StepCount: number;
+  readonly obstacleHitIndex: number;
+  readonly pointDys: readonly number[];
+  readonly points: readonly GraphPoint[];
+  readonly previousPoint?: GraphPoint;
+  readonly previousDy: number;
+  readonly reachedRequiredTargetCount: number;
+  readonly reachedTargetCount: number;
+  readonly replayCount: number;
+  readonly requiredTargetsHitIndex: number;
+  readonly rk4StepCount: number;
+  readonly sampleIndex: number;
+  readonly stopReason: number;
+  readonly targetHitIndex: number;
+  readonly trackedTargetHitIndexes: readonly number[];
+  readonly visiblePixels: readonly PixelPoint[];
+}
+
+export interface GraphwarWasmStepGlitchOwnedContinuation {
+  readonly bytes: Uint8Array;
+  readonly flags: number;
+  readonly protection: readonly number[];
+  readonly sampleIndex: number;
+}
+
+export type GraphwarWasmStepGlitchOwnedFinalValidation =
+  | { type: "none" }
+  | {
+      simulationMaskCacheId: number;
+      targetControlPoints: readonly PixelPoint[];
+      trackedTargets: readonly GraphwarTrajectoryTargetCircle[];
+      type: "validated";
+    };
+
+/**
+ * Stable evidence copied from one successful replay. Pointer-bearing records are decoded while the arena is live;
+ * callers only retain these owned values.
+ */
+export interface GraphwarWasmStepGlitchOwnedEvidence {
+  readonly bytes: Uint8Array;
+  readonly finalValidation: GraphwarWasmStepGlitchOwnedFinalValidation;
+  /**
+   * Canonical formula context proved by the production ABI. Prefix evidence is intentionally absent until the ABI
+   * carries every prefix field it needs.
+   */
+  readonly formulaContext: GraphwarTrajectoryFormulaContext;
+  readonly formulaInput: GraphwarWasmStepGlitchOwnedFormulaInput;
+  readonly formulaLaunch: GraphwarWasmFormulaLaunchResult & { status: "success" };
+  readonly formulaMaterials: CompiledGraphwarFormulaMaterials;
+  readonly continuation?: GraphwarWasmStepGlitchOwnedContinuation;
+  readonly path: readonly PixelPoint[];
+  readonly pointerEncoding: "relative-to-evidence";
+  readonly protection: readonly number[];
+  readonly trackedTargetHitIndexes: readonly number[];
+  readonly trajectory: GraphwarWasmStepGlitchOwnedTrajectory;
+}
+
+/** Raw production evidence is copied before the command mark is released and deeply decoded once. */
+export interface GraphwarWasmStepGlitchRawEvidence {
+  readonly bytes: Uint8Array;
+  readonly magic: number;
+  readonly owned: GraphwarWasmStepGlitchOwnedEvidence;
+  readonly pointerEncoding: "relative-to-evidence";
+  readonly version: number;
+}
+
+export interface GraphwarWasmStepGlitchRawResultBase {
+  readonly acceptedPoint?: GraphPoint;
+  readonly blockedPoint?: GraphPoint;
+  readonly expandedStates: number;
+  readonly reachedTargetCount: number;
+  readonly status: "hit" | "invalid-input" | "miss" | "no-path" | "unsupported";
+  readonly evidence?: GraphwarWasmStepGlitchRawEvidence;
+}
+
+export type GraphwarWasmStepGlitchRawScanOutput = GraphwarWasmStepGlitchRawResultBase;
+export type GraphwarWasmStepGlitchRawReplayOutput = GraphwarWasmStepGlitchRawResultBase;
+
 /** Maps the existing scanner options once; debug metrics and the TS-only mask index stay in the Worker shell. */
 export function createGraphwarWasmStepGlitchContextInput(
   options: GraphwarStepGlitchPrefixOptions,
@@ -551,7 +727,7 @@ export function createGraphwarWasmStepGlitchContextInput(
 /** Maps target options without splitting the optional final-validation identity. */
 export function createGraphwarWasmStepGlitchScanCommandInput(
   target: GraphwarStepGlitchTargetOptions,
-): GraphwarWasmStepGlitchCommandInput {
+): Extract<GraphwarWasmStepGlitchCommandInput, { type: "scan" }> {
   return {
     finalValidation: target.finalValidation ? { ...target.finalValidation, type: "validate" } : { type: "none" },
     hitTarget: target.hitTarget,
@@ -630,6 +806,1475 @@ export function packGraphwarWasmStepGlitchContextInput(
   };
 }
 
+function packGraphwarWasmStepGlitchFinalValidationDescriptor(
+  runtime: GraphwarWasmKernelRuntime,
+  finalValidation: GraphwarWasmPackedStepGlitchFinalValidation,
+): GraphwarWasmMemorySlice {
+  if (finalValidation.type === "none") {
+    return { length: 0, pointer: 0 };
+  }
+  const pointer = runtime.reserveArena(STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH, 4);
+  const view = new DataView(runtime.buffer, pointer, STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH);
+  view.setUint32(0, finalValidation.targetControlPoints.x.pointer, true);
+  view.setUint32(4, finalValidation.targetControlPoints.y.pointer, true);
+  view.setUint32(8, finalValidation.targetControlPoints.length, true);
+  view.setUint32(12, finalValidation.trackedTargetRecords.pointer, true);
+  view.setUint32(16, finalValidation.trackedTargetRecords.length / 3, true);
+  view.setUint32(20, finalValidation.simulationMaskCacheId, true);
+  view.setUint32(24, 1, true);
+  view.setUint32(28, 0, true);
+  return { length: STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH, pointer };
+}
+
+function decodeGraphwarWasmStepGlitchProductionRawResult(
+  runtime: GraphwarWasmKernelRuntime,
+  context: GraphwarWasmStepGlitchContextInput,
+  command: GraphwarWasmStepGlitchCommandInput,
+  resultPointer: number,
+  outputMinimumPointer: number,
+): GraphwarWasmStepGlitchRawResultBase {
+  const range = validateGraphwarWasmMemoryRange(
+    runtime,
+    { length: 1, pointer: resultPointer },
+    {
+      alignment: 8,
+      elementByteLength: STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH,
+      minimumPointer: outputMinimumPointer,
+    },
+  );
+  const view = new DataView(range.buffer, range.byteOffset, range.byteLength);
+  if (view.getUint32(0, true) !== STEP_GLITCH_PRODUCTION_RESULT_MAGIC || view.getUint32(64, true) !== 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch production result header is invalid",
+      "output",
+    );
+  }
+  const statusValue = validateGraphwarWasmEnumValue(
+    view.getUint32(4, true),
+    [1, 2, 3, 4] as const,
+    "stepGlitch.production.status",
+  );
+  const status =
+    statusValue === 1
+      ? "hit"
+      : statusValue === 2
+        ? command.type === "scan"
+          ? "no-path"
+          : "miss"
+        : statusValue === 3
+          ? "invalid-input"
+          : "unsupported";
+  const evidencePointer = view.getUint32(8, true);
+  const evidenceByteLength = view.getUint32(12, true);
+  const hasAcceptedPoint =
+    validateGraphwarWasmEnumValue(view.getUint32(24, true), [0, 1] as const, "stepGlitch.production.acceptedFlag") ===
+    1;
+  if (hasAcceptedPoint !== (status === "hit")) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch production accepted-point presence disagrees with status",
+      "output",
+    );
+  }
+  if ((evidencePointer === 0) !== (evidenceByteLength === 0) || (status === "hit") !== (evidencePointer !== 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch production evidence presence disagrees with status",
+      "output",
+    );
+  }
+  let evidence: GraphwarWasmStepGlitchRawEvidence | undefined;
+  if (status === "hit") {
+    if (evidenceByteLength < STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step-glitch production evidence is truncated",
+        "output",
+      );
+    }
+    const evidenceRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: evidenceByteLength, pointer: evidencePointer },
+      { alignment: 8, elementByteLength: 1, minimumPointer: outputMinimumPointer },
+    );
+    const evidenceBytes = new Uint8Array(
+      evidenceRange.buffer,
+      evidenceRange.byteOffset,
+      evidenceRange.byteLength,
+    ).slice();
+    const evidenceView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength);
+    if (
+      evidenceView.getUint32(0, true) !== STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC ||
+      evidenceView.getUint32(4, true) !== STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION ||
+      evidenceView.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET, true) !== evidenceByteLength
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step-glitch production evidence header is invalid",
+        "output",
+      );
+    }
+    const owned = decodeGraphwarWasmStepGlitchOwnedEvidence(
+      runtime,
+      context,
+      command,
+      evidencePointer,
+      evidenceByteLength,
+      evidenceBytes,
+      outputMinimumPointer,
+    );
+    evidence = {
+      bytes: evidenceBytes,
+      magic: STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC,
+      owned,
+      pointerEncoding: "relative-to-evidence",
+      version: STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION,
+    };
+  }
+  const hasBlockedPoint =
+    validateGraphwarWasmEnumValue(view.getUint32(28, true), [0, 1] as const, "stepGlitch.production.blockedFlag") === 1;
+  const acceptedX = view.getFloat64(32, true);
+  const acceptedY = view.getFloat64(40, true);
+  const blockedX = view.getFloat64(48, true);
+  const blockedY = view.getFloat64(56, true);
+  if (hasAcceptedPoint && (!Number.isFinite(acceptedX) || !Number.isFinite(acceptedY))) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "Step-glitch accepted point is non-finite", "output");
+  }
+  if (hasBlockedPoint && (!Number.isFinite(blockedX) || !Number.isFinite(blockedY))) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "Step-glitch blocked point is non-finite", "output");
+  }
+  if (status === "hit" && evidence) {
+    const evidenceView = new DataView(evidence.bytes.buffer, evidence.bytes.byteOffset, evidence.bytes.byteLength);
+    const evidenceAcceptedX = productionEvidenceFinite(
+      evidenceView.getFloat64(96, true),
+      "stepGlitch.evidence.acceptedX",
+    );
+    const evidenceAcceptedY = productionEvidenceFinite(
+      evidenceView.getFloat64(104, true),
+      "stepGlitch.evidence.acceptedY",
+    );
+    if (!Object.is(evidenceAcceptedX, acceptedX) || !Object.is(evidenceAcceptedY, acceptedY)) {
+      productionEvidenceFault("Step-glitch result accepted point differs from its evidence");
+    }
+    const acceptedPointMatches = evidence.owned.trajectory.points.some(
+      (point) => Object.is(point.x, acceptedX) && Object.is(point.y, acceptedY),
+    );
+    if (!acceptedPointMatches) productionEvidenceFault("Step-glitch accepted point is absent from its trajectory");
+    const evidenceBlockedX = evidenceView.getFloat64(112, true);
+    const evidenceBlockedY = evidenceView.getFloat64(120, true);
+    if (hasBlockedPoint) {
+      if (
+        !Number.isFinite(evidenceBlockedX) ||
+        !Number.isFinite(evidenceBlockedY) ||
+        !Object.is(evidenceBlockedX, blockedX) ||
+        !Object.is(evidenceBlockedY, blockedY)
+      ) {
+        productionEvidenceFault("Step-glitch result blocked point differs from its evidence");
+      }
+    } else if (!Object.is(evidenceBlockedX, 0) || !Object.is(evidenceBlockedY, 0)) {
+      productionEvidenceFault("Step-glitch evidence contains an unexpected blocked point");
+    }
+    const expectedReachedTargetCount =
+      evidence.owned.trajectory.reachedTargetCount + evidence.owned.trajectory.reachedRequiredTargetCount;
+    if (view.getUint32(20, true) !== expectedReachedTargetCount) {
+      productionEvidenceFault("Step-glitch result target count differs from its evidence");
+    }
+  }
+  return {
+    ...(hasAcceptedPoint ? { acceptedPoint: createGraphPoint(acceptedX, acceptedY) } : {}),
+    ...(hasBlockedPoint ? { blockedPoint: createGraphPoint(blockedX, blockedY) } : {}),
+    expandedStates: validateGraphwarWasmU32(view.getUint32(16, true), "stepGlitch.production.expandedStates"),
+    ...(evidence ? { evidence } : {}),
+    reachedTargetCount: validateGraphwarWasmU32(view.getUint32(20, true), "stepGlitch.production.reachedTargetCount"),
+    status,
+  };
+}
+
+function productionEvidenceFault(message: string): never {
+  throw new GraphwarWasmAdapterError("invalid-session-state", message, "output");
+}
+
+function checkedProductionEvidenceByteLength(count: number, stride: number, fieldName: string) {
+  if (!Number.isSafeInteger(count) || count < 0 || count > 0xffff_ffff || count * stride > 0xffff_ffff) {
+    productionEvidenceFault(`${fieldName} byte length overflows the WASM ABI`);
+  }
+  return count * stride;
+}
+
+function validateOwnedProductionEvidenceRange(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  pointer: number,
+  byteLength: number,
+  alignment: number,
+  fieldName: string,
+  minimumPointer: number,
+) {
+  if (byteLength === 0) {
+    if (pointer !== 0) productionEvidenceFault(`${fieldName} has a pointer without a range`);
+    return undefined;
+  }
+  if (pointer === 0 || pointer < evidencePointer || pointer + byteLength > evidencePointer + evidenceByteLength) {
+    productionEvidenceFault(`${fieldName} escapes the owned evidence range`);
+  }
+  try {
+    return validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: byteLength, pointer },
+      { alignment, elementByteLength: 1, minimumPointer },
+    );
+  } catch (error) {
+    if (error instanceof GraphwarWasmAdapterError) {
+      throw new GraphwarWasmAdapterError(error.code, `${fieldName}: ${error.message}`, "output");
+    }
+    throw error;
+  }
+}
+
+function readOwnedProductionEvidenceFloat64Values(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  pointer: number,
+  count: number,
+  fieldName: string,
+  minimumPointer: number,
+) {
+  const byteLength = checkedProductionEvidenceByteLength(count, Float64Array.BYTES_PER_ELEMENT, fieldName);
+  const range = validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    pointer,
+    byteLength,
+    Float64Array.BYTES_PER_ELEMENT,
+    fieldName,
+    minimumPointer,
+  );
+  if (!range) return new Float64Array();
+  return new Float64Array(range.buffer, range.byteOffset, count).slice();
+}
+
+function readOwnedProductionEvidenceUint32Values(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  pointer: number,
+  count: number,
+  fieldName: string,
+  minimumPointer: number,
+) {
+  const byteLength = checkedProductionEvidenceByteLength(count, Uint32Array.BYTES_PER_ELEMENT, fieldName);
+  const range = validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    pointer,
+    byteLength,
+    Uint32Array.BYTES_PER_ELEMENT,
+    fieldName,
+    minimumPointer,
+  );
+  if (!range) return new Uint32Array();
+  return new Uint32Array(range.buffer, range.byteOffset, count).slice();
+}
+
+function readOwnedProductionEvidenceInt32Values(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  pointer: number,
+  count: number,
+  fieldName: string,
+  minimumPointer: number,
+) {
+  const byteLength = checkedProductionEvidenceByteLength(count, Int32Array.BYTES_PER_ELEMENT, fieldName);
+  const range = validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    pointer,
+    byteLength,
+    Int32Array.BYTES_PER_ELEMENT,
+    fieldName,
+    minimumPointer,
+  );
+  if (!range) return new Int32Array();
+  return new Int32Array(range.buffer, range.byteOffset, count).slice();
+}
+
+function readOwnedProductionEvidenceBytes(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  pointer: number,
+  byteLength: number,
+  fieldName: string,
+  minimumPointer: number,
+) {
+  const range = validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    pointer,
+    byteLength,
+    1,
+    fieldName,
+    minimumPointer,
+  );
+  return range ? new Uint8Array(range.buffer, range.byteOffset, byteLength).slice() : new Uint8Array();
+}
+
+function productionEvidenceFinite(value: number, fieldName: string) {
+  if (!Number.isFinite(value)) productionEvidenceFault(`${fieldName} is not finite`);
+  return value;
+}
+
+function productionEvidenceValue<T>(values: ArrayLike<T>, index: number, fieldName: string): T {
+  const value = values[index];
+  if (value === undefined) productionEvidenceFault(`${fieldName} is missing`);
+  return value;
+}
+
+function productionEvidencePointsEqual(left: readonly GraphPoint[], right: readonly GraphPoint[]) {
+  return (
+    left.length === right.length &&
+    left.every((point, index) => {
+      const other = right[index];
+      return other !== undefined && Object.is(point.x, other.x) && Object.is(point.y, other.y);
+    })
+  );
+}
+
+function productionEvidencePixelsEqual(left: readonly PixelPoint[], right: readonly PixelPoint[]) {
+  return (
+    left.length === right.length &&
+    left.every((point, index) => {
+      const other = right[index];
+      return other !== undefined && Object.is(point.x, other.x) && Object.is(point.y, other.y);
+    })
+  );
+}
+
+function productionEvidenceTargetHit(pixel: PixelPoint, target: GraphwarTrajectoryTargetCircle) {
+  const dx = pixel.x - target.center.x;
+  const dy = pixel.y - target.center.y;
+  return dx * dx + dy * dy < target.radius * target.radius;
+}
+
+function productionEvidenceDecodeTargetRecords(
+  values: readonly number[],
+  fieldName: string,
+): GraphwarTrajectoryTargetCircle[] {
+  if (values.length % 3 !== 0) productionEvidenceFault(`${fieldName} has a partial target record`);
+  const targets: GraphwarTrajectoryTargetCircle[] = [];
+  for (let index = 0; index < values.length; index += 3) {
+    const center = createPixelPoint(
+      productionEvidenceFinite(
+        productionEvidenceValue(values, index, `${fieldName}[${index}].x`),
+        `${fieldName}[${index}].x`,
+      ),
+      productionEvidenceFinite(
+        productionEvidenceValue(values, index + 1, `${fieldName}[${index}].y`),
+        `${fieldName}[${index}].y`,
+      ),
+    );
+    const radius = productionEvidenceFinite(
+      productionEvidenceValue(values, index + 2, `${fieldName}[${index}].radius`),
+      `${fieldName}[${index}].radius`,
+    );
+    if (radius < 0) productionEvidenceFault(`${fieldName}[${index}].radius is negative`);
+    targets.push({ center, radius });
+  }
+  return targets;
+}
+
+function productionEvidenceTargetSequencesEqual(
+  left: readonly GraphwarTrajectoryTargetCircle[],
+  right: readonly GraphwarTrajectoryTargetCircle[],
+) {
+  return (
+    left.length === right.length &&
+    left.every((target, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        Object.is(target.center.x, other.center.x) &&
+        Object.is(target.center.y, other.center.y) &&
+        Object.is(target.radius, other.radius)
+      );
+    })
+  );
+}
+
+function productionEvidenceUint32ArraysEqual(left: readonly number[], right: readonly number[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function productionEvidenceRewriteRelativePointer(
+  bytes: Uint8Array,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  recordOffset: number,
+  fieldOffset: number,
+  pointer: number,
+  fieldName: string,
+) {
+  if (pointer === 0) {
+    new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(recordOffset + fieldOffset, 0, true);
+    return;
+  }
+  if (pointer < evidencePointer || pointer >= evidencePointer + evidenceByteLength) {
+    productionEvidenceFault(`${fieldName} cannot be made evidence-relative`);
+  }
+  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(
+    recordOffset + fieldOffset,
+    pointer - evidencePointer,
+    true,
+  );
+}
+
+function decodeGraphwarWasmStepGlitchOwnedEvidence(
+  runtime: GraphwarWasmKernelRuntime,
+  context: GraphwarWasmStepGlitchContextInput,
+  command: GraphwarWasmStepGlitchCommandInput,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  evidenceBytes: Uint8Array,
+  outputMinimumPointer: number,
+): GraphwarWasmStepGlitchOwnedEvidence {
+  const header = new DataView(runtime.buffer, evidencePointer, evidenceByteLength);
+  const pathCount = validateGraphwarWasmU32(header.getUint32(20, true), "stepGlitch.evidence.pathCount");
+  const pointCount = validateGraphwarWasmU32(header.getUint32(36, true), "stepGlitch.evidence.pointCount");
+  const visibleCount = validateGraphwarWasmU32(header.getUint32(48, true), "stepGlitch.evidence.visibleCount");
+  const protectionCount = validateGraphwarWasmU32(header.getUint32(56, true), "stepGlitch.evidence.protectionCount");
+  if (pathCount < 2 || pointCount === 0 || visibleCount === 0) {
+    productionEvidenceFault("Step-glitch evidence has an empty physical range");
+  }
+  if (protectionCount !== pathCount - 1) {
+    productionEvidenceFault("Step-glitch evidence protection count differs from the source path");
+  }
+  const pathXs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(12, true),
+    pathCount,
+    "stepGlitch.evidence.pathX",
+    outputMinimumPointer,
+  );
+  const pathYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(16, true),
+    pathCount,
+    "stepGlitch.evidence.pathY",
+    outputMinimumPointer,
+  );
+  const path = Array.from({ length: pathCount }, (_value, index) =>
+    createPixelPoint(
+      productionEvidenceFinite(
+        productionEvidenceValue(pathXs, index, `stepGlitch.evidence.path[${index}].x`),
+        `stepGlitch.evidence.path[${index}].x`,
+      ),
+      productionEvidenceFinite(
+        productionEvidenceValue(pathYs, index, `stepGlitch.evidence.path[${index}].y`),
+        `stepGlitch.evidence.path[${index}].y`,
+      ),
+    ),
+  );
+  const pointXs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(24, true),
+    pointCount,
+    "stepGlitch.evidence.pointX",
+    outputMinimumPointer,
+  );
+  const pointYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(28, true),
+    pointCount,
+    "stepGlitch.evidence.pointY",
+    outputMinimumPointer,
+  );
+  const pointDys = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(32, true),
+    pointCount,
+    "stepGlitch.evidence.pointDy",
+    outputMinimumPointer,
+  );
+  for (let index = 0; index < pointDys.length; index += 1) {
+    productionEvidenceFinite(
+      productionEvidenceValue(pointDys, index, `stepGlitch.evidence.pointDy[${index}]`),
+      `stepGlitch.evidence.pointDy[${index}]`,
+    );
+  }
+  const points = Array.from({ length: pointCount }, (_value, index) =>
+    createGraphPoint(
+      productionEvidenceFinite(
+        productionEvidenceValue(pointXs, index, `stepGlitch.evidence.points[${index}].x`),
+        `stepGlitch.evidence.points[${index}].x`,
+      ),
+      productionEvidenceFinite(
+        productionEvidenceValue(pointYs, index, `stepGlitch.evidence.points[${index}].y`),
+        `stepGlitch.evidence.points[${index}].y`,
+      ),
+    ),
+  );
+  const visibleXs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(40, true),
+    visibleCount,
+    "stepGlitch.evidence.visibleX",
+    outputMinimumPointer,
+  );
+  const visibleYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header.getUint32(44, true),
+    visibleCount,
+    "stepGlitch.evidence.visibleY",
+    outputMinimumPointer,
+  );
+  const visiblePixels = Array.from({ length: visibleCount }, (_value, index) =>
+    createPixelPoint(
+      productionEvidenceFinite(
+        productionEvidenceValue(visibleXs, index, `stepGlitch.evidence.visiblePixels[${index}].x`),
+        `stepGlitch.evidence.visiblePixels[${index}].x`,
+      ),
+      productionEvidenceFinite(
+        productionEvidenceValue(visibleYs, index, `stepGlitch.evidence.visiblePixels[${index}].y`),
+        `stepGlitch.evidence.visiblePixels[${index}].y`,
+      ),
+    ),
+  );
+  if (visibleCount !== pointCount) productionEvidenceFault("Step-glitch evidence visible count differs from points");
+  for (let index = 0; index < pointCount; index += 1) {
+    const expected = graphToImagePoint(
+      productionEvidenceValue(points, index, `stepGlitch.evidence.points[${index}]`),
+      context.bounds,
+      context.boundsRect,
+    );
+    if (
+      !pixelPointsEqual(
+        expected,
+        productionEvidenceValue(visiblePixels, index, `stepGlitch.evidence.visiblePixels[${index}]`),
+      )
+    ) {
+      productionEvidenceFault(`Step-glitch evidence visible point ${index} differs from its physical point`);
+    }
+    if (context.formulaMode.settings.equation !== "ddy" && !Object.is(pointDys[index], 0)) {
+      productionEvidenceFault("First-order Step-glitch evidence contains second-order point state");
+    }
+  }
+  const protection = [
+    ...readOwnedProductionEvidenceUint32Values(
+      runtime,
+      evidencePointer,
+      evidenceByteLength,
+      header.getUint32(52, true),
+      protectionCount,
+      "stepGlitch.evidence.protection",
+      outputMinimumPointer,
+    ),
+  ];
+  for (let index = 0; index < protection.length; index += 1) {
+    validateGraphwarWasmProtectionBits(
+      productionEvidenceValue(protection, index, `evidence.protection[${index}]`),
+      ALLOWED_SIGN_PROTECTION_BITS,
+      `evidence.protection[${index}]`,
+    );
+  }
+
+  const formulaInputPointer = header.getUint32(60, true);
+  const formulaInputLength = header.getUint32(64, true);
+  if (formulaInputLength !== FORMULA_INPUT_BYTE_LENGTH) {
+    productionEvidenceFault("Step-glitch evidence formula input has an invalid byte length");
+  }
+  validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaInputPointer,
+    formulaInputLength,
+    8,
+    "stepGlitch.evidence.formulaInput",
+    outputMinimumPointer,
+  );
+  const formulaInput = new DataView(runtime.buffer, formulaInputPointer, formulaInputLength);
+  if (
+    formulaInput.getInt32(FORMULA_INPUT_ALGORITHM_OFFSET, true) !== FORMULA_ALGORITHM_STEP ||
+    formulaInput.getUint32(FORMULA_INPUT_POINT_COUNT_OFFSET, true) !== pathCount ||
+    formulaInput.getUint32(FORMULA_INPUT_SIGN_PROTECTION_COUNT_OFFSET, true) !== protectionCount ||
+    formulaInput.getUint32(FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true)
+  ) {
+    productionEvidenceFault("Step-glitch evidence formula input does not match its enclosing ranges");
+  }
+  const formulaInputPointsX = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaInput.getUint32(FORMULA_INPUT_POINT_X_POINTER_OFFSET, true),
+    pathCount,
+    "stepGlitch.evidence.formulaInput.pointsX",
+    outputMinimumPointer,
+  );
+  const formulaInputPointsY = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaInput.getUint32(FORMULA_INPUT_POINT_Y_POINTER_OFFSET, true),
+    pathCount,
+    "stepGlitch.evidence.formulaInput.pointsY",
+    outputMinimumPointer,
+  );
+  const formulaInputPoints = Array.from({ length: pathCount }, (_value, index) =>
+    createGraphPoint(
+      productionEvidenceFinite(
+        productionEvidenceValue(formulaInputPointsX, index, `formulaInput.points[${index}].x`),
+        `formulaInput.points[${index}].x`,
+      ),
+      productionEvidenceFinite(
+        productionEvidenceValue(formulaInputPointsY, index, `formulaInput.points[${index}].y`),
+        `formulaInput.points[${index}].y`,
+      ),
+    ),
+  );
+  const expectedFormulaInputPoints = path.map((point) => imageToGraphPoint(point, context.bounds, context.boundsRect));
+  if (!productionEvidencePointsEqual(formulaInputPoints, expectedFormulaInputPoints)) {
+    productionEvidenceFault("Step-glitch evidence formula input path differs from the copied candidate path");
+  }
+  if (!productionEvidencePixelsEqual(path.slice(0, context.sourcePath.length), context.sourcePath)) {
+    productionEvidenceFault("Step-glitch evidence source path identity differs from the retained context");
+  }
+  const equationValue = formulaInput.getInt32(FORMULA_INPUT_EQUATION_OFFSET, true);
+  const equation =
+    equationValue === FORMULA_EQUATION_DY ? "dy" : equationValue === FORMULA_EQUATION_DDY ? "ddy" : undefined;
+  if (!equation || context.formulaMode.settings.equation !== equation) {
+    productionEvidenceFault("Step-glitch evidence equation differs from the retained Formula Mode");
+  }
+  const decimalPlaces = formulaInput.getInt32(FORMULA_INPUT_DECIMAL_PLACES_OFFSET, true);
+  const steepness = productionEvidenceFinite(
+    formulaInput.getFloat64(FORMULA_INPUT_STEEPNESS_OFFSET, true),
+    "formulaInput.steepness",
+  );
+  const formulaPathSteepness = productionEvidenceFinite(
+    formulaInput.getFloat64(FORMULA_INPUT_PATH_STEEPNESS_OFFSET, true),
+    "formulaInput.formulaPathSteepness",
+  );
+  const flags = formulaInput.getUint32(FORMULA_INPUT_FLAGS_OFFSET, true);
+  if (
+    (flags &
+      ~(
+        FORMULA_FLAG_STEP_OVERFLOW_PROTECTION |
+        FORMULA_FLAG_STEP_GLITCH_MODE |
+        FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS
+      )) !==
+    0
+  ) {
+    productionEvidenceFault("Step-glitch evidence formula input contains unsupported flags");
+  }
+  const expectedSettings = context.formulaMode.settings;
+  if (
+    decimalPlaces !== expectedSettings.decimalPlaces ||
+    !Object.is(steepness, expectedSettings.steepness) ||
+    !Object.is(formulaPathSteepness, expectedSettings.formulaPathSteepness ?? expectedSettings.steepness) ||
+    (flags & FORMULA_FLAG_STEP_GLITCH_MODE) === 0 ||
+    ((flags & FORMULA_FLAG_STEP_OVERFLOW_PROTECTION) !== 0) !== expectedSettings.isStepOverflowProtectionEnabled
+  ) {
+    productionEvidenceFault("Step-glitch evidence formula settings differ from the retained Formula Mode");
+  }
+  for (const [offset, expected] of [
+    [FORMULA_INPUT_BOUNDS_MIN_X_OFFSET, context.bounds.minX],
+    [FORMULA_INPUT_BOUNDS_MAX_X_OFFSET, context.bounds.maxX],
+    [FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET, context.bounds.minY],
+    [FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET, context.bounds.maxY],
+  ] as const) {
+    if (!Object.is(formulaInput.getFloat64(offset, true), expected)) {
+      productionEvidenceFault("Step-glitch evidence bounds identity differs from the retained context");
+    }
+  }
+  const formulaMaskPointer = formulaInput.getUint32(FORMULA_INPUT_MASK_POINTER_OFFSET, true);
+  const formulaMaskLength = formulaInput.getUint32(FORMULA_INPUT_MASK_BYTE_LENGTH_OFFSET, true);
+  if (formulaMaskLength !== context.simulationMask.length) {
+    productionEvidenceFault("Step-glitch evidence mask length differs from the retained context");
+  }
+  const formulaMask = readOwnedProductionEvidenceBytes(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaMaskPointer,
+    formulaMaskLength,
+    "stepGlitch.evidence.formulaInput.mask",
+    outputMinimumPointer,
+  );
+  if (!graphwarByteArraysEqual(formulaMask, context.simulationMask)) {
+    productionEvidenceFault("Step-glitch evidence mask identity differs from the retained context");
+  }
+  const overflowPointer = formulaInput.getUint32(FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET, true);
+  const overflowCount = formulaInput.getUint32(FORMULA_INPUT_STEP_OVERFLOW_RANGE_COUNT_OFFSET, true);
+  if ((overflowPointer === 0) !== (overflowCount === 0)) {
+    productionEvidenceFault("Step-glitch evidence overflow range is a half-state");
+  }
+  const overflowValues = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    overflowPointer,
+    overflowPointer === 0 ? 0 : overflowCount,
+    "stepGlitch.evidence.formulaInput.overflowRange",
+    outputMinimumPointer,
+  );
+  if (overflowPointer !== 0 && overflowCount !== 2)
+    productionEvidenceFault("Step-glitch evidence overflow range count is invalid");
+  const overflowProtectionRange =
+    overflowPointer === 0
+      ? undefined
+      : {
+          maxX: productionEvidenceFinite(
+            productionEvidenceValue(overflowValues, 1, "formulaInput.overflowRange.maxX"),
+            "formulaInput.overflowRange.maxX",
+          ),
+          minX: productionEvidenceFinite(
+            productionEvidenceValue(overflowValues, 0, "formulaInput.overflowRange.minX"),
+            "formulaInput.overflowRange.minX",
+          ),
+        };
+  const segmentCount = pathCount - 1;
+  const glitchPointer = formulaInput.getUint32(FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET, true);
+  const hasFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) !== 0;
+  const glitchValues = readOwnedProductionEvidenceBytes(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    glitchPointer,
+    hasFixedWindows
+      ? checkedProductionEvidenceByteLength(
+          segmentCount,
+          STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+          "formulaInput.glitchWindows",
+        )
+      : 0,
+    "stepGlitch.evidence.formulaInput.glitchWindows",
+    outputMinimumPointer,
+  );
+  const glitchView = new DataView(glitchValues.buffer, glitchValues.byteOffset, glitchValues.byteLength);
+  const stepGlitchWindows = Array.from({ length: segmentCount }, (_value, index) => {
+    if (!hasFixedWindows) return undefined;
+    const offset = index * STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+    const presence = glitchView.getUint32(offset, true);
+    if (presence > 1) productionEvidenceFault("Step-glitch evidence window presence is invalid");
+    const isPresent = presence === 1;
+    if (glitchView.getUint32(offset + 4, true) !== 0)
+      productionEvidenceFault("Step-glitch evidence window has a nonzero reserved field");
+    const startX = glitchView.getFloat64(offset + 8, true);
+    const endX = glitchView.getFloat64(offset + 16, true);
+    if (isPresent && (!Number.isFinite(startX) || !Number.isFinite(endX) || !(endX > startX))) {
+      productionEvidenceFault(`Step-glitch evidence window ${index} is invalid`);
+    }
+    if (!isPresent && (!Object.is(startX, 0) || !Object.is(endX, 0))) {
+      productionEvidenceFault(`Step-glitch evidence absent window ${index} contains values`);
+    }
+    return { endX, isPresent, startX };
+  });
+
+  const formulaPointCount = validateGraphwarWasmU32(
+    header.getUint32(264, true),
+    "stepGlitch.evidence.formulaPointCount",
+  );
+  if (formulaPointCount !== pathCount) {
+    productionEvidenceFault("Step-glitch evidence formula point count differs from the source path");
+  }
+  const formulaPointXPointer = header.getUint32(256, true);
+  const formulaPointYPointer = header.getUint32(260, true);
+  const formulaPointXs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaPointXPointer,
+    formulaPointCount,
+    "stepGlitch.evidence.formulaPointX",
+    outputMinimumPointer,
+  );
+  const formulaPointYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaPointYPointer,
+    formulaPointCount,
+    "stepGlitch.evidence.formulaPointY",
+    outputMinimumPointer,
+  );
+  const formulaLaunchPointer = header.getUint32(68, true);
+  const formulaLaunchLength = header.getUint32(72, true);
+  const formulaMaterialResultPointer = header.getUint32(76, true);
+  const formulaMaterialResultLength = header.getUint32(80, true);
+  if (
+    formulaPointCount < 2 ||
+    formulaLaunchLength !== FORMULA_LAUNCH_RESULT_BYTE_LENGTH ||
+    formulaMaterialResultLength !== FORMULA_RESULT_BYTE_LENGTH
+  ) {
+    productionEvidenceFault("Step-glitch evidence formula result ranges are incomplete");
+  }
+  validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaLaunchPointer,
+    formulaLaunchLength,
+    8,
+    "stepGlitch.evidence.launchResult",
+    outputMinimumPointer,
+  );
+  validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    formulaMaterialResultPointer,
+    formulaMaterialResultLength,
+    8,
+    "stepGlitch.evidence.materialResult",
+    outputMinimumPointer,
+  );
+  const launchView = new DataView(runtime.buffer, formulaLaunchPointer, formulaLaunchLength);
+  const materialResultView = new DataView(runtime.buffer, formulaMaterialResultPointer, formulaMaterialResultLength);
+  if (
+    launchView.getInt32(FORMULA_LAUNCH_RESULT_STATUS_OFFSET, true) !== 1 ||
+    launchView.getUint32(FORMULA_LAUNCH_RESULT_FORMULA_POINT_COUNT_OFFSET, true) !== formulaPointCount ||
+    launchView.getUint32(FORMULA_LAUNCH_RESULT_FORMULA_POINT_X_POINTER_OFFSET, true) !== formulaPointXPointer ||
+    launchView.getUint32(FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET, true) !== formulaPointYPointer ||
+    launchView.getUint32(FORMULA_LAUNCH_RESULT_MATERIAL_RESULT_POINTER_OFFSET, true) !== formulaMaterialResultPointer ||
+    launchView.getUint32(FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true) ||
+    launchView.getUint32(FORMULA_LAUNCH_RESULT_PROTECTION_COUNT_OFFSET, true) !== protectionCount
+  ) {
+    productionEvidenceFault("Step-glitch evidence launch result does not match its enclosing records");
+  }
+  if (
+    materialResultView.getUint32(FORMULA_RESULT_MATERIAL_POINTER_OFFSET, true) === 0 ||
+    materialResultView.getUint32(FORMULA_RESULT_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true) ||
+    materialResultView.getUint32(FORMULA_RESULT_PROTECTION_COUNT_OFFSET, true) !== protectionCount
+  ) {
+    productionEvidenceFault("Step-glitch evidence material result does not match its protection range");
+  }
+  const formulaLaunch = readGraphwarWasmFormulaLaunchResultForStepGlitchTest(
+    runtime,
+    expectedSettings,
+    formulaPointCount,
+    formulaLaunchPointer,
+    outputMinimumPointer,
+  );
+  if (formulaLaunch.status !== "success")
+    productionEvidenceFault("Step-glitch evidence contains an invalid launch result");
+  if (
+    !productionEvidencePointsEqual(
+      formulaLaunch.formulaPoints,
+      pointsFromFloatArrays(Array.from(formulaPointXs), Array.from(formulaPointYs)),
+    )
+  ) {
+    productionEvidenceFault("Step-glitch evidence formula points differ from the launch result");
+  }
+  if (!productionEvidenceUint32ArraysEqual(formulaLaunch.observedSignProtection, protection)) {
+    productionEvidenceFault("Step-glitch evidence launch protection differs from trajectory protection");
+  }
+
+  const finalValidationPointer = header.getUint32(240, true);
+  const finalValidationLength = header.getUint32(244, true);
+  const finalValidation = decodeOwnedProductionFinalValidation(
+    runtime,
+    command,
+    evidencePointer,
+    evidenceByteLength,
+    finalValidationPointer,
+    finalValidationLength,
+    outputMinimumPointer,
+  );
+  const trackedTargetHitIndexes = [
+    ...readOwnedProductionEvidenceInt32Values(
+      runtime,
+      evidencePointer,
+      evidenceByteLength,
+      header.getUint32(276, true),
+      validateGraphwarWasmU32(header.getUint32(280, true), "stepGlitch.evidence.trackedHitCount"),
+      "stepGlitch.evidence.trackedHitIndexes",
+      outputMinimumPointer,
+    ),
+  ];
+  for (const value of trackedTargetHitIndexes) {
+    if (value < -1 || value >= pointCount)
+      productionEvidenceFault("Step-glitch evidence tracked hit index is outside points");
+  }
+  const trajectory = decodeOwnedProductionTrajectory(
+    header,
+    points,
+    [...pointDys],
+    visiblePixels,
+    trackedTargetHitIndexes,
+    context.formulaMode.settings.equation,
+  );
+  if (command.type === "replay") {
+    if (!productionEvidencePixelsEqual(path, command.path))
+      productionEvidenceFault("Replay evidence path differs from the command path");
+  } else if (!productionEvidencePixelsEqual(path.slice(0, context.sourcePath.length), context.sourcePath)) {
+    productionEvidenceFault("Scan evidence path does not retain its source path prefix");
+  }
+  validateOwnedProductionTargetIdentity(command, context, visiblePixels, trajectory);
+
+  const formulaSettings = {
+    ...expectedSettings,
+    ...(formulaMask.length > 0 ? { stepGlitchObstacleMask: formulaMask.slice() } : {}),
+  };
+  const formulaEvaluation: FormulaEvaluationOptions = {
+    equation,
+    formulaDecimalPlaces: decimalPlaces,
+    isStepOverflowProtectionEnabled: formulaSettings.isStepOverflowProtectionEnabled,
+    signProtection: [...protection],
+    ...(overflowProtectionRange ? { stepOverflowProtectionRange: overflowProtectionRange } : {}),
+  };
+  const formulaContext = {
+    compiledMaterials: formulaLaunch.compiledMaterials,
+    formulaEvaluation,
+    formulaPoints: formulaLaunch.formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
+    formulaResult: buildFormula(
+      formulaLaunch.formulaPoints,
+      formulaSettings.steepness,
+      formulaSettings.equation,
+      formulaSettings.algorithm,
+      formulaSettings.decimalPlaces,
+      {
+        compiledMaterials: formulaLaunch.compiledMaterials,
+        isStepOverflowProtectionEnabled: formulaSettings.isStepOverflowProtectionEnabled,
+        ...(overflowProtectionRange ? { stepOverflowProtectionRange: overflowProtectionRange } : {}),
+        signProtection: [...protection],
+      },
+    ),
+    ...(formulaLaunch.launch.equation === "y" ? {} : { launchAngleRadians: formulaLaunch.launch.angleRadians }),
+    settings: formulaSettings,
+    signProtection: [...protection],
+    soldierCenter: createGraphPoint(
+      productionEvidenceFinite(
+        formulaInput.getFloat64(FORMULA_INPUT_SOLDIER_X_OFFSET, true),
+        "formulaInput.soldierCenter.x",
+      ),
+      productionEvidenceFinite(
+        formulaInput.getFloat64(FORMULA_INPUT_SOLDIER_Y_OFFSET, true),
+        "formulaInput.soldierCenter.y",
+      ),
+    ),
+  } satisfies GraphwarTrajectoryFormulaContext;
+
+  const continuation = decodeOwnedProductionContinuation(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    header,
+    protection,
+    outputMinimumPointer,
+  );
+  rewriteProductionEvidencePointersRelativeToBase(
+    evidenceBytes,
+    evidencePointer,
+    evidenceByteLength,
+    header,
+    formulaInputPointer,
+    formulaLaunchPointer,
+    formulaMaterialResultPointer,
+    finalValidationPointer,
+  );
+  return {
+    bytes: evidenceBytes,
+    finalValidation,
+    formulaContext,
+    formulaInput: {
+      bounds: {
+        maxX: formulaInput.getFloat64(FORMULA_INPUT_BOUNDS_MAX_X_OFFSET, true),
+        maxY: formulaInput.getFloat64(FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET, true),
+        minX: formulaInput.getFloat64(FORMULA_INPUT_BOUNDS_MIN_X_OFFSET, true),
+        minY: formulaInput.getFloat64(FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET, true),
+      },
+      equation,
+      flags,
+      formulaPathSteepness,
+      mask: formulaMask,
+      ...(overflowProtectionRange ? { overflowProtectionRange } : {}),
+      points: formulaInputPoints,
+      settings: formulaSettings,
+      steepness,
+      stepGlitchWindows,
+    },
+    formulaLaunch,
+    formulaMaterials: formulaLaunch.compiledMaterials,
+    path,
+    pointerEncoding: "relative-to-evidence",
+    protection,
+    ...(continuation ? { continuation } : {}),
+    trackedTargetHitIndexes,
+    trajectory,
+  };
+}
+
+function pointsFromFloatArrays(xs: readonly number[], ys: readonly number[]) {
+  if (xs.length !== ys.length) productionEvidenceFault("Formula point arrays have different lengths");
+  return Array.from(xs, (x, index) =>
+    createGraphPoint(x, productionEvidenceValue(ys, index, `formulaPoints[${index}].y`)),
+  );
+}
+
+function decodeOwnedProductionFinalValidation(
+  runtime: GraphwarWasmKernelRuntime,
+  command: GraphwarWasmStepGlitchCommandInput,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  pointer: number,
+  byteLength: number,
+  outputMinimumPointer: number,
+): GraphwarWasmStepGlitchOwnedFinalValidation {
+  const expected = command.type === "scan" ? command.finalValidation : { type: "none" as const };
+  if (expected.type === "none") {
+    if (pointer !== 0 || byteLength !== 0) productionEvidenceFault("Unexpected final-validation evidence");
+    return { type: "none" };
+  }
+  if (byteLength !== STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH)
+    productionEvidenceFault("Final-validation evidence has an invalid byte length");
+  validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    pointer,
+    byteLength,
+    4,
+    "finalValidation",
+    outputMinimumPointer,
+  );
+  const view = new DataView(runtime.buffer, pointer, byteLength);
+  if (view.getUint32(24, true) !== 1 || view.getUint32(28, true) !== 0)
+    productionEvidenceFault("Final-validation evidence flags are invalid");
+  const targetCount = view.getUint32(8, true);
+  const trackedCount = view.getUint32(16, true);
+  const targetXs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    view.getUint32(0, true),
+    targetCount,
+    "finalValidation.targetControlX",
+    outputMinimumPointer,
+  );
+  const targetYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    view.getUint32(4, true),
+    targetCount,
+    "finalValidation.targetControlY",
+    outputMinimumPointer,
+  );
+  const trackedValues = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    view.getUint32(12, true),
+    trackedCount * 3,
+    "finalValidation.trackedTargets",
+    outputMinimumPointer,
+  );
+  const targetControlPoints = Array.from(targetXs, (x, index) =>
+    createPixelPoint(
+      productionEvidenceFinite(x, `finalValidation.targetControlPoints[${index}].x`),
+      productionEvidenceFinite(
+        productionEvidenceValue(targetYs, index, `finalValidation.targetControlPoints[${index}].y`),
+        `finalValidation.targetControlPoints[${index}].y`,
+      ),
+    ),
+  );
+  const trackedTargets = productionEvidenceDecodeTargetRecords([...trackedValues], "finalValidation.trackedTargets");
+  if (
+    view.getUint32(20, true) !== expected.simulationMaskCacheId ||
+    !productionEvidencePixelsEqual(targetControlPoints, expected.targetControlPoints) ||
+    !productionEvidenceTargetSequencesEqual(trackedTargets, expected.trackedTargets)
+  ) {
+    productionEvidenceFault("Final-validation identity differs from the command input");
+  }
+  return { simulationMaskCacheId: view.getUint32(20, true), targetControlPoints, trackedTargets, type: "validated" };
+}
+
+function decodeOwnedProductionTrajectory(
+  header: DataView,
+  points: readonly GraphPoint[],
+  pointDys: readonly number[],
+  visiblePixels: readonly PixelPoint[],
+  trackedTargetHitIndexes: readonly number[],
+  equation: "dy" | "ddy",
+): GraphwarWasmStepGlitchOwnedTrajectory {
+  const stateFlags = header.getUint32(236, true);
+  if ((stateFlags & ~7) !== 0) productionEvidenceFault("Step-glitch evidence state flags are invalid");
+  const hasPreviousPoint = (stateFlags & 1) !== 0;
+  const hasDy = (stateFlags & 2) !== 0;
+  const hasPreviousDy = (stateFlags & 4) !== 0;
+  const currentDy = productionEvidenceFinite(header.getFloat64(200, true), "stepGlitch.evidence.currentDy");
+  const previousDy = productionEvidenceFinite(header.getFloat64(224, true), "stepGlitch.evidence.previousDy");
+  if (hasDy !== (equation === "ddy")) {
+    productionEvidenceFault("Step-glitch evidence derivative state differs from the equation");
+  }
+  if (equation !== "ddy" && (hasDy || hasPreviousDy)) {
+    productionEvidenceFault("First-order Step-glitch evidence contains derivative state");
+  }
+  if (!hasPreviousDy && !Object.is(previousDy, 0)) {
+    productionEvidenceFault("Step-glitch evidence contains an absent previous derivative");
+  }
+  if (
+    !hasPreviousPoint &&
+    (!Object.is(header.getFloat64(208, true), 0) || !Object.is(header.getFloat64(216, true), 0))
+  ) {
+    productionEvidenceFault("Step-glitch evidence contains an absent previous point");
+  }
+  const sampleIndex = header.getUint32(232, true);
+  if (sampleIndex >= points.length) productionEvidenceFault("Step-glitch evidence sample index is outside points");
+  const targetHitIndex = header.getInt32(132, true);
+  const requiredTargetsHitIndex = header.getInt32(136, true);
+  if (
+    targetHitIndex < -1 ||
+    targetHitIndex >= points.length ||
+    requiredTargetsHitIndex < -1 ||
+    requiredTargetsHitIndex >= points.length
+  ) {
+    productionEvidenceFault("Step-glitch evidence target hit index is outside points");
+  }
+  const rk4StepCount = header.getUint32(152, true);
+  const bisectionCount = header.getUint32(156, true);
+  const acceptedSamplePointCount = header.getUint32(164, true);
+  const finalRk4StepCount = header.getUint32(172, true);
+  const finalBisectionCount = header.getUint32(176, true);
+  const finalAcceptedSamplePointCount = header.getUint32(180, true);
+  if (
+    finalRk4StepCount > rk4StepCount ||
+    finalBisectionCount > bisectionCount ||
+    finalAcceptedSamplePointCount > acceptedSamplePointCount
+  ) {
+    productionEvidenceFault("Step-glitch evidence final counters exceed aggregate counters");
+  }
+  const obstacleHitIndex = header.getInt32(140, true);
+  const blockedPoint = obstacleHitIndex >= 0 ? points[obstacleHitIndex] : undefined;
+  if (obstacleHitIndex < -1 || obstacleHitIndex >= points.length || (obstacleHitIndex >= 0 && !blockedPoint))
+    productionEvidenceFault("Step-glitch evidence obstacle index is invalid");
+  return {
+    acceptedSamplePointCount: header.getUint32(164, true),
+    bisectionCount: header.getUint32(156, true),
+    ...(blockedPoint ? { blockedPoint: createGraphPoint(blockedPoint.x, blockedPoint.y) } : {}),
+    currentDy,
+    currentPoint: createGraphPoint(
+      productionEvidenceFinite(header.getFloat64(184, true), "stepGlitch.evidence.currentX"),
+      productionEvidenceFinite(header.getFloat64(192, true), "stepGlitch.evidence.currentY"),
+    ),
+    finalAcceptedSamplePointCount,
+    finalBisectionCount,
+    finalRk4StepCount,
+    obstacleHitIndex,
+    pointDys: [...pointDys],
+    points: points.map((point) => createGraphPoint(point.x, point.y)),
+    ...(hasPreviousPoint
+      ? {
+          previousPoint: createGraphPoint(
+            productionEvidenceFinite(header.getFloat64(208, true), "stepGlitch.evidence.previousX"),
+            productionEvidenceFinite(header.getFloat64(216, true), "stepGlitch.evidence.previousY"),
+          ),
+        }
+      : {}),
+    previousDy,
+    reachedRequiredTargetCount: header.getUint32(148, true),
+    reachedTargetCount: header.getUint32(144, true),
+    replayCount: header.getUint32(168, true),
+    requiredTargetsHitIndex,
+    rk4StepCount,
+    sampleIndex,
+    stopReason: header.getInt32(128, true),
+    targetHitIndex,
+    trackedTargetHitIndexes: [...trackedTargetHitIndexes],
+    visiblePixels: visiblePixels.map((point) => createPixelPoint(point.x, point.y)),
+  };
+}
+
+function validateOwnedProductionTargetIdentity(
+  command: GraphwarWasmStepGlitchCommandInput,
+  context: GraphwarWasmStepGlitchContextInput,
+  visiblePixels: readonly PixelPoint[],
+  trajectory: GraphwarWasmStepGlitchOwnedTrajectory,
+) {
+  const requiredTargets = context.requiredTargets;
+  const orderedTargets =
+    command.type === "replay"
+      ? command.targetSequence
+      : orderedTargetSequence(context.requiredTargets, command.hitTarget);
+  let reachedRequiredTargetCount = 0;
+  const requiredHit = requiredTargets.map(() => false);
+  let requiredTargetsHitIndex = -1;
+  let reachedTargetCount = 0;
+  let targetHitIndex = -1;
+  for (let index = 1; index < visiblePixels.length; index += 1) {
+    for (let targetIndex = 0; targetIndex < requiredTargets.length; targetIndex += 1) {
+      if (
+        !requiredHit[targetIndex] &&
+        productionEvidenceTargetHit(
+          productionEvidenceValue(visiblePixels, index, `evidence.visiblePixels[${index}]`),
+          productionEvidenceValue(requiredTargets, targetIndex, `context.requiredTargets[${targetIndex}]`),
+        )
+      ) {
+        requiredHit[targetIndex] = true;
+        reachedRequiredTargetCount += 1;
+      }
+    }
+    while (
+      reachedTargetCount < orderedTargets.length &&
+      productionEvidenceTargetHit(
+        productionEvidenceValue(visiblePixels, index, `evidence.visiblePixels[${index}]`),
+        productionEvidenceValue(orderedTargets, reachedTargetCount, `command.orderedTargets[${reachedTargetCount}]`),
+      )
+    ) {
+      reachedTargetCount += 1;
+    }
+    if (reachedTargetCount === orderedTargets.length && targetHitIndex < 0 && orderedTargets.length > 0)
+      targetHitIndex = index;
+    if (
+      reachedRequiredTargetCount === requiredTargets.length &&
+      requiredTargets.length > 0 &&
+      requiredTargetsHitIndex < 0
+    )
+      requiredTargetsHitIndex = index;
+  }
+  if (
+    trajectory.reachedTargetCount !== reachedTargetCount ||
+    trajectory.reachedRequiredTargetCount !== reachedRequiredTargetCount ||
+    trajectory.targetHitIndex !== targetHitIndex ||
+    trajectory.requiredTargetsHitIndex !== requiredTargetsHitIndex
+  ) {
+    productionEvidenceFault("Step-glitch evidence target order/count differs from the command identity");
+  }
+  if (orderedTargets.length > 0 && reachedTargetCount < orderedTargets.length)
+    productionEvidenceFault("Step-glitch evidence did not reach its ordered target");
+}
+
+function decodeOwnedProductionContinuation(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  header: DataView,
+  protection: readonly number[],
+  outputMinimumPointer: number,
+): GraphwarWasmStepGlitchOwnedContinuation | undefined {
+  const pointer = header.getUint32(268, true);
+  const byteLength = header.getUint32(272, true);
+  if ((pointer === 0) !== (byteLength === 0))
+    productionEvidenceFault("Continuation evidence pointer/length is a half-state");
+  if (pointer === 0) return undefined;
+  if (byteLength !== TRAJECTORY_EVIDENCE_BYTE_LENGTH)
+    productionEvidenceFault("Continuation evidence has an invalid byte length");
+  validateOwnedProductionEvidenceRange(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    pointer,
+    byteLength,
+    8,
+    "continuation",
+    outputMinimumPointer,
+  );
+  const view = new DataView(runtime.buffer, pointer, byteLength);
+  if (
+    view.getUint32(TRAJECTORY_EVIDENCE_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true) ||
+    view.getUint32(TRAJECTORY_EVIDENCE_PROTECTION_COUNT_OFFSET, true) !== protection.length ||
+    (view.getUint32(TRAJECTORY_EVIDENCE_FLAGS_OFFSET, true) & ~31) !== 0
+  ) {
+    productionEvidenceFault("Continuation evidence does not match its protection or flags");
+  }
+  return {
+    bytes: new Uint8Array(runtime.buffer, pointer, byteLength).slice(),
+    flags: view.getUint32(TRAJECTORY_EVIDENCE_FLAGS_OFFSET, true),
+    protection: [...protection],
+    sampleIndex: view.getUint32(88, true),
+  };
+}
+
+function rewriteProductionEvidencePointersRelativeToBase(
+  bytes: Uint8Array,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  header: DataView,
+  formulaInputPointer: number,
+  formulaLaunchPointer: number,
+  formulaMaterialResultPointer: number,
+  finalValidationPointer: number,
+) {
+  const rewrite = (recordPointer: number, fieldOffset: number, fieldName: string) => {
+    const recordOffset = recordPointer - evidencePointer;
+    if (recordOffset < 0 || recordOffset + fieldOffset + 4 > bytes.byteLength)
+      productionEvidenceFault(`${fieldName} record is outside evidence`);
+    const value = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(
+      recordOffset + fieldOffset,
+      true,
+    );
+    productionEvidenceRewriteRelativePointer(
+      bytes,
+      evidencePointer,
+      evidenceByteLength,
+      recordOffset,
+      fieldOffset,
+      value,
+      fieldName,
+    );
+  };
+  for (const [offset, value, name] of [
+    [12, header.getUint32(12, true), "pathX"],
+    [16, header.getUint32(16, true), "pathY"],
+    [24, header.getUint32(24, true), "pointX"],
+    [28, header.getUint32(28, true), "pointY"],
+    [32, header.getUint32(32, true), "pointDy"],
+    [40, header.getUint32(40, true), "visibleX"],
+    [44, header.getUint32(44, true), "visibleY"],
+    [52, header.getUint32(52, true), "protection"],
+    [60, header.getUint32(60, true), "formulaInput"],
+    [68, header.getUint32(68, true), "launchResult"],
+    [76, header.getUint32(76, true), "materialResult"],
+    [240, header.getUint32(240, true), "finalValidation"],
+    [256, header.getUint32(256, true), "formulaPointX"],
+    [260, header.getUint32(260, true), "formulaPointY"],
+    [268, header.getUint32(268, true), "continuation"],
+    [276, header.getUint32(276, true), "trackedHit"],
+  ] as const) {
+    productionEvidenceRewriteRelativePointer(
+      bytes,
+      evidencePointer,
+      evidenceByteLength,
+      0,
+      offset,
+      value,
+      `evidence.${name}`,
+    );
+  }
+  rewrite(formulaInputPointer, FORMULA_INPUT_POINT_X_POINTER_OFFSET, "formulaInput.pointX");
+  rewrite(formulaInputPointer, FORMULA_INPUT_POINT_Y_POINTER_OFFSET, "formulaInput.pointY");
+  rewrite(formulaInputPointer, FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, "formulaInput.protection");
+  rewrite(formulaInputPointer, FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET, "formulaInput.overflowRange");
+  rewrite(formulaInputPointer, FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET, "formulaInput.glitchWindows");
+  rewrite(formulaInputPointer, FORMULA_INPUT_MASK_POINTER_OFFSET, "formulaInput.mask");
+  rewrite(formulaLaunchPointer, 48, "launchResult.materialResult");
+  rewrite(formulaLaunchPointer, FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET, "launchResult.protection");
+  rewrite(formulaLaunchPointer, FORMULA_LAUNCH_RESULT_FORMULA_POINT_X_POINTER_OFFSET, "launchResult.formulaPointX");
+  rewrite(formulaLaunchPointer, FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET, "launchResult.formulaPointY");
+  rewrite(formulaMaterialResultPointer, FORMULA_RESULT_MATERIAL_POINTER_OFFSET, "materialResult.material");
+  rewrite(formulaMaterialResultPointer, 16, "materialResult.values");
+  rewrite(formulaMaterialResultPointer, FORMULA_RESULT_PROTECTION_POINTER_OFFSET, "materialResult.protection");
+  if (finalValidationPointer !== 0) {
+    rewrite(finalValidationPointer, 0, "finalValidation.targetControlX");
+    rewrite(finalValidationPointer, 4, "finalValidation.targetControlY");
+    rewrite(finalValidationPointer, 12, "finalValidation.trackedTargets");
+  }
+  const continuationPointer = header.getUint32(268, true);
+  if (continuationPointer !== 0)
+    rewrite(continuationPointer, TRAJECTORY_EVIDENCE_PROTECTION_POINTER_OFFSET, "continuation.protection");
+}
+
+function runGraphwarWasmStepGlitchProductionRaw(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  context: GraphwarWasmStepGlitchContextInput,
+  command: GraphwarWasmStepGlitchCommandInput,
+): GraphwarWasmStepGlitchRawResultBase {
+  const commandMark = runtime.markArena();
+  try {
+    const packed = packGraphwarWasmStepGlitchCommandInput(runtime, context, command, runtime.arenaBase);
+    if (packed.status !== "ready") {
+      runtime.resetArena(commandMark);
+      return { expandedStates: 0, reachedTargetCount: 0, status: packed.status };
+    }
+    const inputPointer = runtime.reserveArena(
+      packed.input.type === "scan"
+        ? STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH
+        : STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH,
+      8,
+    );
+    const inputView = new DataView(
+      runtime.buffer,
+      inputPointer,
+      packed.input.type === "scan"
+        ? STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH
+        : STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH,
+    );
+    inputView.setUint32(0, contextPointer, true);
+    let commandId: number;
+    let inputByteLength: number;
+    if (command.type === "scan") {
+      if (packed.input.type !== "scan") {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Step-glitch command pack changed the scan input variant",
+          "output",
+        );
+      }
+      const finalValidation = packGraphwarWasmStepGlitchFinalValidationDescriptor(
+        runtime,
+        packed.input.finalValidation,
+      );
+      inputView.setUint32(4, packed.input.targetValues.pointer, true);
+      inputView.setUint32(8, packed.input.targetValues.length, true);
+      inputView.setUint32(12, finalValidation.pointer, true);
+      inputView.setUint32(16, finalValidation.length, true);
+      inputView.setUint32(20, 0, true);
+      commandId = STEP_GLITCH_COMMAND_SCAN;
+      inputByteLength = STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH;
+    } else {
+      if (packed.input.type !== "replay") {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Step-glitch command pack changed the replay input variant",
+          "output",
+        );
+      }
+      inputView.setUint32(4, packed.input.path.x.pointer, true);
+      inputView.setUint32(8, packed.input.path.y.pointer, true);
+      inputView.setUint32(12, packed.input.path.length, true);
+      inputView.setUint32(28, packed.input.targetSequenceRecords.pointer, true);
+      inputView.setUint32(32, packed.input.targetSequenceRecords.length / 3, true);
+      inputView.setUint32(16, packed.input.windows.pointer, true);
+      inputView.setUint32(20, packed.input.windows.count, true);
+      inputView.setUint32(24, packed.input.windows.mode, true);
+      inputView.setUint32(36, 0, true);
+      inputView.setFloat64(40, packed.input.controlX, true);
+      inputView.setUint32(48, 0, true);
+      inputView.setUint32(52, 0, true);
+      inputView.setUint32(56, 0, true);
+      inputView.setUint32(60, 0, true);
+      commandId = STEP_GLITCH_COMMAND_REPLAY;
+      inputByteLength = STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH;
+    }
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runRouteTask(commandId, inputPointer, inputByteLength);
+    const result = decodeGraphwarWasmStepGlitchProductionRawResult(
+      runtime,
+      context,
+      command,
+      resultPointer,
+      outputMinimumPointer,
+    );
+    runtime.resetArena(commandMark);
+    return result;
+  } catch (error) {
+    runtime.resetArenaAfterFault(commandMark);
+    throw error;
+  }
+}
+
 /** Creates the retained 8B1 mask-index context below one Adapter-owned arena mark. */
 export function createGraphwarWasmStepGlitchGeometryTestContext(
   runtime: GraphwarWasmKernelRuntime,
@@ -651,6 +2296,14 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
       center: createPixelPoint(target.center.x, target.center.y),
       radius: target.radius,
     }));
+    const contextSnapshot: GraphwarWasmStepGlitchContextInput = {
+      ...input,
+      bounds: boundsSnapshot,
+      boundsRect: boundsRectSnapshot,
+      requiredTargets: requiredTargetsSnapshot,
+      simulationMask: input.simulationMask.slice(),
+      sourcePath: sourcePathSnapshot,
+    };
     const prefixTargetSnapshot =
       input.prefixTarget.type === "target"
         ? {
@@ -795,6 +2448,14 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
             replayInput,
           );
         },
+        replayRaw(replayInput) {
+          assertActive();
+          return runGraphwarWasmStepGlitchProductionRaw(runtime, contextPointer, contextSnapshot, replayInput);
+        },
+        scanRaw(scanInput) {
+          assertActive();
+          return runGraphwarWasmStepGlitchProductionRaw(runtime, contextPointer, contextSnapshot, scanInput);
+        },
         traceGateFrontier(input) {
           assertActive();
           return traceGraphwarWasmStepGlitchGeometryFrontier(runtime, contextPointer, input);
@@ -900,7 +2561,7 @@ function prepareGraphwarWasmStepGlitchCandidateFormula(
 }
 
 function packGraphwarWasmStepGlitchCandidateWindows(
-  runtime: GraphwarWasmKernelRuntime,
+  runtime: GraphwarWasmArenaMemorySource,
   segmentCount: number,
   windows: GraphwarWasmStepGlitchFormulaCandidateTestInput["windows"],
 ) {
@@ -1163,6 +2824,9 @@ function replayGraphwarWasmStepGlitchCandidate(
 
     if (pointCount === 0) {
       throwGraphwarWasmStepGlitchReplayResultError("Successful Step-glitch replay has no physical points");
+    }
+    if (finalAcceptedSamplePointCount < pointCount) {
+      throwGraphwarWasmStepGlitchReplayResultError("Final Step-glitch samples do not cover its physical points");
     }
     if (replayCount < 1 || acceptedSamplePointCount < pointCount) {
       throwGraphwarWasmStepGlitchReplayResultError("Step-glitch replay counters disagree with its physical points");
@@ -1764,7 +3428,7 @@ function traceGraphwarWasmStepGlitchRealDfs(
       const requiredTargetsHitIndex = traceView.getInt32(offset + 104, true);
       const obstacleHitIndex = traceView.getInt32(offset + 108, true);
       const pointCount = validateGraphwarWasmU32(traceView.getUint32(offset + 112, true), "realDfs.replay.pointCount");
-      if (traceView.getUint32(offset + 192, true) !== 0 || traceView.getUint32(offset + 196, true) !== 0) {
+      if (traceView.getUint32(offset + 204, true) !== 0 || traceView.getUint32(offset + 208, true) !== 0) {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
           "Real Step-glitch DFS trace reserved fields are nonzero",
@@ -1791,6 +3455,29 @@ function traceGraphwarWasmStepGlitchRealDfs(
         traceView.getUint32(offset + 116, true),
         "realDfs.replay.rk4StepCount",
       );
+      const finalRk4StepCount = validateGraphwarWasmU32(
+        traceView.getUint32(offset + 192, true),
+        "realDfs.replay.finalRk4StepCount",
+      );
+      const finalBisectionCount = validateGraphwarWasmU32(
+        traceView.getUint32(offset + 196, true),
+        "realDfs.replay.finalBisectionCount",
+      );
+      const finalAcceptedSamplePointCount = validateGraphwarWasmU32(
+        traceView.getUint32(offset + 200, true),
+        "realDfs.replay.finalAcceptedSamplePointCount",
+      );
+      if (
+        finalRk4StepCount > rk4StepCount ||
+        finalBisectionCount > bisectionCount ||
+        finalAcceptedSamplePointCount > acceptedSamplePointCount
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Real Step-glitch DFS final counters exceed their command aggregates",
+          "output",
+        );
+      }
       const acceptedX = traceView.getFloat64(offset + 64, true);
       const acceptedY = traceView.getFloat64(offset + 72, true);
       const blockedX = traceView.getFloat64(offset + 80, true);
@@ -1800,6 +3487,9 @@ function traceGraphwarWasmStepGlitchRealDfs(
           ? ({
               acceptedSamplePointCount,
               bisectionCount,
+              finalAcceptedSamplePointCount,
+              finalBisectionCount,
+              finalRk4StepCount,
               launchStatus: "invalid",
               minStepJumpCount,
               reachedRequiredTargetCount,
@@ -1810,7 +3500,12 @@ function traceGraphwarWasmStepGlitchRealDfs(
               stopReason,
             } satisfies GraphwarWasmStepGlitchRealDfsReplaySummary)
           : (() => {
-              if (pointCount === 0 || replayCount < 1 || acceptedSamplePointCount < pointCount) {
+              if (
+                pointCount === 0 ||
+                replayCount < 1 ||
+                acceptedSamplePointCount < pointCount ||
+                finalAcceptedSamplePointCount < pointCount
+              ) {
                 throw new GraphwarWasmAdapterError(
                   "invalid-session-state",
                   "Real Step-glitch DFS physical summary is invalid",
@@ -1945,6 +3640,9 @@ function traceGraphwarWasmStepGlitchRealDfs(
                 acceptedSamplePointCount,
                 bisectionCount,
                 ...(blockedFlag === 1 ? { blockedPoint: createGraphPoint(blockedX, blockedY) } : {}),
+                finalAcceptedSamplePointCount,
+                finalBisectionCount,
+                finalRk4StepCount,
                 launchStatus: "success",
                 minStepJumpCount,
                 obstacleHitIndex,
@@ -1972,6 +3670,9 @@ function traceGraphwarWasmStepGlitchRealDfs(
           targetHitIndex !== -1 ||
           requiredTargetsHitIndex !== -1 ||
           obstacleHitIndex !== -1 ||
+          finalRk4StepCount !== 0 ||
+          finalBisectionCount !== 0 ||
+          finalAcceptedSamplePointCount !== 0 ||
           !Object.is(acceptedX, 0) ||
           !Object.is(acceptedY, 0) ||
           !Object.is(blockedX, 0) ||
@@ -2703,11 +4404,16 @@ export function packGraphwarWasmStepGlitchCommandInput(
     ) {
       return { status: "invalid-input" };
     }
+    const windows = command.windows ?? { type: "automatic" as const };
+    if (windows.type === "explicit" && windows.segments.length !== command.path.length - 1) {
+      return { status: "invalid-input" };
+    }
     return {
       input: {
         controlX: command.controlX,
         path: packGraphwarWasmPointSoA(arena, command.path, minimumPointer),
         targetSequenceRecords: packTargets(arena, command.targetSequence, minimumPointer),
+        windows: packGraphwarWasmStepGlitchCandidateWindows(arena, command.path.length - 1, windows),
         type: "replay",
       },
       status: "ready",

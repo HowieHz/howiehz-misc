@@ -22,6 +22,8 @@ import {
   replayStepGlitchTrajectoryForTest,
   traceStepGlitchGeometryDfs,
   traceStepGlitchGeometryFrontier,
+  scanStepGlitch,
+  replayStepGlitch,
 } from "./step-glitch";
 
 const ROUTE_POLICY_VALUE_COUNT: u32 = 12;
@@ -5934,6 +5936,12 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   }
   if (command == Layout.STEP_GLITCH_COMMAND_TRACE_REAL_DFS_FOR_TEST) {
     return traceStepGlitchRealDfsForTest(inputPointer, inputByteLength);
+  }
+  if (command == Layout.STEP_GLITCH_COMMAND_SCAN) {
+    return scanStepGlitch(inputPointer, inputByteLength);
+  }
+  if (command == Layout.STEP_GLITCH_COMMAND_REPLAY) {
+    return replayStepGlitch(inputPointer, inputByteLength);
   }
   trap();
   return 0;

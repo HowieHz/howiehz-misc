@@ -22,6 +22,7 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 import {
   createGraphwarWasmStepGlitchContextInput,
   createGraphwarWasmStepGlitchGeometryTestContext,
+  createGraphwarWasmStepGlitchScanCommandInput,
   type GraphwarWasmStepGlitchGeometryReplayOutcome,
   type GraphwarWasmStepGlitchRealReplayTestOutput,
 } from "./step-glitch-adapter";
@@ -47,6 +48,111 @@ beforeAll(async () => {
 });
 
 describe("Graphwar WASM Step-glitch real candidate replay", () => {
+  it("returns one copied evidence range from production scan and replay commands", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint: fixture.pixelPath[2] }),
+    );
+    expect(scan.status).toBe("hit");
+    expect(scan.evidence?.magic).toBe(0x5347_4556);
+    const evidenceBytes = scan.evidence?.bytes;
+    if (!evidenceBytes) throw new Error("expected copied production evidence");
+    expect(scan.evidence?.owned.formulaContext).not.toHaveProperty("stepGlitchFormulaEvidence");
+    expect(
+      new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength).getUint32(248, true),
+    ).toBe(evidenceBytes.byteLength);
+    const evidenceView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength);
+    expect(evidenceView.getUint32(240, true)).toBe(0);
+    expect(evidenceView.getUint32(244, true)).toBe(0);
+    expect(evidenceView.getUint32(144, true)).toBe(1);
+    expect(evidenceView.getUint32(148, true)).toBe(0);
+    const replay = context.replayRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      path: fixture.pixelPath,
+      targetSequence: [target],
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+    expect(replay.status).toBe("hit");
+    expect(replay.evidence?.bytes).not.toBe(evidenceBytes);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    context.dispose();
+  });
+
+  it("keeps a scan target that is already required out of the ordered target state", async () => {
+    const baseFixture = createFixture("dy");
+    const targetPoint = baseFixture.pixelPath[2];
+    if (!targetPoint) throw new Error("expected a three-point Step-glitch fixture");
+    const target = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const fixture = { ...baseFixture, requiredTargets: [target] };
+    const { context } = await createContext(fixture);
+    const result = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint: fixture.pixelPath[2] }),
+    );
+    expect(result.status).toBe("hit");
+    expect(result.evidence?.owned.trajectory.reachedTargetCount).toBe(0);
+    expect(result.evidence?.owned.trajectory.reachedRequiredTargetCount).toBe(1);
+    context.dispose();
+  });
+
+  it.each([
+    {
+      mutate(view: DataView) {
+        view.setUint32(24, 0, true);
+      },
+      name: "hit without accepted point",
+    },
+    {
+      mutate(view: DataView) {
+        view.setUint32(8, 0, true);
+      },
+      name: "evidence pointer without a range",
+    },
+    {
+      mutate(view: DataView) {
+        view.setUint32(12, 0, true);
+      },
+      name: "evidence range without a pointer",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setUint32(evidencePointer + 248, 287, true);
+      },
+      name: "evidence header length mismatch",
+    },
+    {
+      mutate(view: DataView) {
+        view.setFloat64(32, Number.NaN, true);
+      },
+      name: "non-finite accepted point",
+    },
+  ])("rejects malformed production scan output: $name", async ({ mutate }) => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const retainedCursor = runtime.arenaCursor;
+    const scanInput = createGraphwarWasmStepGlitchScanCommandInput({
+      hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+      targetPoint: fixture.pixelPath[2],
+    });
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 18) {
+        mutate(new DataView(runtime.buffer, resultPointer, 72), runtime);
+      }
+      return resultPointer;
+    });
+
+    expect(() => context.scanRaw(scanInput)).toThrow();
+    spy.mockRestore();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+    expect(context.scanRaw(scanInput).status).toBe("hit");
+    context.dispose();
+  });
+
   it("drives a direct Step-glitch DFS candidate through one real WASM replay", async () => {
     const fixture = createFixture("dy");
     const { context, runtime } = await createContext(fixture);
@@ -64,6 +170,14 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       replay: { launchStatus: "success", status: "hit" },
       windows: { type: "automatic" },
     });
+    const replay = trace.candidates[0]?.replay;
+    if (replay?.launchStatus !== "success") {
+      throw new Error("expected a successful direct replay");
+    }
+    expect(replay.finalRk4StepCount).toBeGreaterThan(0);
+    expect(replay.finalBisectionCount).toBeLessThanOrEqual(replay.bisectionCount);
+    expect(replay.finalAcceptedSamplePointCount).toBeGreaterThanOrEqual(replay.pointCount);
+    expect(replay.finalAcceptedSamplePointCount).toBeLessThanOrEqual(replay.acceptedSamplePointCount);
     expect(runtime.arenaCursor).toBe(retainedCursor);
     expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
     context.dispose();
@@ -545,9 +659,15 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     },
     {
       mutate(traceView: DataView) {
-        traceView.setUint32(192, 1, true);
+        traceView.setUint32(204, 1, true);
       },
       name: "reserved field",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setUint32(200, 0, true);
+      },
+      name: "final accepted samples below physical points",
     },
     {
       mutate(traceView: DataView) {
@@ -576,7 +696,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
       if (command === 17) {
         const resultView = new DataView(runtime.buffer, resultPointer, 40);
-        mutate(new DataView(runtime.buffer, resultView.getUint32(24, true), 200));
+        mutate(new DataView(runtime.buffer, resultView.getUint32(24, true), 212));
       }
       return resultPointer;
     });
@@ -610,7 +730,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         const tracePointer = resultView.getUint32(24, true);
         const traceCount = resultView.getUint32(28, true);
         for (let index = 0; index < traceCount; index += 1) {
-          const traceView = new DataView(runtime.buffer, tracePointer + index * 200, 200);
+          const traceView = new DataView(runtime.buffer, tracePointer + index * 212, 212);
           if (traceView.getUint32(0, true) === 1) {
             traceView.setInt32(100, 0, true);
             break;
@@ -638,7 +758,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
       if (command === 17) {
         const resultView = new DataView(runtime.buffer, resultPointer, 40);
-        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 200);
+        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 212);
         const targetHitIndex = traceView.getInt32(100, true);
         traceView.setUint32(60, 1, true);
         traceView.setFloat64(80, traceView.getFloat64(64, true), true);
@@ -727,7 +847,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         const resultView = new DataView(runtime.buffer, resultPointer, 40);
         resultView.setUint32(4, 0, true);
         resultView.setUint32(12, 0, true);
-        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 200);
+        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 212);
         traceView.setUint32(40, 0, true);
         traceView.setInt32(44, 0, true);
         traceView.setUint32(48, 0, true);
@@ -792,7 +912,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
       if (command === 17) {
         const resultView = new DataView(runtime.buffer, resultPointer, 40);
-        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 200);
+        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 212);
         const lastPointIndex = traceView.getUint32(112, true) - 1;
         traceView.setInt32(100, lastPointIndex, true);
         traceView.setInt32(108, lastPointIndex, true);

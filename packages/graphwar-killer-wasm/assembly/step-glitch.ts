@@ -14,7 +14,7 @@ function trap(): void {
 
 /** Test-only seam proving scanner-owned commands execute the shared trajectory implementation. */
 export function replayStepGlitchTrajectoryForTest(inputPointer: u32, inputByteLength: u32): u32 {
-  return runTrajectoryRequest(inputPointer, inputByteLength);
+  return runTrajectoryRequest(inputPointer, inputByteLength, 0);
 }
 
 /** Builds one scanner candidate's structured Step request in WASM, then reuses the shared launch/material core. */
@@ -295,9 +295,11 @@ function replayStepGlitchCandidate(
     loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX),
   );
 
+  const finalCounterPointer = reserveArena(TrajectoryLayout.TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH, sizeof<u32>());
   const trajectoryResultPointer = runTrajectoryRequest(
     trajectoryInputPointer,
     TrajectoryLayout.TRAJECTORY_INPUT_BYTE_LENGTH,
+    finalCounterPointer,
   );
   const launchStatus = load<i32>(
     trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET,
@@ -373,6 +375,18 @@ function replayStepGlitchCandidate(
   store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_MIN_STEP_JUMP_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_MIN_STEP_JUMP_COUNT_OFFSET));
   store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_SAMPLE_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_ACCEPTED_SAMPLE_POINT_COUNT_OFFSET));
   store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REPLAY_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_REPLAY_COUNT_OFFSET));
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_FINAL_RK4_COUNT_OFFSET,
+    load<u32>(finalCounterPointer + TrajectoryLayout.TRAJECTORY_FINAL_COUNTER_RK4_STEP_COUNT_OFFSET),
+  );
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_FINAL_BISECTION_COUNT_OFFSET,
+    load<u32>(finalCounterPointer + TrajectoryLayout.TRAJECTORY_FINAL_COUNTER_BISECTION_COUNT_OFFSET),
+  );
+  store<u32>(
+    replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_FINAL_ACCEPTED_SAMPLE_COUNT_OFFSET,
+    load<u32>(finalCounterPointer + TrajectoryLayout.TRAJECTORY_FINAL_COUNTER_ACCEPTED_SAMPLE_COUNT_OFFSET),
+  );
   store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PROTECTION_POINTER_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PROTECTION_POINTER_OFFSET));
   store<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_PROTECTION_COUNT_OFFSET, load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PROTECTION_COUNT_OFFSET));
 
@@ -457,7 +471,10 @@ function validateContextValues(pointer: u32): u32 {
     !isFiniteValue(prefixTargetY) ||
     !isFiniteValue(prefixTargetRadius) ||
     prefixTargetRadius < 0 ||
-    (hasPrefixTarget == 0 && (prefixTargetX != 0 || prefixTargetY != 0 || prefixTargetRadius != 0)) ||
+    (hasPrefixTarget == 0 &&
+      (reinterpret<u64>(prefixTargetX) != 0 ||
+        reinterpret<u64>(prefixTargetY) != 0 ||
+        reinterpret<u64>(prefixTargetRadius) != 0)) ||
     !isFiniteValue(qualityTargetPlanePixels) ||
     qualityTargetPlanePixels <= 0
   ) trap();
@@ -529,13 +546,28 @@ function validatePrefixEvidenceDescriptor(pointer: u32, byteLength: u32): void {
     sizeof<u8>(),
   );
   const evidenceValueCount = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_VALUES_LENGTH_OFFSET);
-  if (evidenceValueCount != 6) trap();
+  if (evidenceValueCount != 7) trap();
+  const evidenceValuesPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_VALUES_POINTER_OFFSET);
   requireElementRange(
-    load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_VALUES_POINTER_OFFSET),
+    evidenceValuesPointer,
     evidenceValueCount,
     sizeof<f64>(),
     sizeof<f64>(),
   );
+  let evidenceValueIndex: u32 = 0;
+  while (evidenceValueIndex < evidenceValueCount) {
+    if (!isFiniteValue(load<f64>(evidenceValuesPointer + evidenceValueIndex * sizeof<f64>()))) trap();
+    evidenceValueIndex += 1;
+  }
+  if (
+    !isIntegerValue(load<f64>(evidenceValuesPointer + 2 * sizeof<f64>())) ||
+    load<f64>(evidenceValuesPointer + 2 * sizeof<f64>()) < 0 ||
+    load<f64>(evidenceValuesPointer + 5 * sizeof<f64>()) < 0 ||
+    !isIntegerValue(load<f64>(evidenceValuesPointer + 6 * sizeof<f64>())) ||
+    reinterpret<i64>(load<f64>(evidenceValuesPointer + 6 * sizeof<f64>())) < 0 ||
+    (load<f64>(evidenceValuesPointer + 6 * sizeof<f64>()) != 0 &&
+      load<f64>(evidenceValuesPointer + 6 * sizeof<f64>()) != 1)
+  ) trap();
 
   const boundaryType = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_BOUNDARY_TYPE_OFFSET);
   const boundaryIdentityPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_BOUNDARY_IDENTITY_POINTER_OFFSET);
@@ -547,25 +579,65 @@ function validatePrefixEvidenceDescriptor(pointer: u32, byteLength: u32): void {
       trap();
     }
   } else {
-    if (boundaryType != 1 || boundaryStateLength != 11) trap();
+    if (boundaryType != 1 || boundaryIdentityLength == 0 || boundaryStateLength != 11) trap();
     requireElementRange(boundaryIdentityPointer, boundaryIdentityLength, sizeof<u8>(), sizeof<u8>());
     requireElementRange(boundaryStatePointer, boundaryStateLength, sizeof<f64>(), sizeof<f64>());
+    let boundaryStateIndex: u32 = 0;
+    while (boundaryStateIndex < boundaryStateLength) {
+      if (!isFiniteValue(load<f64>(boundaryStatePointer + boundaryStateIndex * sizeof<f64>()))) trap();
+      boundaryStateIndex += 1;
+    }
   }
 
   const pointCount = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_POINTS_COUNT_OFFSET);
   const initialCount = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_INITIAL_COUNT_OFFSET);
   const refinedCount = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REFINED_COUNT_OFFSET);
   if (pointCount == 0 || initialCount != pointCount || refinedCount != pointCount) trap();
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_INITIAL_X_POINTER_OFFSET), pointCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_INITIAL_Y_POINTER_OFFSET), pointCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_POINTS_X_POINTER_OFFSET), pointCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_POINTS_Y_POINTER_OFFSET), pointCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REFINED_X_POINTER_OFFSET), pointCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REFINED_Y_POINTER_OFFSET), pointCount, sizeof<f64>(), sizeof<f64>());
+  const initialXPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_INITIAL_X_POINTER_OFFSET);
+  const initialYPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_INITIAL_Y_POINTER_OFFSET);
+  const pointsXPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_POINTS_X_POINTER_OFFSET);
+  const pointsYPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_POINTS_Y_POINTER_OFFSET);
+  const refinedXPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REFINED_X_POINTER_OFFSET);
+  const refinedYPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REFINED_Y_POINTER_OFFSET);
+  requireElementRange(initialXPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(initialYPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(pointsXPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(pointsYPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(refinedXPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(refinedYPointer, pointCount, sizeof<f64>(), sizeof<f64>());
+  let pointIndex: u32 = 0;
+  while (pointIndex < pointCount) {
+    if (
+      !isFiniteValue(load<f64>(initialXPointer + pointIndex * sizeof<f64>())) ||
+      !isFiniteValue(load<f64>(initialYPointer + pointIndex * sizeof<f64>())) ||
+      !isFiniteValue(load<f64>(pointsXPointer + pointIndex * sizeof<f64>())) ||
+      !isFiniteValue(load<f64>(pointsYPointer + pointIndex * sizeof<f64>())) ||
+      !isFiniteValue(load<f64>(refinedXPointer + pointIndex * sizeof<f64>())) ||
+      !isFiniteValue(load<f64>(refinedYPointer + pointIndex * sizeof<f64>()))
+    ) trap();
+    pointIndex += 1;
+  }
 
   const metadataLength = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_METADATA_LENGTH_OFFSET);
   if (metadataLength != 9) trap();
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_METADATA_POINTER_OFFSET), metadataLength, sizeof<f64>(), sizeof<f64>());
+  const metadataPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_METADATA_POINTER_OFFSET);
+  requireElementRange(metadataPointer, metadataLength, sizeof<f64>(), sizeof<f64>());
+  let metadataIndex: u32 = 0;
+  while (metadataIndex < metadataLength) {
+    if (!isFiniteValue(load<f64>(metadataPointer + metadataIndex * sizeof<f64>()))) trap();
+    metadataIndex += 1;
+  }
+  const metadataFlags = load<f64>(metadataPointer + 7 * sizeof<f64>());
+  if (
+    !isIntegerValue(metadataFlags) ||
+    metadataFlags < 0 ||
+    metadataFlags > 3 ||
+    ((<u32>metadataFlags & 1) == 0 && reinterpret<u64>(load<f64>(metadataPointer + 4 * sizeof<f64>())) != 0) ||
+    ((<u32>metadataFlags & 2) == 0 &&
+      (reinterpret<u64>(load<f64>(metadataPointer + 5 * sizeof<f64>())) != 0 ||
+        reinterpret<u64>(load<f64>(metadataPointer + 6 * sizeof<f64>())) != 0)) ||
+    load<f64>(metadataPointer + 8 * sizeof<f64>()) != <f64>(pointCount - 1)
+  ) trap();
   const segmentCount = pointCount - 1;
   if (
     load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_COUNT_OFFSET) != segmentCount ||
@@ -576,17 +648,129 @@ function validatePrefixEvidenceDescriptor(pointer: u32, byteLength: u32): void {
     load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_DELTA_VALUES_LENGTH_OFFSET) != segmentCount ||
     load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_DELTA_PRESENCE_LENGTH_OFFSET) != segmentCount
   ) trap();
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_X_POINTER_OFFSET), segmentCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_Y_POINTER_OFFSET), segmentCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_PRESENCE_POINTER_OFFSET), segmentCount, sizeof<u8>(), sizeof<u8>());
+  const segmentStartXPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_X_POINTER_OFFSET);
+  const segmentStartYPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_Y_POINTER_OFFSET);
+  const segmentStartPresencePointer = load<u32>(
+    pointer + Layout.STEP_GLITCH_PREFIX_SEGMENT_START_PRESENCE_POINTER_OFFSET,
+  );
+  requireElementRange(segmentStartXPointer, segmentCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(segmentStartYPointer, segmentCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(segmentStartPresencePointer, segmentCount, sizeof<u8>(), sizeof<u8>());
   const settingsLength = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SETTINGS_LENGTH_OFFSET);
   if (settingsLength != Layout.STEP_GLITCH_SETTINGS_VALUE_COUNT || load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SETTINGS_MASK_TAG_OFFSET) > 3) trap();
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SETTINGS_POINTER_OFFSET), settingsLength, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SIGN_PROTECTION_POINTER_OFFSET), segmentCount, sizeof<u32>(), sizeof<u32>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REQUIREMENTS_POINTER_OFFSET), segmentCount, sizeof<u8>(), sizeof<u8>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENTS_POINTER_OFFSET), segmentCount * 10, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_DELTA_VALUES_POINTER_OFFSET), segmentCount, sizeof<f64>(), sizeof<f64>());
-  requireElementRange(load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_DELTA_PRESENCE_POINTER_OFFSET), segmentCount, sizeof<u8>(), sizeof<u8>());
+  const evidenceSettingsPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SETTINGS_POINTER_OFFSET);
+  requireElementRange(evidenceSettingsPointer, settingsLength, sizeof<f64>(), sizeof<f64>());
+  validateFormulaSettings(evidenceSettingsPointer);
+  const evidenceEquation = <i32>load<f64>(
+    evidenceSettingsPointer + Layout.STEP_GLITCH_SETTING_EQUATION_INDEX * sizeof<f64>(),
+  );
+  const expectedSegmentType = evidenceEquation == FormulaLayout.FORMULA_EQUATION_DY ? 1.0 : 2.0;
+  if (boundaryType == 1) {
+    const boundarySegmentCount = load<f64>(boundaryStatePointer + sizeof<f64>());
+    const boundaryFlags = load<f64>(boundaryStatePointer + 10 * sizeof<f64>());
+    const sampleIndex = load<f64>(boundaryStatePointer + 9 * sizeof<f64>());
+    if (
+      !isIntegerValue(boundarySegmentCount) ||
+      boundarySegmentCount != <f64>segmentCount ||
+      !isIntegerValue(sampleIndex) ||
+      sampleIndex < 0 ||
+      sampleIndex > <f64>u32.MAX_VALUE ||
+      !isIntegerValue(boundaryFlags) ||
+      boundaryFlags < 0 ||
+      boundaryFlags > 15
+    ) trap();
+    const flags = <u32>boundaryFlags;
+    const hasLaunchAngle = (flags & 1) != 0;
+    const isSecondOrder = (flags & 2) != 0;
+    const hasPreviousPoint = (flags & 4) != 0;
+    const hasPreviousDy = (flags & 8) != 0;
+    if (
+      isSecondOrder != (evidenceEquation == FormulaLayout.FORMULA_EQUATION_DDY) ||
+      hasPreviousPoint != (sampleIndex > 0) ||
+      (isSecondOrder ? hasPreviousDy != hasPreviousPoint : hasPreviousDy) ||
+      (!hasLaunchAngle && reinterpret<u64>(load<f64>(boundaryStatePointer + 2 * sizeof<f64>())) != 0) ||
+      (!isSecondOrder && reinterpret<u64>(load<f64>(boundaryStatePointer + 5 * sizeof<f64>())) != 0) ||
+      (!hasPreviousPoint &&
+        (reinterpret<u64>(load<f64>(boundaryStatePointer + 6 * sizeof<f64>())) != 0 ||
+          reinterpret<u64>(load<f64>(boundaryStatePointer + 7 * sizeof<f64>())) != 0)) ||
+      (!hasPreviousDy && reinterpret<u64>(load<f64>(boundaryStatePointer + 8 * sizeof<f64>())) != 0)
+    ) trap();
+  }
+  const signProtectionPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SIGN_PROTECTION_POINTER_OFFSET);
+  const requirementsPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_REQUIREMENTS_POINTER_OFFSET);
+  const segmentsPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_SEGMENTS_POINTER_OFFSET);
+  const deltaValuesPointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_DELTA_VALUES_POINTER_OFFSET);
+  const deltaPresencePointer = load<u32>(pointer + Layout.STEP_GLITCH_PREFIX_DELTA_PRESENCE_POINTER_OFFSET);
+  requireElementRange(signProtectionPointer, segmentCount, sizeof<u32>(), sizeof<u32>());
+  requireElementRange(requirementsPointer, segmentCount, sizeof<u8>(), sizeof<u8>());
+  requireElementRange(segmentsPointer, segmentCount * 10, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(deltaValuesPointer, segmentCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(deltaPresencePointer, segmentCount, sizeof<u8>(), sizeof<u8>());
+  let segmentIndex: u32 = 0;
+  while (segmentIndex < segmentCount) {
+    const segmentStartPresence = load<u8>(segmentStartPresencePointer + segmentIndex);
+    const segmentStartX = load<f64>(segmentStartXPointer + segmentIndex * sizeof<f64>());
+    const segmentStartY = load<f64>(segmentStartYPointer + segmentIndex * sizeof<f64>());
+    const requirement = load<u8>(requirementsPointer + segmentIndex);
+    const deltaPresence = load<u8>(deltaPresencePointer + segmentIndex);
+    const deltaValue = load<f64>(deltaValuesPointer + segmentIndex * sizeof<f64>());
+    const segmentPointer = segmentsPointer + segmentIndex * 10 * sizeof<f64>();
+    const segmentType = load<f64>(segmentPointer);
+    if (
+      segmentStartPresence > 1 ||
+      !isFiniteValue(segmentStartX) ||
+      !isFiniteValue(segmentStartY) ||
+      (segmentStartPresence == 0 &&
+        (reinterpret<u64>(segmentStartX) != 0 || reinterpret<u64>(segmentStartY) != 0)) ||
+      requirement > 1 ||
+      deltaPresence > 1 ||
+      (load<u32>(signProtectionPointer + segmentIndex * sizeof<u32>()) & ~31) != 0 ||
+      !isFiniteValue(deltaValue) ||
+      (deltaPresence == 0 && reinterpret<u64>(deltaValue) != 0) ||
+      (segmentType != 0 && segmentType != 1 && segmentType != 2) ||
+      (segmentType != 0 && segmentType != expectedSegmentType) ||
+      (requirement != 0 && segmentType == 0)
+    ) trap();
+    let segmentValueIndex: u32 = 1;
+    while (segmentValueIndex < 10) {
+      if (!isFiniteValue(load<f64>(segmentPointer + segmentValueIndex * sizeof<f64>()))) trap();
+      segmentValueIndex += 1;
+    }
+    if (segmentType == 0) {
+      segmentValueIndex = 1;
+      while (segmentValueIndex < 10) {
+        if (reinterpret<u64>(load<f64>(segmentPointer + segmentValueIndex * sizeof<f64>())) != 0) trap();
+        segmentValueIndex += 1;
+      }
+    } else {
+      const startX = load<f64>(segmentPointer + sizeof<f64>());
+      const endX = load<f64>(segmentPointer + 2 * sizeof<f64>());
+      const decimalPlaces = load<f64>(segmentPointer + 4 * sizeof<f64>());
+      if (
+        !(endX > startX) ||
+        !isIntegerValue(decimalPlaces) ||
+        decimalPlaces < -1 ||
+        decimalPlaces > 15 ||
+        (segmentType == 2 &&
+          !(startX < load<f64>(segmentPointer + 9 * sizeof<f64>()) &&
+            load<f64>(segmentPointer + 9 * sizeof<f64>()) < endX)) ||
+        (segmentType == 1 &&
+          (reinterpret<u64>(load<f64>(segmentPointer + 7 * sizeof<f64>())) != 0 ||
+            reinterpret<u64>(load<f64>(segmentPointer + 8 * sizeof<f64>())) != 0 ||
+            reinterpret<u64>(load<f64>(segmentPointer + 9 * sizeof<f64>())) != 0))
+      ) trap();
+    }
+    segmentIndex += 1;
+  }
+  const evidenceRequiredTargetLength = load<u32>(
+    pointer + Layout.STEP_GLITCH_PREFIX_REQUIRED_TARGET_LENGTH_OFFSET,
+  );
+  if (evidenceRequiredTargetLength % 3 != 0) trap();
+  const evidenceRequiredTargetPointer = load<u32>(
+    pointer + Layout.STEP_GLITCH_PREFIX_REQUIRED_TARGET_POINTER_OFFSET,
+  );
+  requireElementRange(evidenceRequiredTargetPointer, evidenceRequiredTargetLength, sizeof<f64>(), sizeof<f64>());
+  validateStepGlitchTargetRecords(evidenceRequiredTargetPointer, evidenceRequiredTargetLength / 3);
 }
 
 function buildFarthestFreeX(maskPointer: u32, boundaryExpansion: u32, isMirrored: bool): u32 {
@@ -1459,12 +1643,179 @@ function finishRealDfsTrace(tracePointer: u32, replayPointer: u32): void {
   );
 }
 
+@inline
+function stepGlitchEvidenceValueMatches(left: f64, right: f64): bool {
+  return reinterpret<u64>(left) == reinterpret<u64>(right);
+}
+
+/** Exact formula-prefix identity check; this never accepts trajectory state as continuation evidence. */
+function tryReuseStepGlitchPrefixEvidence(
+  contextPointer: u32,
+  sourceWindowPointer: u32,
+  sourceWindowCount: u32,
+): bool {
+  const evidencePointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_POINTER_OFFSET);
+  if (load<u32>(evidencePointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_TYPE_OFFSET) != 1) return false;
+  const evidenceMaskPointer = load<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_IDENTITY_MASK_POINTER_OFFSET,
+  );
+  const evidenceMaskLength = load<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_IDENTITY_MASK_LENGTH_OFFSET,
+  );
+  const contextMaskPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_POINTER_OFFSET);
+  const contextMaskLength = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_MASK_LENGTH_OFFSET);
+  if (evidenceMaskLength != contextMaskLength) return false;
+  let maskIndex: u32 = 0;
+  while (maskIndex < contextMaskLength) {
+    if (load<u8>(evidenceMaskPointer + maskIndex) != load<u8>(contextMaskPointer + maskIndex)) return false;
+    maskIndex += 1;
+  }
+  const valuesPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  const evidenceValuesPointer = load<u32>(evidencePointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_VALUES_POINTER_OFFSET);
+  if (load<u32>(evidencePointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_VALUES_LENGTH_OFFSET) != 7) return false;
+  if (load<f64>(evidenceValuesPointer + 6 * sizeof<f64>()) != 1) return false;
+  const hasPrefixTarget = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_HAS_PREFIX_TARGET_INDEX) == 1;
+  if (
+    !stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 16), loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_BOUNDARY_EXPANSION_INDEX)) ||
+    (hasPrefixTarget &&
+      (!stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 24), loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_X_INDEX)) ||
+        !stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 32), loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_Y_INDEX)) ||
+        !stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 40), loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_RADIUS_INDEX))))
+  ) return false;
+  const evidenceRequiredTargetPointer = load<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PREFIX_REQUIRED_TARGET_POINTER_OFFSET,
+  );
+  const evidenceRequiredTargetLength = load<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PREFIX_REQUIRED_TARGET_LENGTH_OFFSET,
+  );
+  const contextRequiredTargetPointer = load<u32>(
+    contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_POINTER_OFFSET,
+  );
+  const contextRequiredTargetLength = load<u32>(
+    contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET,
+  );
+  if (
+    hasPrefixTarget
+      ? evidenceRequiredTargetLength != contextRequiredTargetLength
+      : contextRequiredTargetLength != evidenceRequiredTargetLength + 3
+  ) return false;
+  let requiredTargetValueIndex: u32 = 0;
+  while (requiredTargetValueIndex < evidenceRequiredTargetLength) {
+    if (
+      !stepGlitchEvidenceValueMatches(
+        load<f64>(evidenceRequiredTargetPointer + requiredTargetValueIndex * sizeof<f64>()),
+        load<f64>(contextRequiredTargetPointer + requiredTargetValueIndex * sizeof<f64>()),
+      )
+    ) return false;
+    requiredTargetValueIndex += 1;
+  }
+  if (!hasPrefixTarget) {
+    const transferredPrefixTargetPointer =
+      contextRequiredTargetPointer + evidenceRequiredTargetLength * sizeof<f64>();
+    if (
+      !stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 24), load<f64>(transferredPrefixTargetPointer)) ||
+      !stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 32), load<f64>(transferredPrefixTargetPointer + sizeof<f64>())) ||
+      !stepGlitchEvidenceValueMatches(load<f64>(evidenceValuesPointer + 40), load<f64>(transferredPrefixTargetPointer + 2 * sizeof<f64>()))
+    ) return false;
+  }
+  const prefixPointer = evidencePointer;
+  if (load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_SETTINGS_MASK_TAG_OFFSET) != 2) return false;
+  const pointCount = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_POINTS_COUNT_OFFSET);
+  const sourceCount = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET);
+  if (pointCount != sourceCount || pointCount < 2) return false;
+  const pointsXPointer = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_POINTS_X_POINTER_OFFSET);
+  const pointsYPointer = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_POINTS_Y_POINTER_OFFSET);
+  const sourceXPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET);
+  const sourceYPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_Y_POINTER_OFFSET);
+  const minX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_X_INDEX);
+  const maxX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_X_INDEX);
+  const minY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MIN_Y_INDEX);
+  const maxY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_Y_INDEX);
+  const rectX = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_X_INDEX);
+  const rectY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_Y_INDEX);
+  const rectWidth = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_WIDTH_INDEX);
+  const rectHeight = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_RECT_HEIGHT_INDEX);
+  const metadataPointer = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_METADATA_POINTER_OFFSET);
+  if (
+    !stepGlitchEvidenceValueMatches(load<f64>(metadataPointer), minX) ||
+    !stepGlitchEvidenceValueMatches(load<f64>(metadataPointer + sizeof<f64>()), maxX) ||
+    !stepGlitchEvidenceValueMatches(load<f64>(metadataPointer + 2 * sizeof<f64>()), minY) ||
+    !stepGlitchEvidenceValueMatches(load<f64>(metadataPointer + 3 * sizeof<f64>()), maxY) ||
+    !stepGlitchEvidenceValueMatches(
+      load<f64>(metadataPointer + 8 * sizeof<f64>()),
+      <f64>sourceWindowCount,
+    )
+  ) return false;
+  let pointIndex: u32 = 0;
+  while (pointIndex < pointCount) {
+    const graphX = minX + ((load<f64>(sourceXPointer + pointIndex * sizeof<f64>()) - rectX) / rectWidth) * (maxX - minX);
+    const graphY = maxY - ((load<f64>(sourceYPointer + pointIndex * sizeof<f64>()) - rectY) / rectHeight) * (maxY - minY);
+    if (
+      !stepGlitchEvidenceValueMatches(load<f64>(pointsXPointer + pointIndex * sizeof<f64>()), graphX) ||
+      !stepGlitchEvidenceValueMatches(load<f64>(pointsYPointer + pointIndex * sizeof<f64>()), graphY)
+    ) return false;
+    pointIndex += 1;
+  }
+  const metadataFlags = <u32>load<f64>(metadataPointer + 7 * sizeof<f64>());
+  if (
+    (metadataFlags & 2) == 0 ||
+    !stepGlitchEvidenceValueMatches(load<f64>(metadataPointer + 5 * sizeof<f64>()), load<f64>(pointsXPointer)) ||
+    !stepGlitchEvidenceValueMatches(load<f64>(metadataPointer + 6 * sizeof<f64>()), load<f64>(pointsYPointer))
+  ) return false;
+  if (load<f64>(evidenceValuesPointer) < load<f64>(pointsXPointer + (pointCount - 1) * sizeof<f64>())) {
+    return false;
+  }
+  const settingsPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SETTINGS_POINTER_OFFSET);
+  const evidenceSettingsPointer = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_SETTINGS_POINTER_OFFSET);
+  let settingIndex: u32 = 0;
+  while (settingIndex < Layout.STEP_GLITCH_SETTINGS_VALUE_COUNT) {
+    if (!stepGlitchEvidenceValueMatches(load<f64>(evidenceSettingsPointer + settingIndex * sizeof<f64>()), load<f64>(settingsPointer + settingIndex * sizeof<f64>()))) return false;
+    settingIndex += 1;
+  }
+  if (load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_SEGMENTS_LENGTH_OFFSET) != sourceWindowCount * 10) return false;
+  if (load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_REQUIREMENTS_LENGTH_OFFSET) != sourceWindowCount) return false;
+  const requirementsPointer = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_REQUIREMENTS_POINTER_OFFSET);
+  const segmentsPointer = load<u32>(prefixPointer + Layout.STEP_GLITCH_PREFIX_SEGMENTS_POINTER_OFFSET);
+  let segmentIndex: u32 = 0;
+  while (segmentIndex < sourceWindowCount) {
+    const recordPointer = segmentsPointer + segmentIndex * 10 * sizeof<f64>();
+    const isRequired = load<u8>(requirementsPointer + segmentIndex) != 0;
+    const recordType = load<f64>(recordPointer);
+    if (isRequired && recordType == 0) return false;
+    if (recordType != 0) {
+      const startX = load<f64>(recordPointer + sizeof<f64>());
+      const endX = load<f64>(recordPointer + 2 * sizeof<f64>());
+      if (!(endX > startX)) return false;
+    }
+    segmentIndex += 1;
+  }
+  segmentIndex = 0;
+  while (segmentIndex < sourceWindowCount) {
+    const recordPointer = segmentsPointer + segmentIndex * 10 * sizeof<f64>();
+    if (load<f64>(recordPointer) != 0) {
+      const windowPointer = sourceWindowPointer + segmentIndex * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH;
+      store<u32>(windowPointer + FormulaLayout.STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET, 1);
+      store<f64>(
+        windowPointer + FormulaLayout.STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET,
+        load<f64>(recordPointer + sizeof<f64>()),
+      );
+      store<f64>(
+        windowPointer + FormulaLayout.STEP_GLITCH_FIXED_WINDOW_END_X_OFFSET,
+        load<f64>(recordPointer + 2 * sizeof<f64>()),
+      );
+    }
+    segmentIndex += 1;
+  }
+  return true;
+}
+
 function createRealDfsResult(
   status: u32,
   expandedStates: u32,
   bestReachedTargetCount: u32,
   hasBlockedX: u32,
   blockedX: f64,
+  prefixPreparationSource: u32,
   traceVectorPointer: u32,
 ): u32 {
   const resultPointer = reserveArena(Layout.STEP_GLITCH_REAL_DFS_RESULT_BYTE_LENGTH, sizeof<f64>());
@@ -1474,6 +1825,7 @@ function createRealDfsResult(
   store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_EXPANDED_STATES_OFFSET, expandedStates);
   store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_BEST_REACHED_COUNT_OFFSET, bestReachedTargetCount);
   store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_BLOCKED_FLAG_OFFSET, hasBlockedX);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_RESERVED_OFFSET, prefixPreparationSource);
   store<u32>(resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_TRACE_POINTER_OFFSET, load<u32>(traceVectorPointer));
   store<u32>(
     resultPointer + Layout.STEP_GLITCH_REAL_DFS_RESULT_TRACE_COUNT_OFFSET,
@@ -1664,6 +2016,7 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
       sourceWindowCount * FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
     );
   }
+  let prefixPreparationSource = Layout.STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_NONE;
   let targetRecordPointer: u32 = 0;
   let orderedTargetCount: u32 = 0;
   if (mode == Layout.STEP_GLITCH_DFS_MODE_REAL) {
@@ -1786,6 +2139,7 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
         bestReachedTargetCount,
         hasBlockedX,
         blockedX,
+        prefixPreparationSource,
         realTraceVectorPointer,
       );
     }
@@ -1829,10 +2183,33 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
           bestReachedTargetCount,
           hasBlockedX,
           blockedX,
+          prefixPreparationSource,
           realTraceVectorPointer,
         );
       }
-      const prefixTracePointer = beginRealDfsTrace(
+      const hasReusablePrefixEvidence = tryReuseStepGlitchPrefixEvidence(
+        contextPointer,
+        sourceWindowPointer,
+        sourceWindowCount,
+      );
+      if (hasReusablePrefixEvidence) {
+        const evidencePointer = load<u32>(
+          contextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_POINTER_OFFSET,
+        );
+        const evidenceValuesPointer = load<u32>(
+          evidencePointer + Layout.STEP_GLITCH_PREFIX_EVIDENCE_VALUES_POINTER_OFFSET,
+        );
+        prefixAcceptedX = load<f64>(evidenceValuesPointer);
+        prefixAcceptedY = load<f64>(evidenceValuesPointer + sizeof<f64>());
+        prefixReachedTargetCount = prefixTargetCount +
+          load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET) / 3;
+        if (prefixReachedTargetCount > bestReachedTargetCount) {
+          bestReachedTargetCount = prefixReachedTargetCount;
+        }
+        prefixPreparationSource = Layout.STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE;
+      } else {
+        prefixPreparationSource = Layout.STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD;
+        const prefixTracePointer = beginRealDfsTrace(
         realTraceVectorPointer,
         Layout.STEP_GLITCH_REAL_DFS_CANDIDATE_PREFIX,
         sourceXPointer,
@@ -1843,8 +2220,8 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
         Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
         prefixControlX,
       );
-      const replayMark = markArena();
-      const prefixReplayPointer = replayStepGlitchCandidate(
+        const replayMark = markArena();
+        const prefixReplayPointer = replayStepGlitchCandidate(
         contextPointer,
         sourceXPointer,
         sourceYPointer,
@@ -1856,36 +2233,38 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
         prefixTargetCount,
         prefixControlX,
       );
-      const prefixStatus = load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET);
-      const prefixReached =
+        const prefixStatus = load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_OFFSET);
+        const prefixReached =
         load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
         load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
-      if (prefixReached > bestReachedTargetCount) bestReachedTargetCount = prefixReached;
-      if (hasBlockedX == 0 && load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET) != 0) {
-        hasBlockedX = 1;
-        blockedX = load<f64>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
-      }
-      const prefixAcceptedReplayX = load<f64>(
+        if (prefixReached > bestReachedTargetCount) bestReachedTargetCount = prefixReached;
+        if (hasBlockedX == 0 && load<u32>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET) != 0) {
+          hasBlockedX = 1;
+          blockedX = load<f64>(prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
+        }
+        const prefixAcceptedReplayX = load<f64>(
         prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET,
       );
-      const prefixAcceptedReplayY = load<f64>(
+        const prefixAcceptedReplayY = load<f64>(
         prefixReplayPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET,
       );
-      finishRealDfsTrace(prefixTracePointer, prefixReplayPointer);
-      resetArena(replayMark);
-      if (prefixStatus != Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_HIT) {
-        return createRealDfsResult(
+        finishRealDfsTrace(prefixTracePointer, prefixReplayPointer);
+        resetArena(replayMark);
+        if (prefixStatus != Layout.STEP_GLITCH_REPLAY_RESULT_STATUS_HIT) {
+          return createRealDfsResult(
           Layout.STEP_GLITCH_REAL_DFS_RESULT_NO_PATH,
           expandedStates,
           bestReachedTargetCount,
           hasBlockedX,
           blockedX,
+          prefixPreparationSource,
           realTraceVectorPointer,
         );
+        }
+        prefixAcceptedX = prefixAcceptedReplayX;
+        prefixAcceptedY = prefixAcceptedReplayY;
+        prefixReachedTargetCount = prefixReached;
       }
-      prefixAcceptedX = prefixAcceptedReplayX;
-      prefixAcceptedY = prefixAcceptedReplayY;
-      prefixReachedTargetCount = prefixReached;
     } else {
       prefixAcceptedX = prefixControlX;
       prefixAcceptedY = loadValue(valuesPointer, Layout.STEP_GLITCH_VALUE_MAX_Y_INDEX) -
@@ -2130,6 +2509,7 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
             bestReachedTargetCount,
             hasBlockedX,
             blockedX,
+            prefixPreparationSource,
             realTraceVectorPointer,
           );
         }
@@ -2170,6 +2550,7 @@ function runStepGlitchGeometryDfs(inputPointer: u32, inputByteLength: u32): u32 
       bestReachedTargetCount,
       hasBlockedX,
       blockedX,
+      prefixPreparationSource,
       realTraceVectorPointer,
     );
   }

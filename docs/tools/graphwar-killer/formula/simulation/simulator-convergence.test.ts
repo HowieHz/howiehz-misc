@@ -177,4 +177,23 @@ describe("Graphwar launch-angle convergence contracts", () => {
     expect(debugMetrics.counters.rk4StepCount).toBeGreaterThan(debugMetrics.counters.stepBisectionCount);
     expect(debugMetrics.counters.formulaTermEvaluationCount).toBe(debugMetrics.counters.rk4StepCount * 4);
   });
+
+  it("counts only the final expression integration RK4 trials", () => {
+    const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+    const result = sampleGraphwarExpressionTrajectory({
+      bounds: { maxX: 1e9, maxY: 1e9, minX: -1e9, minY: -1e9 },
+      debugMetrics,
+      equation: "dy",
+      expression: "1000000",
+      initialState: { currentPoint: createGraphPoint(0, 0), sampleIndex: 0 },
+      shouldStop: (_point, _previousPoint, index) => index === 1,
+      soldierCenter: createGraphPoint(0, 0),
+    });
+
+    expect(result.stopReason).toBe("stopped");
+    expect(debugMetrics.counters.acceptedSamplePointCount).toBe(2);
+    expect(debugMetrics.counters.trajectoryReplayCount).toBe(1);
+    expect(debugMetrics.counters.stepBisectionCount).toBeGreaterThan(0);
+    expect(debugMetrics.counters.rk4StepCount).toBe(debugMetrics.counters.stepBisectionCount + 1);
+  });
 });

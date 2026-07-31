@@ -131,12 +131,18 @@ export interface GraphwarStepGlitchPrefixScanner {
 /** 完全相同旧整式的验证证据；新增后缀仍必须从发射点完整回放。 */
 export interface GraphwarStepGlitchPrefixEvidence {
   acceptedPoint: GraphPoint;
+  /** 构造时固定的完整证据快照；任一组成字段后续被修改都只能走 cold prefix。 */
+  evidenceIdentity: {
+    canonical: string;
+    simulationMask: Uint8Array;
+  };
   /** 已解前缀和可选同 Worker 边界整体替换；Master 证据只保留 prefix-only 分支。 */
   formulaEvidence: GraphwarStepGlitchFormulaEvidence;
   /** AcceptedPoint 所属的碰撞与尾目标身份；mask 保存精确快照以拒绝原地修改。 */
   replayIdentity: {
     boundaryExpansion: number;
     prefixTarget: GraphwarTrajectoryTargetCircle;
+    requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
     simulationMask: Uint8Array;
   };
 }
@@ -146,18 +152,139 @@ export function createGraphwarStepGlitchPrefixEvidence(options: {
   acceptedPoint: GraphPoint;
   formulaEvidence: GraphwarStepGlitchFormulaEvidence;
   prefixTarget: GraphwarTrajectoryTargetCircle;
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
   simulationBoundaryExpansion?: number;
   simulationMask: Uint8Array;
 }): GraphwarStepGlitchPrefixEvidence {
-  return {
+  const evidence = {
     acceptedPoint: createGraphPoint(options.acceptedPoint.x, options.acceptedPoint.y),
     formulaEvidence: options.formulaEvidence,
     replayIdentity: {
       boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
       prefixTarget: copyGraphwarTrajectoryTargetCircle(options.prefixTarget),
+      requiredTargets: options.requiredTargets.map(copyGraphwarTrajectoryTargetCircle),
       simulationMask: options.simulationMask.slice(),
     },
+  } satisfies Omit<GraphwarStepGlitchPrefixEvidence, "evidenceIdentity">;
+  return {
+    ...evidence,
+    evidenceIdentity: createGraphwarStepGlitchPrefixEvidenceIdentity(evidence),
   };
+}
+
+const graphwarStepGlitchIdentityNumberView = new DataView(new ArrayBuffer(Float64Array.BYTES_PER_ELEMENT));
+
+/** 以排序字段和 IEEE-754 bits 固化证据。公式 settings 内的 mask 引用由 replayIdentity 的精确 bytes 统一记录，避免同一大 mask 重复进入身份。 */
+export function createGraphwarStepGlitchPrefixEvidenceIdentity(
+  evidence: Omit<GraphwarStepGlitchPrefixEvidence, "evidenceIdentity">,
+): GraphwarStepGlitchPrefixEvidence["evidenceIdentity"] {
+  return {
+    canonical: serializeGraphwarStepGlitchIdentityValue({
+      acceptedPoint: evidence.acceptedPoint,
+      formulaEvidence: evidence.formulaEvidence,
+      replayIdentity: {
+        boundaryExpansion: evidence.replayIdentity.boundaryExpansion,
+        prefixTarget: evidence.replayIdentity.prefixTarget,
+        requiredTargets: evidence.replayIdentity.requiredTargets,
+      },
+    }),
+    simulationMask: evidence.replayIdentity.simulationMask.slice(),
+  };
+}
+
+/** 验证 stored snapshot，而不在每次 pack/match 时重新复制大 mask。 */
+export function graphwarStepGlitchPrefixEvidenceHasValidIdentity(evidence: GraphwarStepGlitchPrefixEvidence): boolean {
+  return (
+    evidence.evidenceIdentity.canonical ===
+      serializeGraphwarStepGlitchIdentityValue({
+        acceptedPoint: evidence.acceptedPoint,
+        formulaEvidence: evidence.formulaEvidence,
+        replayIdentity: {
+          boundaryExpansion: evidence.replayIdentity.boundaryExpansion,
+          prefixTarget: evidence.replayIdentity.prefixTarget,
+          requiredTargets: evidence.replayIdentity.requiredTargets,
+        },
+      }) && graphwarByteArraysEqual(evidence.evidenceIdentity.simulationMask, evidence.replayIdentity.simulationMask)
+  );
+}
+
+/** 内部受控 evidence 的 canonical serializer；数值不能经过 JSON 的 -0/NaN 归一化。 */
+function serializeGraphwarStepGlitchIdentityValue(value: unknown): string {
+  if (value === undefined) {
+    return '{"$undefined":true}';
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    graphwarStepGlitchIdentityNumberView.setFloat64(0, value, false);
+    const high = graphwarStepGlitchIdentityNumberView.getUint32(0, false).toString(16).padStart(8, "0");
+    const low = graphwarStepGlitchIdentityNumberView.getUint32(4, false).toString(16).padStart(8, "0");
+    return `{"$f64":"${high}${low}"}`;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(serializeGraphwarStepGlitchIdentityValue).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([key, entryValue]) => key !== "stepGlitchObstacleMask" && entryValue !== undefined)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    return `{${entries
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${serializeGraphwarStepGlitchIdentityValue(entryValue)}`)
+      .join(",")}}`;
+  }
+  throw new TypeError("Step-glitch prefix evidence contains an unsupported identity value");
+}
+
+/** Exact prefix proof shared by the TS scanner and the WASM Adapter provenance check. */
+export function graphwarStepGlitchPrefixEvidenceMatchesContext(
+  options: {
+    bounds: GraphBounds;
+    formulaMode: GraphwarTrajectoryFormulaMode;
+    graphPoints: readonly GraphPoint[];
+    prefixTarget?: GraphwarTrajectoryTargetCircle;
+    requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
+    simulationBoundaryExpansion: number;
+    simulationMask: Uint8Array;
+  },
+  evidence: GraphwarStepGlitchPrefixEvidence,
+): boolean {
+  const transferredPrefixTarget = options.prefixTarget ? undefined : options.requiredTargets.at(-1);
+  const evidenceRequiredTargets = evidence.replayIdentity.requiredTargets;
+  const hasMatchingRequiredTargets = options.prefixTarget
+    ? evidenceRequiredTargets.length === options.requiredTargets.length &&
+      evidenceRequiredTargets.every((target, index) => {
+        const requiredTarget = options.requiredTargets[index];
+        return requiredTarget !== undefined && pixelCirclesEqual(target, requiredTarget);
+      })
+    : evidenceRequiredTargets.length + 1 === options.requiredTargets.length &&
+      evidenceRequiredTargets.every((target, index) => {
+        const requiredTarget = options.requiredTargets[index];
+        return requiredTarget !== undefined && pixelCirclesEqual(target, requiredTarget);
+      }) &&
+      transferredPrefixTarget !== undefined &&
+      pixelCirclesEqual(evidence.replayIdentity.prefixTarget, transferredPrefixTarget);
+  const lastGraphPoint = options.graphPoints.at(-1);
+  return Boolean(
+    lastGraphPoint &&
+    (options.prefixTarget === undefined ||
+      pixelCirclesEqual(evidence.replayIdentity.prefixTarget, options.prefixTarget)) &&
+    hasMatchingRequiredTargets &&
+    evidence.replayIdentity.boundaryExpansion === options.simulationBoundaryExpansion &&
+    graphwarByteArraysEqual(evidence.replayIdentity.simulationMask, options.simulationMask) &&
+    graphwarStepGlitchPrefixEvidenceHasValidIdentity(evidence) &&
+    evidence.formulaEvidence.prefix.points.length === options.graphPoints.length &&
+    graphwarStepGlitchFormulaEvidenceMatchesSource(
+      {
+        bounds: options.bounds,
+        formulaMode: options.formulaMode,
+        points: options.graphPoints,
+        soldierCenter: options.graphPoints[0],
+      },
+      evidence.formulaEvidence,
+    ) &&
+    evidence.acceptedPoint.x >= lastGraphPoint.x,
+  );
 }
 
 /** Worker 和页面耗时汇总使用的稳定扫描阶段。 */
@@ -471,28 +598,20 @@ function prepareGraphwarStepGlitchPrefix(
 
   const evidenceStartedAt = nowMs();
   const evidence = options.prefixEvidence;
-  const hasEvidencePrefixTarget = Boolean(
-    evidence &&
-    (prefixTarget
-      ? pixelCirclesEqual(evidence.replayIdentity.prefixTarget, prefixTarget)
-      : requiredTargets.some((target) => pixelCirclesEqual(evidence.replayIdentity.prefixTarget, target))),
-  );
   const isEvidenceSourceCompatible = Boolean(
     evidence &&
-    hasEvidencePrefixTarget &&
-    evidence.replayIdentity.boundaryExpansion === context.simulationBoundaryExpansion &&
-    graphwarByteArraysEqual(evidence.replayIdentity.simulationMask, options.simulationMask) &&
-    evidence.formulaEvidence.prefix.points.length === context.graphPoints.length &&
-    graphwarStepGlitchFormulaEvidenceMatchesSource(
+    graphwarStepGlitchPrefixEvidenceMatchesContext(
       {
         bounds: options.bounds,
         formulaMode: context.formulaMode,
-        points: context.graphPoints,
-        soldierCenter: context.graphPoints[0],
+        graphPoints: context.graphPoints,
+        ...(prefixTarget ? { prefixTarget } : {}),
+        requiredTargets,
+        simulationBoundaryExpansion: context.simulationBoundaryExpansion,
+        simulationMask: options.simulationMask,
       },
-      evidence.formulaEvidence,
-    ) &&
-    evidence.acceptedPoint.x >= lastGraphPoint.x,
+      evidence,
+    ),
   );
   timings.push({
     elapsedMs: nowMs() - evidenceStartedAt,

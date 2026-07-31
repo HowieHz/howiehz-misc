@@ -791,6 +791,7 @@ function createContextInput(
     acceptedPoint: graphPoints[1],
     formulaEvidence,
     prefixTarget,
+    requiredTargets: [prefixTarget],
     simulationBoundaryExpansion,
     simulationMask: mask,
   });

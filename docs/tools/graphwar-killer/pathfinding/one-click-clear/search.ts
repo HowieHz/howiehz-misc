@@ -755,6 +755,7 @@ async function buildOneClickClearStepGlitchPath(
       return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
     }
 
+    const requiredTargets = createOneClickClearPreviousTargets(route.targetSequence);
     prefixScanner ??= createGraphwarStepGlitchPrefixScanner({
       bounds: options.bounds,
       boundsRect: options.boundsRect,
@@ -762,7 +763,7 @@ async function buildOneClickClearStepGlitchPath(
       maskIndex,
       ...(prefixEvidence ? { prefixEvidence } : {}),
       ...(route.targetSequence.length === 0 && options.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
-      requiredTargets: createOneClickClearPreviousTargets(route.targetSequence),
+      requiredTargets,
       formulaMode,
       simulationBoundaryExpansion: options.simulationBoundaryExpansion,
       simulationMask,
@@ -804,6 +805,7 @@ async function buildOneClickClearStepGlitchPath(
         acceptedPoint: scan.acceptedPoint,
         formulaEvidence: scan.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
         prefixTarget: target.hitCircle,
+        requiredTargets,
         simulationBoundaryExpansion: options.simulationBoundaryExpansion,
         simulationMask,
       });
@@ -2210,6 +2212,7 @@ function publishOneClickClearStepGlitchEvidence(
       acceptedPoint,
       formulaEvidence,
       prefixTarget,
+      requiredTargets: createOneClickClearPreviousTargets(route.targetSequence.slice(0, -1)),
       simulationBoundaryExpansion: options.simulationBoundaryExpansion,
       simulationMask,
     }),

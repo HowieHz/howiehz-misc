@@ -9,16 +9,20 @@ import {
   type GraphwarTrajectoryFormulaSettings,
   type GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
-import { findGraphwarStepGlitchAcceptedPointAtOrAfterControlX } from "../../pathfinding/routing/step-glitch-scan";
+import {
+  createGraphwarStepGlitchPrefixEvidence,
+  findGraphwarStepGlitchAcceptedPointAtOrAfterControlX,
+} from "../../pathfinding/routing/step-glitch-scan";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../geometry";
-import { createGraphPoint } from "../types";
+import { createGraphPoint, createPixelPoint } from "../types";
 import type { BoundsRect, EquationMode, GraphBounds } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
 import {
   createGraphwarWasmStepGlitchContextInput,
   createGraphwarWasmStepGlitchGeometryTestContext,
+  type GraphwarWasmStepGlitchGeometryReplayOutcome,
   type GraphwarWasmStepGlitchRealReplayTestOutput,
 } from "./step-glitch-adapter";
 import { createGraphwarWasmTrajectoryPhysicalStateFromSamplingState } from "./trajectory-state-adapter";
@@ -65,6 +69,46 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it("keeps a duplicated required target out of the compact ordered-target state", async () => {
+    const fixture = createFixture("dy");
+    const requiredTarget = { center: fixture.pixelPath[2], radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const requiredFixture = { ...fixture, requiredTargets: [requiredTarget] };
+    const { context } = await createContext(requiredFixture);
+
+    const trace = context.traceRealDfsForTest({ hitTarget: requiredTarget, targetPoint: fixture.pixelPath[2] });
+
+    expect(trace.status).toBe("hit");
+    expect(trace.candidates[0]?.replay).toMatchObject({
+      reachedRequiredTargetCount: 1,
+      reachedTargetCount: 0,
+      status: "hit",
+      targetHitIndex: -1,
+    });
+    if (trace.candidates[0]?.replay.launchStatus !== "success") {
+      throw new Error("expected a launched required-target replay");
+    }
+    expect(trace.candidates[0].replay.requiredTargetsHitIndex).toBeGreaterThanOrEqual(0);
+    context.dispose();
+  });
+
+  it("drives a mirrored boundary candidate through the same compact replay", async () => {
+    const mirroredBounds = { ...bounds, maxX: bounds.minX, minX: bounds.maxX };
+    const fixture = createFixture("ddy", new Uint8Array(planeCellCount), mirroredBounds);
+    const { context } = await createContext(fixture);
+
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(context.isMirrored).toBe(true);
+    expect(trace).toMatchObject({
+      candidates: [{ kind: "direct", replay: { launchStatus: "success", status: "hit" } }],
+      status: "hit",
+    });
+    context.dispose();
+  });
+
   it("keeps lazy prefix replay and normal no-path as one owned trace", async () => {
     const fixture = createFixture("dy");
     const { context, runtime } = await createContext(fixture);
@@ -78,7 +122,243 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     expect(trace.candidates[0]?.kind).toBe("direct");
     expect(trace.candidates[1]?.kind).toBe("prefix");
     expect(trace.candidates[1]?.replay.status).toBe("hit");
+    expect(trace.prefixPreparation).toBe("cold");
     expect(runtime.arenaCursor).toBe(retainedCursor);
+    context.dispose();
+  });
+
+  it.each(["dy", "ddy"] satisfies readonly Extract<EquationMode, "ddy" | "dy">[])(
+    "reuses only exact %s formula-prefix evidence while appended candidates stay cold",
+    async (equation) => {
+      const fixture = createFixture(equation);
+      const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+      const { context, runtime } = await createContext(fixture, { prefixEvidence: evidence, prefixTarget });
+      const retainedCursor = runtime.arenaCursor;
+
+      const trace = context.traceRealDfsForTest({
+        hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+        targetPoint: fixture.pixelPath[2],
+      });
+
+      expect(trace.prefixPreparation).toBe("evidence");
+      expect(trace.candidates.some((candidate) => candidate.kind === "prefix")).toBe(false);
+      expect(trace.candidates.every((candidate) => candidate.replay.replayCount >= 1)).toBe(true);
+      expect(runtime.arenaCursor).toBe(retainedCursor);
+      expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+      context.dispose();
+    },
+  );
+
+  it.each(["dy", "ddy"] satisfies readonly Extract<EquationMode, "ddy" | "dy">[])(
+    "reuses evidence when the old prefix target transfers into required targets for %s",
+    async (equation) => {
+      const fixture = createFixture(equation);
+      const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+      const transitionedFixture = { ...fixture, requiredTargets: [prefixTarget] };
+      const { context } = await createContext(transitionedFixture, { prefixEvidence: evidence });
+
+      const trace = context.traceRealDfsForTest({
+        hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+        targetPoint: fixture.pixelPath[2],
+      });
+
+      expect(trace.prefixPreparation).toBe("evidence");
+      expect(trace.candidates.some((candidate) => candidate.kind === "prefix")).toBe(false);
+      context.dispose();
+    },
+  );
+
+  it("cold-prepares when retained required-target identity does not transfer", async () => {
+    const fixture = createFixture("dy");
+    const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+    const wrongTarget = {
+      center: createPixelPoint(prefixTarget.center.x + 1, prefixTarget.center.y),
+      radius: prefixTarget.radius,
+    };
+    const { context } = await createContext(
+      { ...fixture, requiredTargets: [wrongTarget] },
+      { prefixEvidence: evidence },
+    );
+
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.prefixPreparation).toBe("cold");
+    expect(trace.candidates.some((candidate) => candidate.kind === "prefix")).toBe(true);
+    context.dispose();
+  });
+
+  it("cold-prepares the prefix when a valid evidence identity mismatches", async () => {
+    const fixture = createFixture("dy");
+    const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+    const { context } = await createContext(fixture, {
+      prefixEvidence: evidence,
+      prefixTarget,
+      simulationBoundaryExpansion: 1,
+    });
+
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.prefixPreparation).toBe("cold");
+    expect(trace.candidates.some((candidate) => candidate.kind === "prefix")).toBe(true);
+    context.dispose();
+  });
+
+  it.each(["dy", "ddy"] satisfies readonly Extract<EquationMode, "ddy" | "dy">[])(
+    "cold-prepares when retained %s formula materials are modified",
+    async (equation) => {
+      const fixture = createFixture(equation);
+      const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+      const prefix = evidence.formulaEvidence.prefix;
+      const modifiedPrefix = {
+        ...prefix,
+        refinedFormulaPoints: prefix.refinedFormulaPoints.map((point, index) =>
+          index === prefix.refinedFormulaPoints.length - 1 ? createGraphPoint(point.x, point.y + 0.25) : point,
+        ),
+      };
+      const modifiedEvidence = {
+        ...evidence,
+        formulaEvidence: {
+          ...evidence.formulaEvidence,
+          prefix: modifiedPrefix,
+          ...(evidence.formulaEvidence.boundaryState
+            ? { boundaryState: { ...evidence.formulaEvidence.boundaryState, prefix: modifiedPrefix } }
+            : {}),
+        },
+      };
+      const { context } = await createContext(fixture, { prefixEvidence: modifiedEvidence, prefixTarget });
+
+      const trace = context.traceRealDfsForTest({
+        hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+        targetPoint: fixture.pixelPath[2],
+      });
+
+      expect(trace.prefixPreparation).toBe("cold");
+      expect(trace.candidates.some((candidate) => candidate.kind === "prefix")).toBe(true);
+      context.dispose();
+    },
+  );
+
+  it("cold-prepares when retained protection is modified", async () => {
+    const fixture = createFixture("dy");
+    const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+    const prefix = evidence.formulaEvidence.prefix;
+    const modifiedPrefix = {
+      ...prefix,
+      signProtection: Array.from(
+        { length: prefix.points.length - 1 },
+        (_value, index) => (prefix.signProtection[index] ?? 0) ^ 1,
+      ),
+    };
+    const modifiedEvidence = {
+      ...evidence,
+      formulaEvidence: {
+        ...evidence.formulaEvidence,
+        prefix: modifiedPrefix,
+        ...(evidence.formulaEvidence.boundaryState
+          ? { boundaryState: { ...evidence.formulaEvidence.boundaryState, prefix: modifiedPrefix } }
+          : {}),
+      },
+    };
+    const { context } = await createContext(fixture, { prefixEvidence: modifiedEvidence, prefixTarget });
+
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.prefixPreparation).toBe("cold");
+    context.dispose();
+  });
+
+  it.each([
+    {
+      mutate(evidence: ReturnType<typeof createCompatiblePrefixEvidence>["evidence"]) {
+        evidence.acceptedPoint.x += 1;
+        return evidence.replayIdentity.prefixTarget;
+      },
+      name: "accepted point",
+    },
+    {
+      mutate(evidence: ReturnType<typeof createCompatiblePrefixEvidence>["evidence"]) {
+        evidence.replayIdentity.prefixTarget.center.x += 1;
+        return evidence.replayIdentity.prefixTarget;
+      },
+      name: "replay target",
+    },
+    {
+      mutate(evidence: ReturnType<typeof createCompatiblePrefixEvidence>["evidence"]) {
+        evidence.replayIdentity.boundaryExpansion = -0;
+        return evidence.replayIdentity.prefixTarget;
+      },
+      name: "signed-zero boundary identity",
+    },
+  ])("cold-prepares after a structured-clone $name mutation", async ({ mutate }) => {
+    const fixture = createFixture("dy");
+    const compatible = createCompatiblePrefixEvidence(fixture);
+    const evidence = structuredClone(compatible.evidence);
+    const prefixTarget = mutate(evidence);
+    const { context } = await createContext(fixture, { prefixEvidence: evidence, prefixTarget });
+
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.prefixPreparation).toBe("cold");
+    expect(trace.candidates.some((candidate) => candidate.kind === "prefix")).toBe(true);
+    context.dispose();
+  });
+
+  it("cold-prepares when structured-clone evidence and context masks are retargeted together", async () => {
+    const fixture = createFixture("dy");
+    const compatible = createCompatiblePrefixEvidence(fixture);
+    const evidence = structuredClone(compatible.evidence);
+    fixture.mask[0] = 1;
+    evidence.replayIdentity.simulationMask[0] = 1;
+    const { context } = await createContext(fixture, {
+      prefixEvidence: evidence,
+      prefixTarget: compatible.prefixTarget,
+    });
+
+    const trace = context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: fixture.pixelPath[2],
+    });
+
+    expect(trace.prefixPreparation).toBe("cold");
+    context.dispose();
+  });
+
+  it("rejects an evidence provenance tag for a mismatched retained descriptor", async () => {
+    const fixture = createFixture("dy");
+    const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+    const { context, runtime } = await createContext(fixture, {
+      prefixEvidence: evidence,
+      prefixTarget,
+      simulationBoundaryExpansion: 1,
+    });
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        new DataView(runtime.buffer, resultPointer, 40).setUint32(20, 2, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
     context.dispose();
   });
 
@@ -115,10 +395,64 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const trace = context.traceRealDfsForTest({ hitTarget, targetPoint });
 
     const gateCandidate = trace.candidates.find((candidate) => candidate.kind === "gate");
-    expect(gateCandidate).toBeDefined();
-    expect(gateCandidate?.windows.type).toBe("explicit");
-    if (gateCandidate?.windows.type === "explicit") {
+    if (!gateCandidate) {
+      throw new Error("expected a real gate candidate");
+    }
+    expect(gateCandidate.windows.type).toBe("explicit");
+    if (gateCandidate.windows.type === "explicit") {
       expect(gateCandidate.windows.segments.at(-1)?.endX).toBe(gateCandidate.controlX);
+    }
+    const prefixCandidate = trace.candidates.find((candidate) => candidate.kind === "prefix");
+    if (
+      prefixCandidate?.replay.launchStatus !== "success" ||
+      prefixCandidate.replay.status !== "hit" ||
+      !prefixCandidate.replay.acceptedPoint
+    ) {
+      throw new Error("expected a successful lazy prefix replay");
+    }
+    const scriptedOutcomes: GraphwarWasmStepGlitchGeometryReplayOutcome[] = [];
+    for (const candidate of trace.candidates) {
+      if (candidate.kind === "prefix") continue;
+      const replay = candidate.replay;
+      const reachedTargetCount = replay.reachedTargetCount + replay.reachedRequiredTargetCount;
+      if (replay.launchStatus === "success" && replay.status === "hit" && replay.acceptedPoint) {
+        scriptedOutcomes.push({
+          acceptedPoint: replay.acceptedPoint,
+          ...(replay.blockedPoint ? { blockedX: replay.blockedPoint.x } : {}),
+          reachedTargetCount,
+          status: "hit",
+        });
+        continue;
+      }
+      scriptedOutcomes.push({
+        ...(replay.launchStatus === "success" && replay.blockedPoint ? { blockedX: replay.blockedPoint.x } : {}),
+        reachedTargetCount,
+        status: "miss",
+      });
+    }
+    const scriptedTrace = context.traceScriptedDfs({
+      hitTargetCenter: hitTarget.center,
+      prefixAcceptedPoint: prefixCandidate.replay.acceptedPoint,
+      ...(prefixCandidate.replay.blockedPoint ? { prefixBlockedX: prefixCandidate.replay.blockedPoint.x } : {}),
+      prefixReachedTargetCount:
+        prefixCandidate.replay.reachedTargetCount + prefixCandidate.replay.reachedRequiredTargetCount,
+      replayMode: { outcomes: scriptedOutcomes, type: "scripted" },
+      targetPoint,
+    });
+    expect(
+      trace.candidates.filter((candidate) => candidate.kind !== "prefix").map(({ kind, path }) => ({ kind, path })),
+    ).toEqual(scriptedTrace.candidates.map(({ kind, path }) => ({ kind, path })));
+    const gateHitIndex = trace.candidates.findIndex(
+      (candidate) => candidate.kind === "gate" && candidate.replay.status === "hit",
+    );
+    expect(gateHitIndex).toBeGreaterThanOrEqual(0);
+    expect(trace.candidates.slice(gateHitIndex + 1).some((candidate) => candidate.kind === "target")).toBe(true);
+    const firstBlockedCandidate = trace.candidates.find(
+      (candidate) => candidate.replay.launchStatus === "success" && candidate.replay.blockedPoint,
+    );
+    expect(firstBlockedCandidate?.replay.launchStatus).toBe("success");
+    if (firstBlockedCandidate?.replay.launchStatus === "success") {
+      expect(trace.blockedX).toBe(firstBlockedCandidate.replay.blockedPoint?.x);
     }
     const highWaterByteLength = runtime.buffer.byteLength;
     for (let index = 0; index < 20; index += 1) {
@@ -193,9 +527,15 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     },
     {
       mutate(traceView: DataView) {
-        traceView.setUint32(188, 7, true);
+        traceView.setUint32(188, traceView.getUint32(188, true) & ~1, true);
       },
-      name: "terminal state flags",
+      name: "terminal previous-point flag",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setFloat64(152, 1, true);
+      },
+      name: "first-order derivative scalar",
     },
     {
       mutate(traceView: DataView) {
@@ -214,6 +554,12 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         traceView.setUint32(48, 0, true);
       },
       name: "target completion",
+    },
+    {
+      mutate(traceView: DataView) {
+        traceView.setInt32(100, -1, true);
+      },
+      name: "target completion index",
     },
     {
       mutate(traceView: DataView) {
@@ -250,6 +596,223 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       }).status,
     ).toBe("hit");
     expect(runtime.arenaCursor).toBe(retainedCursor);
+    context.dispose();
+  });
+
+  it("rejects a target index on a compact replay with no ordered targets", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 40);
+        const tracePointer = resultView.getUint32(24, true);
+        const traceCount = resultView.getUint32(28, true);
+        for (let index = 0; index < traceCount; index += 1) {
+          const traceView = new DataView(runtime.buffer, tracePointer + index * 200, 200);
+          if (traceView.getUint32(0, true) === 1) {
+            traceView.setInt32(100, 0, true);
+            break;
+          }
+        }
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
+    context.dispose();
+  });
+
+  it("rejects compact success when target completion and obstacle share one point", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 40);
+        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 200);
+        const targetHitIndex = traceView.getInt32(100, true);
+        traceView.setUint32(60, 1, true);
+        traceView.setFloat64(80, traceView.getFloat64(64, true), true);
+        traceView.setFloat64(88, traceView.getFloat64(72, true), true);
+        traceView.setInt32(96, 6, true);
+        traceView.setInt32(108, targetHitIndex, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
+    context.dispose();
+  });
+
+  it.each([
+    {
+      mutate(inputView: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = inputView.getUint32(44, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, 164);
+        const metadataPointer = evidenceView.getUint32(52, true);
+        const metadataView = new DataView(runtime.buffer, metadataPointer, 72);
+        metadataView.setFloat64(32, 1, true);
+        metadataView.setFloat64(56, metadataView.getFloat64(56, true) & ~1, true);
+      },
+      name: "absent launch metadata scalar",
+    },
+    {
+      mutate(inputView: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const valuesPointer = inputView.getUint32(0, true);
+        new DataView(runtime.buffer, valuesPointer, 14 * 8).setFloat64(9 * 8, -0, true);
+      },
+      name: "absent prefix-target negative zero",
+    },
+    {
+      mutate(inputView: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = inputView.getUint32(44, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, 164);
+        const valuesPointer = evidenceView.getUint32(12, true);
+        new DataView(runtime.buffer, valuesPointer, 7 * 8).setFloat64(6 * 8, -0, true);
+      },
+      name: "negative-zero identity proof",
+    },
+  ])("rejects malformed raw prefix evidence $name and restores the context mark", async ({ mutate }) => {
+    const fixture = createFixture("dy");
+    const { evidence, prefixTarget } = createCompatiblePrefixEvidence(fixture);
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+    const retainedCursor = runtime.arenaCursor;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      if (command === 11) {
+        mutate(new DataView(runtime.buffer, inputPointer, inputByteLength), runtime);
+      }
+      return runRouteTask(command, inputPointer, inputByteLength);
+    });
+
+    expect(() =>
+      createGraphwarWasmStepGlitchGeometryTestContext(
+        runtime,
+        createGraphwarWasmStepGlitchContextInput({
+          bounds: fixture.bounds,
+          boundsRect,
+          formulaMode: fixture.formulaMode,
+          prefixEvidence: evidence,
+          requiredTargets: [prefixTarget],
+          simulationMask: fixture.mask,
+          sourcePath: fixture.pixelPath.slice(0, 2),
+        }),
+      ),
+    ).toThrowError();
+    expect(runtime.arenaCursor).toBe(retainedCursor);
+  });
+
+  it("rejects noncanonical compact invalid-launch scalars", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 40);
+        resultView.setUint32(4, 0, true);
+        resultView.setUint32(12, 0, true);
+        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 200);
+        traceView.setUint32(40, 0, true);
+        traceView.setInt32(44, 0, true);
+        traceView.setUint32(48, 0, true);
+        traceView.setUint32(52, 0, true);
+        traceView.setUint32(56, 0, true);
+        traceView.setUint32(60, 0, true);
+        traceView.setFloat64(72, 0, true);
+        traceView.setFloat64(80, 0, true);
+        traceView.setFloat64(88, 0, true);
+        traceView.setInt32(96, 2, true);
+        traceView.setInt32(100, -1, true);
+        traceView.setInt32(104, -1, true);
+        traceView.setInt32(108, -1, true);
+        for (const offset of [112, 116, 120, 124, 128, 132, 184, 188]) {
+          traceView.setUint32(offset, 0, true);
+        }
+        for (const offset of [136, 144, 152, 160, 168, 176]) {
+          traceView.setFloat64(offset, 0, true);
+        }
+        // acceptedX intentionally retains the successful replay's nonzero value.
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
+    context.dispose();
+  });
+
+  it("rejects a compact result blocked X without its flag", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        new DataView(runtime.buffer, resultPointer, 40).setFloat64(32, 1, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
+    context.dispose();
+  });
+
+  it("rejects a command 17 hit whose target completes at the obstacle point", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 17) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 40);
+        const traceView = new DataView(runtime.buffer, resultView.getUint32(24, true), 200);
+        const lastPointIndex = traceView.getUint32(112, true) - 1;
+        traceView.setInt32(100, lastPointIndex, true);
+        traceView.setInt32(108, lastPointIndex, true);
+        traceView.setUint32(60, 1, true);
+        traceView.setInt32(96, 6, true);
+        traceView.setFloat64(80, traceView.getFloat64(136, true), true);
+        traceView.setFloat64(88, traceView.getFloat64(144, true), true);
+        resultView.setUint32(16, 1, true);
+        resultView.setFloat64(32, traceView.getFloat64(80, true), true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.traceRealDfsForTest({
+        hitTarget: { center: fixture.pixelPath[2], radius: 2 },
+        targetPoint: fixture.pixelPath[2],
+      }),
+    ).toThrowError();
+    spy.mockRestore();
     context.dispose();
   });
 
@@ -627,7 +1190,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
       const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
       if (command === 16) {
-        mutate(new DataView(runtime.buffer, resultPointer, 168));
+        mutate(new DataView(runtime.buffer, resultPointer, 180));
       }
       return resultPointer;
     });
@@ -668,7 +1231,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       if (command !== 16) {
         return resultPointer;
       }
-      const resultView = new DataView(runtime.buffer, resultPointer, 168);
+      const resultView = new DataView(runtime.buffer, resultPointer, 180);
       const trajectoryPointer = resultView.getUint32(8, true);
       const trajectoryView = new DataView(runtime.buffer, trajectoryPointer, 224);
       const pointXPointer = trajectoryView.getUint32(24, true);
@@ -729,7 +1292,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
       const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
       if (command === 16) {
-        const resultView = new DataView(runtime.buffer, resultPointer, 168);
+        const resultView = new DataView(runtime.buffer, resultPointer, 180);
         const trajectoryView = new DataView(runtime.buffer, resultView.getUint32(8, true), 224);
         const corruptedSampleIndex = resultView.getUint32(160, true) + 5;
         resultView.setUint32(160, corruptedSampleIndex, true);
@@ -768,7 +1331,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
       const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
       if (command === 16) {
-        new DataView(runtime.buffer, resultPointer, 168).setUint32(164, 1, true);
+        new DataView(runtime.buffer, resultPointer, 180).setUint32(164, 1, true);
       }
       return resultPointer;
     });
@@ -810,7 +1373,12 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
   });
 });
 
-function createFixture(equation: Extract<EquationMode, "ddy" | "dy">, mask = new Uint8Array(planeCellCount)) {
+function createFixture(
+  equation: Extract<EquationMode, "ddy" | "dy">,
+  mask = new Uint8Array(planeCellCount),
+  fixtureBounds = bounds,
+  pixelPath = graphPath.map((point) => graphToImagePoint(point, fixtureBounds, boundsRect)),
+) {
   const settings = {
     algorithm: "step",
     decimalPlaces: 4,
@@ -822,24 +1390,36 @@ function createFixture(equation: Extract<EquationMode, "ddy" | "dy">, mask = new
     stepGlitchObstacleMask: mask,
   } satisfies GraphwarTrajectoryFormulaSettings;
   return {
+    bounds: fixtureBounds,
     formulaMode: createGraphwarTrajectoryFormulaMode(settings),
     mask,
-    pixelPath: graphPath.map((point) => graphToImagePoint(point, bounds, boundsRect)),
+    pixelPath,
     requiredTargets: [] as readonly GraphwarTrajectoryTargetCircle[],
   };
 }
 
-async function createContext(fixture: ReturnType<typeof createFixture>) {
+async function createContext(
+  fixture: ReturnType<typeof createFixture>,
+  options?: {
+    prefixEvidence?: ReturnType<typeof createCompatiblePrefixEvidence>["evidence"];
+    prefixTarget?: GraphwarTrajectoryTargetCircle;
+    simulationBoundaryExpansion?: number;
+    sourcePath?: ReturnType<typeof createFixture>["pixelPath"];
+  },
+) {
   const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
   const result = createGraphwarWasmStepGlitchGeometryTestContext(
     runtime,
     createGraphwarWasmStepGlitchContextInput({
-      bounds,
+      bounds: fixture.bounds,
       boundsRect,
       formulaMode: fixture.formulaMode,
+      ...(options?.prefixEvidence ? { prefixEvidence: options.prefixEvidence } : {}),
+      ...(options?.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
       requiredTargets: fixture.requiredTargets,
+      simulationBoundaryExpansion: options?.simulationBoundaryExpansion,
       simulationMask: fixture.mask,
-      sourcePath: fixture.pixelPath.slice(0, 2),
+      sourcePath: options?.sourcePath ?? fixture.pixelPath.slice(0, 2),
     }),
   );
   expect(result.status).toBe("ready");
@@ -849,6 +1429,34 @@ async function createContext(fixture: ReturnType<typeof createFixture>) {
   return { context: result.context, runtime };
 }
 
+function createCompatiblePrefixEvidence(fixture: ReturnType<typeof createFixture>) {
+  const sourcePath = fixture.pixelPath.slice(0, 2);
+  const sourceGraphPath = sourcePath.map((point) => imageToGraphPoint(point, fixture.bounds, boundsRect));
+  const prefixResolution = resolveGraphwarTrajectory({
+    bounds: fixture.bounds,
+    boundsRect,
+    formulaMode: fixture.formulaMode,
+    points: sourceGraphPath,
+    soldierCenter: sourceGraphPath[0],
+  });
+  const formulaEvidence = prefixResolution.context.stepGlitchFormulaEvidence;
+  const acceptedPoint = prefixResolution.result.sample.points.at(-1);
+  const prefixTarget = { center: sourcePath[1], radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+  if (!formulaEvidence || !acceptedPoint) {
+    throw new Error("expected reusable Step-glitch prefix evidence");
+  }
+  return {
+    evidence: createGraphwarStepGlitchPrefixEvidence({
+      acceptedPoint,
+      formulaEvidence,
+      prefixTarget,
+      requiredTargets: fixture.requiredTargets,
+      simulationMask: fixture.mask,
+    }),
+    prefixTarget,
+  };
+}
+
 function resolveFixtureReplay(
   fixture: ReturnType<typeof createFixture>,
   controlX: number,
@@ -856,17 +1464,18 @@ function resolveFixtureReplay(
   windows: { type: "automatic" } | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" },
 ) {
   const debugMetrics = createGraphwarTrajectoryDebugMetrics();
+  const fixtureGraphPath = fixture.pixelPath.map((point) => imageToGraphPoint(point, fixture.bounds, boundsRect));
   const resolution = tryResolveGraphwarTrajectoryCandidate({
-    bounds,
+    bounds: fixture.bounds,
     boundsRect,
     collectVisiblePixels: true,
     collision: { boundaryExpansion: 0, mask: fixture.mask },
     continueAfterTargetsUntilGraphX: controlX,
     debugMetrics,
     formulaMode: fixture.formulaMode,
-    points: graphPath,
+    points: fixtureGraphPath,
     requiredTargets: fixture.requiredTargets,
-    soldierCenter: graphPath[0],
+    soldierCenter: fixtureGraphPath[0],
     ...(windows.type === "explicit" ? { stepGlitchXWindows: windows.segments } : {}),
     stopOnTargetsComplete: false,
     targetSequence: orderedTargets,

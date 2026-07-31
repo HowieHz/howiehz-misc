@@ -111,8 +111,14 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
       fixture.prefixTarget.x,
       fixture.prefixTarget.y,
       12,
+      1,
     ]);
     expect(copyGraphwarWasmBytes(arena, result.input.prefixEvidence.identityMask, 8)).toEqual(fixture.mask);
+    expect([...copyGraphwarWasmFloat64Values(arena, result.input.prefixEvidence.requiredTargetRecords, 8)]).toEqual([
+      fixture.prefixTarget.x,
+      fixture.prefixTarget.y,
+      12,
+    ]);
     expect(result.input.prefixEvidence.formulaEvidence.prefix.points.length).toBe(2);
     expect(result.input.prefixEvidence.formulaEvidence.prefix.stepGlitchRequirements.length).toBe(1);
     expect(result.input.formulaSettings.mask.type).toBe("context-mask");
@@ -504,6 +510,7 @@ function createFixture() {
     acceptedPoint: createGraphPoint(-8.5, 0),
     formulaEvidence,
     prefixTarget: { center: prefixTarget, radius: 12 },
+    requiredTargets: [{ center: prefixTarget, radius: 12 }],
     simulationBoundaryExpansion: 2,
     simulationMask: mask,
   });
@@ -544,6 +551,7 @@ function createBoundaryFixture(equation: "ddy" | "dy", state: GraphwarTrajectory
     acceptedPoint: existingEvidence.acceptedPoint,
     formulaEvidence,
     prefixTarget: existingEvidence.replayIdentity.prefixTarget,
+    requiredTargets: existingEvidence.replayIdentity.requiredTargets,
     simulationBoundaryExpansion: existingEvidence.replayIdentity.boundaryExpansion,
     simulationMask: existingEvidence.replayIdentity.simulationMask,
   });

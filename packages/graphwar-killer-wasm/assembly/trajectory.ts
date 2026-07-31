@@ -188,6 +188,10 @@ import {
   TRAJECTORY_EVIDENCE_REACHED_ORDERED_COUNT_OFFSET,
   TRAJECTORY_EVIDENCE_REACHED_REQUIRED_COUNT_OFFSET,
   TRAJECTORY_EVIDENCE_SAMPLE_INDEX_OFFSET,
+  TRAJECTORY_FINAL_COUNTER_BISECTION_COUNT_OFFSET,
+  TRAJECTORY_FINAL_COUNTER_ACCEPTED_SAMPLE_COUNT_OFFSET,
+  TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH,
+  TRAJECTORY_FINAL_COUNTER_RK4_STEP_COUNT_OFFSET,
 } from "./trajectory-layout";
 
 function trap(): void {
@@ -197,11 +201,11 @@ function trap(): void {
 /** Runs launch preparation and the complete scalar trajectory in one raw command. */
 export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
-  return runTrajectoryRequest(inputPointer, inputByteLength);
+  return runTrajectoryRequest(inputPointer, inputByteLength, 0);
 }
 
-/** Executes one complete raw request after the owning command has established arena preconditions. */
-export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32): u32 {
+/** Executes one complete raw request and optionally reports only the final stable scalar replay counters. */
+export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32, finalCounterPointer: u32): u32 {
   if (inputPointer == 0 && inputByteLength == 0) {
     return 0;
   }
@@ -210,6 +214,10 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32): u
     trap();
   }
   requireArenaRange(inputPointer, TRAJECTORY_INPUT_BYTE_LENGTH, sizeof<u64>());
+  if (finalCounterPointer != 0) {
+    requireArenaRange(finalCounterPointer, TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH, sizeof<u32>());
+    memory.fill(finalCounterPointer, 0, TRAJECTORY_FINAL_COUNTER_BYTE_LENGTH);
+  }
   if (TRAJECTORY_INPUT_FORMULA_BYTE_LENGTH != 176) {
     trap();
   }
@@ -464,6 +472,20 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32): u
     return resultPointer;
   }
 
+  // Java's Function counters start after launch preparation and cover only its final integration loop.
+  const finalAttemptRk4Start = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_RK4_STEP_COUNT_FIELD_OFFSET,
+  );
+  const finalAttemptBisectionStart = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_BISECTION_COUNT_FIELD_OFFSET,
+  );
+  const finalAttemptAcceptedSampleStart = getTrajectoryDebugCounter(
+    debugCounterPointer,
+    TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_FIELD_OFFSET,
+  );
+
   const maximumSampleCount = getGraphwarFuncMaxSteps();
   const requestedPointCapacity = load<u32>(inputPointer + TRAJECTORY_INPUT_MAX_OUTPUT_POINTS_OFFSET);
   const pointCapacity = requestedPointCapacity == 0 ? maximumSampleCount : requestedPointCapacity;
@@ -628,6 +650,37 @@ export function runTrajectoryRequest(inputPointer: u32, inputByteLength: u32): u
     canUseContinuation = false;
     resetArena(attemptMark);
     continue;
+  }
+
+  if (finalCounterPointer != 0) {
+    const finalRk4StepCount =
+      getTrajectoryDebugCounter(debugCounterPointer, TRAJECTORY_DEBUG_RK4_STEP_COUNT_FIELD_OFFSET) -
+      finalAttemptRk4Start;
+    const finalBisectionCount =
+      getTrajectoryDebugCounter(debugCounterPointer, TRAJECTORY_DEBUG_BISECTION_COUNT_FIELD_OFFSET) -
+      finalAttemptBisectionStart;
+    const finalAcceptedSamplePointCount =
+      getTrajectoryDebugCounter(debugCounterPointer, TRAJECTORY_DEBUG_ACCEPTED_SAMPLE_POINT_COUNT_FIELD_OFFSET) -
+      finalAttemptAcceptedSampleStart;
+    if (
+      finalRk4StepCount > 0xffff_ffff ||
+      finalBisectionCount > 0xffff_ffff ||
+      finalAcceptedSamplePointCount > 0xffff_ffff
+    ) {
+      trap();
+    }
+    store<u32>(
+      finalCounterPointer + TRAJECTORY_FINAL_COUNTER_RK4_STEP_COUNT_OFFSET,
+      <u32>finalRk4StepCount,
+    );
+    store<u32>(
+      finalCounterPointer + TRAJECTORY_FINAL_COUNTER_BISECTION_COUNT_OFFSET,
+      <u32>finalBisectionCount,
+    );
+    store<u32>(
+      finalCounterPointer + TRAJECTORY_FINAL_COUNTER_ACCEPTED_SAMPLE_COUNT_OFFSET,
+      <u32>finalAcceptedSamplePointCount,
+    );
   }
 
   const stablePointCount = load<u32>(pointCountPointer);

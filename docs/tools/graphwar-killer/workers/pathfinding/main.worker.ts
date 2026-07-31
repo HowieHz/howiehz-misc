@@ -21,7 +21,7 @@ import {
 } from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
-import { createGraphPoint, type GraphBounds, type PixelPoint } from "../../core/types";
+import type { GraphBounds, PixelPoint } from "../../core/types";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
@@ -793,6 +793,7 @@ function findStepGlitchSmartPath(
     acceptedPoint: scanResult.acceptedPoint,
     formulaEvidence: scanResult.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
     prefixTarget: input.hitTarget,
+    requiredTargets: [],
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
   });
@@ -861,6 +862,7 @@ function optimizeStepGlitchSmartPath(
       acceptedPoint: replay.acceptedPoint,
       formulaEvidence: replay.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
       prefixTarget: target,
+      requiredTargets: [],
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,
     });
@@ -891,21 +893,22 @@ function getMasterStepGlitchEvidence(
     return undefined;
   }
   const key = createMasterStepGlitchEvidenceKey(input, path, prefixTarget);
-  return masterStepGlitchEvidence.key === key
-    ? {
-        acceptedPoint: createGraphPoint(
-          masterStepGlitchEvidence.acceptedPoint.x,
-          masterStepGlitchEvidence.acceptedPoint.y,
-        ),
-        formulaEvidence: {
-          prefix: {
-            ...masterStepGlitchEvidence.formulaEvidence.prefix,
-            settings: input.settings,
-          },
-        },
-        replayIdentity: masterStepGlitchEvidence.replayIdentity,
-      }
-    : undefined;
+  if (masterStepGlitchEvidence.key !== key) {
+    return undefined;
+  }
+  return createGraphwarStepGlitchPrefixEvidence({
+    acceptedPoint: masterStepGlitchEvidence.acceptedPoint,
+    formulaEvidence: {
+      prefix: {
+        ...masterStepGlitchEvidence.formulaEvidence.prefix,
+        settings: input.settings,
+      },
+    },
+    prefixTarget: masterStepGlitchEvidence.replayIdentity.prefixTarget,
+    requiredTargets: [],
+    simulationBoundaryExpansion: masterStepGlitchEvidence.replayIdentity.boundaryExpansion,
+    simulationMask: masterStepGlitchEvidence.replayIdentity.simulationMask,
+  });
 }
 
 /** 保存最近一条完整验证成功的邪道路径证据；下一次写入直接替换旧证据。 */
@@ -917,12 +920,18 @@ function setMasterStepGlitchEvidence(
   if (!isMasterStepGlitchEvidenceEnabled(input)) {
     return;
   }
-  masterStepGlitchEvidence = {
-    acceptedPoint: createGraphPoint(prefixEvidence.acceptedPoint.x, prefixEvidence.acceptedPoint.y),
-    // Master 只缓存 prefix-only 分支，局部 RK4 boundary 不跨 job。
+  const prefixOnlyEvidence = createGraphwarStepGlitchPrefixEvidence({
+    acceptedPoint: prefixEvidence.acceptedPoint,
+    // Master 只缓存 prefix-only 分支，局部 RK4 boundary 和历史 required targets 不跨 job。
     formulaEvidence: { prefix: prefixEvidence.formulaEvidence.prefix },
+    prefixTarget: prefixEvidence.replayIdentity.prefixTarget,
+    requiredTargets: [],
+    simulationBoundaryExpansion: prefixEvidence.replayIdentity.boundaryExpansion,
+    simulationMask: prefixEvidence.replayIdentity.simulationMask,
+  });
+  masterStepGlitchEvidence = {
+    ...prefixOnlyEvidence,
     key: createMasterStepGlitchEvidenceKey(input, path, prefixEvidence.replayIdentity.prefixTarget),
-    replayIdentity: prefixEvidence.replayIdentity,
   };
 }
 

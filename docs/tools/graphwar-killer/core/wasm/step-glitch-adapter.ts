@@ -20,6 +20,10 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import {
+  graphwarStepGlitchPrefixEvidenceHasValidIdentity,
+  graphwarStepGlitchPrefixEvidenceMatchesContext,
+} from "../../pathfinding/routing/step-glitch-scan";
 import type {
   GraphwarStepGlitchPrefixEvidence,
   GraphwarStepGlitchPrefixOptions,
@@ -68,7 +72,7 @@ const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
 const STEP_GLITCH_CONTEXT_FLAG_MIRRORED = 1;
-const STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH = 156;
+const STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH = 164;
 const STEP_GLITCH_PLANE_CELL_COUNT = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 const STEP_GLITCH_TRACE_INPUT_BYTE_LENGTH = 48;
 const STEP_GLITCH_TRACE_RESULT_BYTE_LENGTH = 40;
@@ -85,13 +89,16 @@ const STEP_GLITCH_DFS_RESULT_MAGIC = 0x5347_4452;
 const STEP_GLITCH_FORMULA_INPUT_BYTE_LENGTH = 32;
 const STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH = 24;
 const STEP_GLITCH_REPLAY_INPUT_BYTE_LENGTH = 48;
-const STEP_GLITCH_REPLAY_RESULT_BYTE_LENGTH = 168;
+const STEP_GLITCH_REPLAY_RESULT_BYTE_LENGTH = 180;
 const STEP_GLITCH_REPLAY_RESULT_MAGIC = 0x5347_5252;
 const STEP_GLITCH_REAL_DFS_INPUT_BYTE_LENGTH = 16;
 const STEP_GLITCH_REAL_DFS_TARGET_VALUE_COUNT = 5;
 const STEP_GLITCH_REAL_DFS_RESULT_BYTE_LENGTH = 40;
 const STEP_GLITCH_REAL_DFS_RESULT_MAGIC = 0x5347_5244;
 const STEP_GLITCH_REAL_DFS_TRACE_BYTE_LENGTH = 200;
+const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_NONE = 0;
+const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD = 1;
+const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE = 2;
 
 /** WASM context 永远显式携带 evidence 分支，避免存在性被拆成多份可选字段。 */
 export type GraphwarWasmStepGlitchPrefixEvidenceInput =
@@ -194,6 +201,7 @@ export type GraphwarWasmPackedStepGlitchPrefixEvidence =
   | {
       formulaEvidence: GraphwarWasmPackedStepGlitchFormulaEvidence;
       identityMask: GraphwarWasmMemorySlice;
+      requiredTargetRecords: GraphwarWasmMemorySlice;
       values: GraphwarWasmMemorySlice;
       type: "candidate";
     };
@@ -292,6 +300,7 @@ export interface GraphwarWasmStepGlitchRealDfsTestTrace {
     windows: { type: "automatic" } | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
   }[];
   expandedStates: number;
+  prefixPreparation: "cold" | "evidence" | "none";
   status: "hit" | "no-path";
 }
 
@@ -332,6 +341,9 @@ export type GraphwarWasmStepGlitchRealReplayTestOutput =
   | {
       acceptedSamplePointCount: number;
       bisectionCount: number;
+      finalAcceptedSamplePointCount: number;
+      finalBisectionCount: number;
+      finalRk4StepCount: number;
       launchStatus: "invalid";
       minStepJumpCount: number;
       observedSignProtection: readonly number[];
@@ -347,10 +359,15 @@ export type GraphwarWasmStepGlitchRealReplayTestOutput =
       acceptedSamplePointCount: number;
       bisectionCount: number;
       blockedPoint?: GraphPoint;
+      finalAcceptedSamplePointCount: number;
+      finalBisectionCount: number;
+      finalRk4StepCount: number;
+      initialDy: number;
       launchStatus: "success";
       minStepJumpCount: number;
       obstacleHitIndex: number;
       observedSignProtection: readonly number[];
+      pointDys: readonly number[];
       points: readonly GraphPoint[];
       reachedRequiredTargetCount: number;
       reachedTargetCount: number;
@@ -641,6 +658,20 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
             radius: input.prefixTarget.target.radius,
           }
         : undefined;
+    const canReusePrefixEvidence =
+      input.prefixEvidence.type === "candidate" &&
+      graphwarStepGlitchPrefixEvidenceMatchesContext(
+        {
+          bounds: boundsSnapshot,
+          formulaMode: input.formulaMode,
+          graphPoints: sourcePathSnapshot.map((point) => imageToGraphPoint(point, boundsSnapshot, boundsRectSnapshot)),
+          ...(prefixTargetSnapshot ? { prefixTarget: prefixTargetSnapshot } : {}),
+          requiredTargets: requiredTargetsSnapshot,
+          simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+          simulationMask: input.simulationMask,
+        },
+        input.prefixEvidence.evidence,
+      );
     const packed = packedResult.input;
     const prefixEvidenceDescriptor = writePrefixEvidenceDescriptor(runtime, packed.prefixEvidence);
     const inputPointer = runtime.reserveArena(STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH, 4);
@@ -791,6 +822,7 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
             sourcePathSnapshot,
             requiredTargetsSnapshot,
             prefixTargetSnapshot,
+            canReusePrefixEvidence,
             dfsInput,
           );
         },
@@ -1045,6 +1077,19 @@ function replayGraphwarWasmStepGlitchCandidate(
     const minStepJumpCount = validateGraphwarWasmU32(replayView.getUint32(92, true), "replay.minStepJumpCount");
     const replayCount = validateGraphwarWasmU32(replayView.getUint32(100, true), "replay.replayCount");
     const rk4StepCount = validateGraphwarWasmU32(replayView.getUint32(84, true), "replay.rk4StepCount");
+    const finalRk4StepCount = validateGraphwarWasmU32(replayView.getUint32(168, true), "replay.finalRk4StepCount");
+    const finalBisectionCount = validateGraphwarWasmU32(replayView.getUint32(172, true), "replay.finalBisectionCount");
+    const finalAcceptedSamplePointCount = validateGraphwarWasmU32(
+      replayView.getUint32(176, true),
+      "replay.finalAcceptedSamplePointCount",
+    );
+    if (
+      finalRk4StepCount > rk4StepCount ||
+      finalBisectionCount > bisectionCount ||
+      finalAcceptedSamplePointCount > acceptedSamplePointCount
+    ) {
+      throwGraphwarWasmStepGlitchReplayResultError("Final Step-glitch counters exceed their command aggregates");
+    }
     const protectionCount = validateGraphwarWasmU32(replayView.getUint32(108, true), "replay.protectionCount");
     if (protectionCount !== input.path.length - 1) {
       throwGraphwarWasmStepGlitchReplayResultError("Graphwar WASM Step-glitch replay protection length differs");
@@ -1089,13 +1134,19 @@ function replayGraphwarWasmStepGlitchCandidate(
         targetHitIndex !== -1 ||
         requiredTargetsHitIndex !== -1 ||
         obstacleHitIndex !== -1 ||
-        stateFlags !== 0
+        stateFlags !== 0 ||
+        finalAcceptedSamplePointCount !== 0 ||
+        finalRk4StepCount !== 0 ||
+        finalBisectionCount !== 0
       ) {
         throwGraphwarWasmStepGlitchReplayResultError("Invalid launch replay contains physical output");
       }
       const result = {
         acceptedSamplePointCount,
         bisectionCount,
+        finalAcceptedSamplePointCount,
+        finalBisectionCount,
+        finalRk4StepCount,
         launchStatus: "invalid",
         minStepJumpCount,
         observedSignProtection,
@@ -1144,6 +1195,12 @@ function replayGraphwarWasmStepGlitchCandidate(
           validateGraphwarWasmFiniteNumber(pointYs[index], `replay.points[${index}].y`),
         ),
       );
+    }
+    const initialDy = trajectoryView.getFloat64(80, true);
+    if (settings.equation === "ddy") {
+      validateGraphwarWasmFiniteNumber(initialDy, "replay.initialDy");
+    } else if (!Object.is(initialDy, 0)) {
+      throwGraphwarWasmStepGlitchReplayResultError("First-order replay contains a second-order initial derivative");
     }
     const visiblePointCount = validateGraphwarWasmU32(trajectoryView.getUint32(152, true), "replay.visiblePointCount");
     if (visiblePointCount !== pointCount) {
@@ -1405,10 +1462,15 @@ function replayGraphwarWasmStepGlitchCandidate(
       acceptedSamplePointCount,
       bisectionCount,
       ...(blockedPoint ? { blockedPoint } : {}),
+      finalAcceptedSamplePointCount,
+      finalBisectionCount,
+      finalRk4StepCount,
+      initialDy,
       launchStatus: "success",
       minStepJumpCount,
       obstacleHitIndex,
       observedSignProtection,
+      pointDys: [...pointDys],
       points,
       reachedRequiredTargetCount,
       reachedTargetCount,
@@ -1438,6 +1500,7 @@ function traceGraphwarWasmStepGlitchRealDfs(
   sourcePath: readonly PixelPoint[],
   requiredTargets: readonly GraphwarTrajectoryTargetCircle[],
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
+  canReusePrefixEvidence: boolean,
   input: GraphwarWasmStepGlitchRealDfsTestInput,
 ): GraphwarWasmStepGlitchRealDfsTestTrace {
   if (!targetIsValid(input.hitTarget) || !isGraphwarTrajectoryPoint(input.targetPoint)) {
@@ -1491,7 +1554,15 @@ function traceGraphwarWasmStepGlitchRealDfs(
       },
     );
     const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
-    if (resultView.getUint32(0, true) !== STEP_GLITCH_REAL_DFS_RESULT_MAGIC || resultView.getUint32(20, true) !== 0) {
+    const prefixPreparationValue = resultView.getUint32(20, true);
+    if (
+      resultView.getUint32(0, true) !== STEP_GLITCH_REAL_DFS_RESULT_MAGIC ||
+      ![
+        STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_NONE,
+        STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD,
+        STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE,
+      ].includes(prefixPreparationValue)
+    ) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
         "Real Step-glitch DFS result header is invalid",
@@ -1747,6 +1818,11 @@ function traceGraphwarWasmStepGlitchRealDfs(
                 );
               }
               const hasObstacleHit = obstacleHitIndex >= 0;
+              const hasCompletedOrderedTargets =
+                expectedOrderedTargetCount > 0 && reachedTargetCount === expectedOrderedTargetCount;
+              const hasCompletedRequiredTargets =
+                requiredTargets.length > 0 && reachedRequiredTargetCount === requiredTargets.length;
+              const targetCompletionIndex = Math.max(targetHitIndex, requiredTargetsHitIndex);
               if (
                 targetHitIndex < -1 ||
                 targetHitIndex >= pointCount ||
@@ -1754,11 +1830,17 @@ function traceGraphwarWasmStepGlitchRealDfs(
                 requiredTargetsHitIndex >= pointCount ||
                 obstacleHitIndex < -1 ||
                 obstacleHitIndex >= pointCount ||
+                targetHitIndex >= 0 !== hasCompletedOrderedTargets ||
+                requiredTargetsHitIndex >= 0 !== hasCompletedRequiredTargets ||
                 (replayStatus === 1) !== (acceptedFlag === 1) ||
                 (replayStatus === 1 &&
                   (reachedTargetCount !== expectedOrderedTargetCount ||
                     reachedRequiredTargetCount !== requiredTargets.length ||
                     acceptedFlag !== 1)) ||
+                (replayStatus === 1 &&
+                  hasObstacleHit &&
+                  (expectedOrderedTargetCount > 0 || requiredTargets.length > 0) &&
+                  targetCompletionIndex >= obstacleHitIndex) ||
                 hasObstacleHit !== (blockedFlag === 1) ||
                 hasObstacleHit !== (stopReason === 6) ||
                 (hasObstacleHit && obstacleHitIndex !== pointCount - 1) ||
@@ -1772,11 +1854,16 @@ function traceGraphwarWasmStepGlitchRealDfs(
                   "output",
                 );
               }
+              const sampleIndex = validateGraphwarWasmU32(
+                traceView.getUint32(offset + 184, true),
+                "realDfs.replay.sampleIndex",
+              );
               const stateFlags = traceView.getUint32(offset + 188, true);
+              const hasPreviousPoint = sampleIndex > 0;
               const expectedStateFlags =
-                (stateFlags & 1) |
+                (hasPreviousPoint ? 1 : 0) |
                 (settings.equation === "ddy" ? 2 : 0) |
-                ((stateFlags & 1) !== 0 && settings.equation === "ddy" ? 4 : 0);
+                (hasPreviousPoint && settings.equation === "ddy" ? 4 : 0);
               if (stateFlags !== expectedStateFlags) {
                 throw new GraphwarWasmAdapterError(
                   "invalid-session-state",
@@ -1784,37 +1871,33 @@ function traceGraphwarWasmStepGlitchRealDfs(
                   "output",
                 );
               }
-              const hasPreviousPoint = (stateFlags & 1) !== 0;
+              const currentX = traceView.getFloat64(offset + 136, true);
+              const currentY = traceView.getFloat64(offset + 144, true);
+              const currentDy = traceView.getFloat64(offset + 152, true);
+              const previousX = traceView.getFloat64(offset + 160, true);
+              const previousY = traceView.getFloat64(offset + 168, true);
+              const previousDy = traceView.getFloat64(offset + 176, true);
+              if (
+                (!hasPreviousPoint && (!Object.is(previousX, 0) || !Object.is(previousY, 0))) ||
+                (settings.equation !== "ddy" && (!Object.is(currentDy, 0) || !Object.is(previousDy, 0))) ||
+                (settings.equation === "ddy" && !hasPreviousPoint && !Object.is(previousDy, 0))
+              ) {
+                throw new GraphwarWasmAdapterError(
+                  "invalid-session-state",
+                  "Real Step-glitch DFS terminal state contains scalars without their flags",
+                  "output",
+                );
+              }
               const currentPoint = createGraphPoint(
-                validateGraphwarWasmFiniteNumber(
-                  traceView.getFloat64(offset + 136, true),
-                  "realDfs.replay.currentX",
-                  "output",
-                ),
-                validateGraphwarWasmFiniteNumber(
-                  traceView.getFloat64(offset + 144, true),
-                  "realDfs.replay.currentY",
-                  "output",
-                ),
+                validateGraphwarWasmFiniteNumber(currentX, "realDfs.replay.currentX", "output"),
+                validateGraphwarWasmFiniteNumber(currentY, "realDfs.replay.currentY", "output"),
               );
               const previousPoint = hasPreviousPoint
                 ? createGraphPoint(
-                    validateGraphwarWasmFiniteNumber(
-                      traceView.getFloat64(offset + 160, true),
-                      "realDfs.replay.previousX",
-                      "output",
-                    ),
-                    validateGraphwarWasmFiniteNumber(
-                      traceView.getFloat64(offset + 168, true),
-                      "realDfs.replay.previousY",
-                      "output",
-                    ),
+                    validateGraphwarWasmFiniteNumber(previousX, "realDfs.replay.previousX", "output"),
+                    validateGraphwarWasmFiniteNumber(previousY, "realDfs.replay.previousY", "output"),
                   )
                 : undefined;
-              const sampleIndex = validateGraphwarWasmU32(
-                traceView.getUint32(offset + 184, true),
-                "realDfs.replay.sampleIndex",
-              );
               if (sampleIndex !== (stopReason === 4 ? pointCount : pointCount - 1)) {
                 throw new GraphwarWasmAdapterError(
                   "invalid-session-state",
@@ -1826,15 +1909,11 @@ function traceGraphwarWasmStepGlitchRealDfs(
                 settings.equation === "ddy"
                   ? {
                       currentPoint,
-                      dy: validateGraphwarWasmFiniteNumber(
-                        traceView.getFloat64(offset + 152, true),
-                        "realDfs.replay.currentDy",
-                        "output",
-                      ),
+                      dy: validateGraphwarWasmFiniteNumber(currentDy, "realDfs.replay.currentDy", "output"),
                       ...(previousPoint
                         ? {
                             previousDy: validateGraphwarWasmFiniteNumber(
-                              traceView.getFloat64(offset + 176, true),
+                              previousDy,
                               "realDfs.replay.previousDy",
                               "output",
                             ),
@@ -1884,6 +1963,7 @@ function traceGraphwarWasmStepGlitchRealDfs(
       if (
         launchStatus === 0 &&
         (replayStatus !== 0 ||
+          stopReason !== 2 ||
           acceptedFlag !== 0 ||
           blockedFlag !== 0 ||
           pointCount !== 0 ||
@@ -1892,6 +1972,17 @@ function traceGraphwarWasmStepGlitchRealDfs(
           targetHitIndex !== -1 ||
           requiredTargetsHitIndex !== -1 ||
           obstacleHitIndex !== -1 ||
+          !Object.is(acceptedX, 0) ||
+          !Object.is(acceptedY, 0) ||
+          !Object.is(blockedX, 0) ||
+          !Object.is(blockedY, 0) ||
+          !Object.is(traceView.getFloat64(offset + 136, true), 0) ||
+          !Object.is(traceView.getFloat64(offset + 144, true), 0) ||
+          !Object.is(traceView.getFloat64(offset + 152, true), 0) ||
+          !Object.is(traceView.getFloat64(offset + 160, true), 0) ||
+          !Object.is(traceView.getFloat64(offset + 168, true), 0) ||
+          !Object.is(traceView.getFloat64(offset + 176, true), 0) ||
+          traceView.getUint32(offset + 184, true) !== 0 ||
           traceView.getUint32(offset + 188, true) !== 0)
       ) {
         throw new GraphwarWasmAdapterError(
@@ -1916,6 +2007,24 @@ function traceGraphwarWasmStepGlitchRealDfs(
         windows,
       });
     }
+    if (prefixPreparationValue === STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE) {
+      expectedBestReachedTargetCount = Math.max(
+        expectedBestReachedTargetCount,
+        requiredTargets.length + (prefixTarget ? 1 : 0),
+      );
+    }
+    const hasPrefixTrace = candidates.some((candidate) => candidate.kind === "prefix");
+    if (
+      (prefixPreparationValue === STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD) !== hasPrefixTrace ||
+      (prefixPreparationValue === STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE &&
+        (hasPrefixTrace || !canReusePrefixEvidence))
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Real Step-glitch DFS prefix preparation source disagrees with its trace",
+        "output",
+      );
+    }
     const expandedStates = validateGraphwarWasmU32(resultView.getUint32(8, true), "realDfs.expandedStates");
     const expectedExpandedStates = candidates.filter((candidate) => candidate.kind !== "prefix").length;
     if (
@@ -1923,7 +2032,7 @@ function traceGraphwarWasmStepGlitchRealDfs(
       validateGraphwarWasmU32(resultView.getUint32(12, true), "realDfs.bestReachedTargetCount") !==
         expectedBestReachedTargetCount ||
       (expectedBlockedX === undefined
-        ? resultView.getUint32(16, true) !== 0
+        ? resultView.getUint32(16, true) !== 0 || !Object.is(resultView.getFloat64(32, true), 0)
         : resultView.getUint32(16, true) !== 1 || !Object.is(resultView.getFloat64(32, true), expectedBlockedX)) ||
       (resultStatus === 1 && candidates.at(-1)?.kind !== "direct" && candidates.at(-1)?.kind !== "target") ||
       (resultStatus === 1 && candidates.at(-1)?.replay.status !== "hit") ||
@@ -1938,11 +2047,18 @@ function traceGraphwarWasmStepGlitchRealDfs(
       );
     }
     runtime.resetArena(commandMark);
+    const prefixPreparation =
+      prefixPreparationValue === STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE
+        ? "evidence"
+        : prefixPreparationValue === STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD
+          ? "cold"
+          : "none";
     return {
       bestReachedTargetCount: expectedBestReachedTargetCount,
       ...(expectedBlockedX === undefined ? {} : { blockedX: expectedBlockedX }),
       candidates,
       expandedStates,
+      prefixPreparation,
       status: resultStatus === 1 ? "hit" : "no-path",
     };
   } catch (error) {
@@ -2560,6 +2676,8 @@ function writePrefixEvidenceDescriptor(
     prefix.stepSegmentDeltaYs.values.length,
     prefix.stepSegmentDeltaYs.presence.pointer,
     prefix.stepSegmentDeltaYs.presence.length,
+    evidence.requiredTargetRecords.pointer,
+    evidence.requiredTargetRecords.length,
   ];
   for (let index = 0; index < fields.length; index += 1) {
     view.setUint32(index * 4, fields[index], true);
@@ -2687,6 +2805,7 @@ function packPrefixEvidence(
   return {
     formulaEvidence: packFormulaEvidence(arena, evidence.formulaEvidence, identity.simulationMask, minimumPointer),
     identityMask: packGraphwarPlaneMask(arena, identity.simulationMask, minimumPointer),
+    requiredTargetRecords: packTargets(arena, identity.requiredTargets, minimumPointer),
     type: "candidate",
     values: writeGraphwarWasmFloat64Values(
       arena,
@@ -2705,6 +2824,7 @@ function packPrefixEvidence(
           "input",
         ),
         validateNonNegativeFiniteNumber(identity.prefixTarget.radius, "prefixEvidence.prefixTarget.radius"),
+        graphwarStepGlitchPrefixEvidenceHasValidIdentity(evidence) ? 1 : 0,
       ]),
       minimumPointer,
     ),

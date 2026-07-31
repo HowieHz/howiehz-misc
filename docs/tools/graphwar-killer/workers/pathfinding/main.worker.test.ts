@@ -38,14 +38,17 @@ vi.mock("../../pathfinding/routing/step-glitch-scan", () => ({
       acceptedPoint: ReturnType<typeof createGraphPoint>;
       formulaEvidence: GraphwarStepGlitchPrefixEvidence["formulaEvidence"];
       prefixTarget: GraphwarStepGlitchPrefixEvidence["replayIdentity"]["prefixTarget"];
+      requiredTargets: GraphwarStepGlitchPrefixEvidence["replayIdentity"]["requiredTargets"];
       simulationBoundaryExpansion?: number;
       simulationMask: Uint8Array;
     }) => ({
       acceptedPoint: createGraphPoint(options.acceptedPoint.x, options.acceptedPoint.y),
+      evidenceIdentity: { canonical: "mock-prefix-evidence", simulationMask: options.simulationMask.slice() },
       formulaEvidence: options.formulaEvidence,
       replayIdentity: {
         boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
         prefixTarget: options.prefixTarget,
+        requiredTargets: options.requiredTargets,
         simulationMask: options.simulationMask.slice(),
       },
     }),
@@ -273,10 +276,15 @@ describe("Anytime one-click-clear progress", () => {
           path: adoptedPath,
           prefixEvidence: {
             acceptedPoint: createGraphPoint(-5, 1),
+            evidenceIdentity: {
+              canonical: "mock-prefix-evidence",
+              simulationMask: input.simulationMask?.slice() ?? new Uint8Array(),
+            },
             formulaEvidence: { prefix: createMockStepGlitchFormulaPrefix() },
             replayIdentity: {
               boundaryExpansion: input.simulationBoundaryExpansion,
               prefixTarget,
+              requiredTargets: [{ center: input.pathPoints[0] ?? targetPoint, radius: 7 }],
               simulationMask: input.simulationMask?.slice() ?? new Uint8Array(),
             },
           },
@@ -286,6 +294,7 @@ describe("Anytime one-click-clear progress", () => {
       })
       .mockImplementationOnce(async (options: GraphwarOneClickClearBuildOptions) => {
         expect(options.stepGlitchPrefixEvidence).toMatchObject({ acceptedPoint: createGraphPoint(-5, 1) });
+        expect(options.stepGlitchPrefixEvidence?.replayIdentity.requiredTargets).toEqual([]);
         return { elapsedMs: 1, expandedStates: 0, reason: "no-candidate", type: "failure" as const };
       });
 

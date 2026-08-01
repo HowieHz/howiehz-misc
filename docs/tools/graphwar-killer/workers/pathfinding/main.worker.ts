@@ -22,7 +22,7 @@ import {
 } from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
-import { createPixelPoint } from "../../core/types";
+import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { GraphBounds, PixelPoint } from "../../core/types";
 import { runGraphwarWasmSmartPathfinding } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext, type GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
@@ -1009,7 +1009,13 @@ export function findStepGlitchSmartPathWithWasm(
     if (composed.status !== "success") {
       return {
         ...(composed.blockedPoint
-          ? { blockedPoint: graphToImagePoint(composed.blockedPoint, input.bounds, input.boundsRect) }
+          ? {
+              blockedPoint: graphToImagePoint(
+                createGraphPoint(composed.blockedPoint.x, composed.blockedPoint.y),
+                input.bounds,
+                input.boundsRect,
+              ),
+            }
           : {}),
         failureReason: mapWasmSmartFailureReason(composed.failureReason),
         timings,

@@ -1,11 +1,18 @@
 /** 在当前 Graphwar 路径后追加一键清图路线；几何建路点和弹道命中圈分开建模。 */
 import { GraphwarWasmFault, isGraphwarWasmFault } from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual } from "../../core/geometry";
+import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual, xPlusGoesRight } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { nowMs } from "../../core/time";
-import { clonePixelPoint } from "../../core/types";
+import { clonePixelPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
+import {
+  beginGraphwarWasmOneClickClear,
+  type GraphwarWasmOneClickClearResult,
+  type GraphwarWasmOneClickEdgeResult,
+  type GraphwarWasmOneClickSession,
+} from "../../core/wasm/composition-adapter";
 import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
   createGraphwarWasmStepGlitchContext,
@@ -264,6 +271,10 @@ export interface GraphwarOneClickClearOptions {
   prefixTarget?: GraphwarTrajectoryTargetCircle;
   /** 一键清图单值几何路线 mask。 */
   routeMask: GraphwarOneClickClearRouteMask;
+  /** 页面侧 route mask 的稳定身份，仅用于路线缓存。 */
+  routeMaskCacheId?: number;
+  /** 独立的 outer-task nonce；直接单测调用方可省略并使用本地回退值。 */
+  wasmRequestNonce?: number;
   /** 几何路线算法模式；DAG 建边和普通寻路保持一致。 */
   routeMode: GraphwarPathfindingRouteMode;
   /** 函数模拟用障碍 mask。 */
@@ -392,6 +403,8 @@ interface OneClickClearDag {
   outgoingEdges: Map<number, OneClickClearDagEdge[]>;
   /** 按建路目标 x 排序后的目标。 */
   targets: OneClickClearTarget[];
+  /** Stable edge ids selected by the WASM composition core before formula validation. */
+  preferredEdgeIds?: readonly number[];
 }
 
 /** 到达某个 DAG 节点的当前最佳累计路径。 */
@@ -688,7 +701,7 @@ async function buildOneClickClearDagPath(
       buildOneClickClearDag(context, targets),
     );
   } catch (error) {
-    if (isGraphwarWasmFault(error)) {
+    if (isGraphwarWasmFault(error) || error instanceof GraphwarWasmAdapterError) {
       throw error;
     }
     return createOneClickClearFailure(
@@ -1389,9 +1402,11 @@ async function buildOneClickClearDag(
   if (policy.type === "step-glitch") {
     throw new Error("Step-glitch must use its scanner instead of the ordinary DAG");
   }
-  return policy.type === "step-stateful"
-    ? buildOneClickClearStepDag(context, targets)
-    : buildOneClickClearStatelessDag(context, targets);
+  if (policy.type === "step-stateful") {
+    const dag = await buildOneClickClearStepDag(context, targets);
+    return applyWasmPreferredStepDagPath(context, dag);
+  }
+  return buildOneClickClearStatelessDag(context, targets);
 }
 
 /** Stateless route 的后继只由目标坐标决定，使用一目标一节点的静态 DAG。 */
@@ -1407,10 +1422,80 @@ async function buildOneClickClearStatelessDag(
     targetIndex,
     type: "stateless",
   }));
-  const nodesByTargetIndex = nodes.map((node) => [node]);
+  const nodesByTargetIndex: OneClickClearDagNode[][] = nodes.map((node) => [node]);
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
-  const jobs = collectOneClickClearStatelessDagEdgeBuildJobs(startPoint, targets, nodes);
-  const result = await buildOneClickClearDagEdgeRoutes(context, jobs);
+  const typescriptJobs = collectOneClickClearStatelessDagEdgeBuildJobs(startPoint, targets, nodes);
+  let jobs = typescriptJobs;
+  let compositionSession: GraphwarWasmOneClickSession | undefined;
+  let preferredEdgeIds: readonly number[] | undefined;
+  if (options.wasmRuntime) {
+    const composition = beginGraphwarWasmOneClickClear(options.wasmRuntime, {
+      candidates: targets.map((target) => ({
+        hitCenter: target.routePoint,
+        hitRadius: target.hitCircle.radius,
+        isEnemy: true,
+      })),
+      isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
+      isStepStateful: false,
+      isTargetOrderDescending: !xPlusGoesRight(options.bounds),
+      path: options.pathPoints,
+      requestNonce: options.wasmRequestNonce ?? 1,
+    });
+    if (composition.status === "waiting-edge-batch" && graphwarWasmJobsMatch(typescriptJobs, composition)) {
+      compositionSession = composition.handle;
+      jobs = composition.edgeJobs.map((job) => ({
+        from: job.from,
+        id: job.id,
+        startPoint: createPixelPoint(job.startPoint.x, job.startPoint.y),
+        targetPoint: createPixelPoint(job.targetPoint.x, job.targetPoint.y),
+        to: job.to,
+        type: "stateless",
+      }));
+    } else if (composition.status === "waiting-edge-batch") {
+      composition.handle.cancel();
+    }
+  }
+
+  let result: GraphwarOneClickClearDagEdgeBuildResult;
+  try {
+    result = await buildOneClickClearDagEdgeRoutes(context, jobs);
+    if (compositionSession) {
+      const session = compositionSession;
+      const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
+      const edgeResults: GraphwarWasmOneClickEdgeResult[] = jobs.map((job) => {
+        const route = routesByJobId.get(job.id);
+        return route?.type === "stateless"
+          ? {
+              jobId: job.id,
+              reachable: true,
+              requestNonce: session.requestNonce,
+              route: route.route,
+              sessionNonce: session.nonce,
+            }
+          : {
+              jobId: job.id,
+              reachable: false,
+              requestNonce: session.requestNonce,
+              sessionNonce: session.nonce,
+            };
+      });
+      const compositionResult = session.resume(edgeResults);
+      if (compositionResult.status === "waiting-edge-batch") {
+        throw new GraphwarWasmFault("abi", "one-click WASM session returned an unexpected second edge batch");
+      }
+      if (compositionResult.status === "complete") {
+        preferredEdgeIds = deriveOneClickClearPreferredEdgeIds(
+          jobs,
+          compositionResult.path,
+          options.pathPoints.length,
+          targets,
+        );
+      }
+      compositionSession = undefined;
+    }
+  } finally {
+    compositionSession?.cancel();
+  }
   emitOneClickClearDebugTimings(options, result.timings);
 
   const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
@@ -1427,8 +1512,76 @@ async function buildOneClickClearStatelessDag(
     nodes,
     nodesByTargetIndex,
     outgoingEdges,
+    ...(preferredEdgeIds ? { preferredEdgeIds } : {}),
     targets: [...targets],
   };
+}
+
+/** WASM and TypeScript must agree on the target identity before external edge Workers run. */
+function graphwarWasmJobsMatch(
+  typescriptJobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+  composition: Extract<GraphwarWasmOneClickClearResult, { status: "waiting-edge-batch" }>,
+) {
+  if (
+    composition.targetOrder.some((targetIndex, index) => targetIndex !== index) ||
+    composition.edgeJobs.length !== typescriptJobs.length
+  ) {
+    return false;
+  }
+  return composition.edgeJobs.every((wasmJob, index) => {
+    const typescriptJob = typescriptJobs[index];
+    return (
+      typescriptJob?.type === "stateless" &&
+      wasmJob.id === typescriptJob.id &&
+      wasmJob.from === typescriptJob.from &&
+      wasmJob.to === typescriptJob.to &&
+      wasmJob.startPoint.x === typescriptJob.startPoint.x &&
+      wasmJob.startPoint.y === typescriptJob.startPoint.y &&
+      wasmJob.targetPoint.x === typescriptJob.targetPoint.x &&
+      wasmJob.targetPoint.y === typescriptJob.targetPoint.y
+    );
+  });
+}
+
+/** Converts the WASM-selected target chain back to stable DAG edge ids without re-solving the DAG in TS. */
+function deriveOneClickClearPreferredEdgeIds(
+  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
+  path: readonly { readonly x: number; readonly y: number }[],
+  sourcePointCount: number,
+  targets: readonly OneClickClearTarget[],
+) {
+  let pathIndex = Math.max(0, sourcePointCount);
+  let previousTargetIndex = -1;
+  const selectedTargetIndexes: number[] = [];
+  while (pathIndex < path.length) {
+    const point = path[pathIndex];
+    if (!point) {
+      break;
+    }
+    const targetIndex = targets.findIndex(
+      (target, index) =>
+        index > previousTargetIndex && target.routePoint.x === point.x && target.routePoint.y === point.y,
+    );
+    if (targetIndex >= 0) {
+      selectedTargetIndexes.push(targetIndex);
+      previousTargetIndex = targetIndex;
+    }
+    pathIndex += 1;
+  }
+  if (selectedTargetIndexes.length === 0) {
+    return [];
+  }
+  const selectedEdgeIds: number[] = [];
+  let from = START_NODE_INDEX;
+  for (const to of selectedTargetIndexes) {
+    const job = jobs.find((candidate) => candidate.from === from && candidate.to === to);
+    if (!job) {
+      return [];
+    }
+    selectedEdgeIds.push(job.id);
+    from = to;
+  }
+  return selectedEdgeIds;
 }
 
 /** 枚举 stateless route 的静态候选边；node id 按目标顺序创建，保持原有稳定顺序。 */
@@ -1602,6 +1755,150 @@ async function buildOneClickClearStepDag(
   return { edges, nodes, nodesByTargetIndex, outgoingEdges, targets: [...targets] };
 }
 
+/** Lets WASM choose the target chain while retaining the state-labelled Step edges for validation. */
+async function applyWasmPreferredStepDagPath(
+  context: OneClickClearSearchContext,
+  dag: OneClickClearDag,
+): Promise<OneClickClearDag> {
+  const options = context.options;
+  if (!options.wasmRuntime || dag.edges.length === 0) {
+    return dag;
+  }
+  const composition = beginGraphwarWasmOneClickClear(options.wasmRuntime, {
+    candidates: dag.targets.map((target) => ({
+      hitCenter: target.routePoint,
+      hitRadius: target.hitCircle.radius,
+      isEnemy: true,
+    })),
+    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
+    isStepStateful: true,
+    isTargetOrderDescending: !xPlusGoesRight(options.bounds),
+    path: options.pathPoints,
+    requestNonce: options.wasmRequestNonce ?? 1,
+  });
+  if (composition.status !== "waiting-edge-batch") {
+    return dag;
+  }
+
+  // The state-labelled Step DAG may contain several edges for one target pair.
+  // Only let the composition core participate when its target identity and every
+  // geometry job are represented by an existing TS edge; otherwise keep the
+  // complete TS stateful search as the correctness path.
+  if (
+    composition.targetOrder.some((targetIndex, index) => targetIndex !== index) ||
+    composition.edgeJobs.some(
+      (job) =>
+        job.to >= composition.targetOrder.length ||
+        (job.from !== START_NODE_INDEX && job.from >= composition.targetOrder.length),
+    )
+  ) {
+    composition.handle.cancel();
+    return dag;
+  }
+
+  const session = composition.handle;
+  const routesByTargetPair = new Map<string, OneClickClearDagEdge>();
+  for (const edge of dag.edges) {
+    if (!edge.active) {
+      continue;
+    }
+    const fromTarget = edge.from === START_NODE_INDEX ? START_NODE_INDEX : dag.nodes[edge.from]?.targetIndex;
+    const toTarget = dag.nodes[edge.to]?.targetIndex;
+    if (fromTarget === undefined || toTarget === undefined) {
+      continue;
+    }
+    const key = `${fromTarget}:${toTarget}`;
+    if (!routesByTargetPair.has(key)) {
+      routesByTargetPair.set(key, edge);
+    }
+  }
+  const edgesForJobs = composition.edgeJobs.map((job) => {
+    const fromTarget = job.from === START_NODE_INDEX ? START_NODE_INDEX : composition.targetOrder[job.from];
+    const toTarget = composition.targetOrder[job.to];
+    return fromTarget === undefined || toTarget === undefined
+      ? undefined
+      : routesByTargetPair.get(`${fromTarget}:${toTarget}`);
+  });
+  if (edgesForJobs.some((edge) => edge === undefined)) {
+    session.cancel();
+    return dag;
+  }
+  try {
+    const edgeResults: GraphwarWasmOneClickEdgeResult[] = composition.edgeJobs.map((job, index) => {
+      const edge = edgesForJobs[index];
+      return edge
+        ? {
+            jobId: job.id,
+            reachable: true,
+            requestNonce: session.requestNonce,
+            route: edge.route,
+            sessionNonce: session.nonce,
+          }
+        : {
+            jobId: job.id,
+            reachable: false,
+            requestNonce: session.requestNonce,
+            sessionNonce: session.nonce,
+          };
+    });
+    const result = session.resume(edgeResults);
+    if (result.status === "waiting-edge-batch") {
+      throw new GraphwarWasmFault("abi", "stateful one-click WASM session returned an unexpected edge batch");
+    }
+    if (result.status === "complete") {
+      const targetIndexes = deriveOneClickClearPreferredTargetIndexes(
+        result.path,
+        options.pathPoints.length,
+        dag.targets,
+      );
+      const preferredEdgeIds = selectStepDagEdgesForTargetChain(dag, targetIndexes);
+      if (preferredEdgeIds.length > 0) {
+        return { ...dag, preferredEdgeIds };
+      }
+    }
+    return dag;
+  } finally {
+    session.cancel();
+  }
+}
+
+function deriveOneClickClearPreferredTargetIndexes(
+  path: readonly { readonly x: number; readonly y: number }[],
+  sourcePointCount: number,
+  targets: readonly OneClickClearTarget[],
+) {
+  const selected: number[] = [];
+  let previousTargetIndex = -1;
+  for (const point of path.slice(Math.max(0, sourcePointCount))) {
+    const targetIndex = targets.findIndex(
+      (target, index) =>
+        index > previousTargetIndex && target.routePoint.x === point.x && target.routePoint.y === point.y,
+    );
+    if (targetIndex >= 0) {
+      selected.push(targetIndex);
+      previousTargetIndex = targetIndex;
+    }
+  }
+  return selected;
+}
+
+function selectStepDagEdgesForTargetChain(dag: OneClickClearDag, targetIndexes: readonly number[]) {
+  const preferredEdgeIds: number[] = [];
+  let from = START_NODE_INDEX;
+  for (const targetIndex of targetIndexes) {
+    const edge = dag.edges.find(
+      (candidate) =>
+        candidate.active && candidate.from === from && dag.nodes[candidate.to]?.targetIndex === targetIndex,
+    );
+    if (!edge) {
+      return [];
+    }
+    preferredEdgeIds.push(edge.id);
+    from = edge.to;
+  }
+  return preferredEdgeIds;
+}
+
 /** 从第一条用户路径点开始逐段结算，得到 START 续接新边时的 canonical Step 状态。 */
 function resolveOneClickClearStepStartState(options: GraphwarOneClickClearSearchOptions) {
   const settings = options.formulaMode.settings;
@@ -1769,6 +2066,10 @@ function calculateOneClickClearRouteVerticalVariation(
 
 /** 在具体状态节点 DAG 上做最长路 DP；同分时依次选点更少、纵向变化更小的稳定路线。 */
 function findOneClickClearLongestPath(dag: OneClickClearDag) {
+  const preferredPath = reconstructOneClickClearPreferredPath(dag);
+  if (preferredPath) {
+    return preferredPath;
+  }
   const bestEntries: (OneClickClearBestEntry | undefined)[] = Array.from({ length: dag.nodes.length });
 
   for (const edge of dag.outgoingEdges.get(START_NODE_INDEX) ?? []) {
@@ -1822,6 +2123,25 @@ function findOneClickClearLongestPath(dag: OneClickClearDag) {
     return [];
   }
   return reconstructOneClickClearDagPath(bestEntries, bestNodeId);
+}
+
+/** Keeps the composition core's stable choice ahead of the TypeScript fallback DP. */
+function reconstructOneClickClearPreferredPath(dag: OneClickClearDag) {
+  if (!dag.preferredEdgeIds || dag.preferredEdgeIds.length === 0) {
+    return undefined;
+  }
+  const edgesById = new Map(dag.edges.map((edge) => [edge.id, edge]));
+  const preferredEdges: OneClickClearDagEdge[] = [];
+  let from = START_NODE_INDEX;
+  for (const edgeId of dag.preferredEdgeIds) {
+    const edge = edgesById.get(edgeId);
+    if (!edge || !edge.active || edge.from !== from) {
+      return undefined;
+    }
+    preferredEdges.push(edge);
+    from = edge.to;
+  }
+  return preferredEdges;
 }
 
 /** 只在候选排序更优时更新节点的最佳路径条目。 */

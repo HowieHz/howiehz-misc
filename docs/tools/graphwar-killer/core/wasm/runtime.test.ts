@@ -108,7 +108,9 @@ describe("Graphwar WASM runtime boundary", () => {
   });
 
   it("rejects malformed smart input before crossing the WASM boundary", async () => {
-    const arena = createSyntheticArenaInstance((previousCursor) => previousCursor);
+    const arena = createSyntheticArenaInstance(
+      (previousCursor, _byteLength, alignment) => Math.ceil(previousCursor / alignment) * alignment,
+    );
     const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
     const runSmartPathfinding = vi.fn(() => 0);
     rawExports.runSmartPathfinding = runSmartPathfinding;
@@ -124,12 +126,14 @@ describe("Graphwar WASM runtime boundary", () => {
   });
 
   it("requires an atomic one-click work batch and accepts aligned flat records", async () => {
-    const arena = createSyntheticArenaInstance((previousCursor) => previousCursor);
+    const arena = createSyntheticArenaInstance(
+      (previousCursor, _byteLength, alignment) => Math.ceil(previousCursor / alignment) * alignment,
+    );
     const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
     const reserveResult = (byteLength: number) => rawExports.reserveArena(byteLength, 8);
     rawExports.runSmartPathfinding = () => reserveResult(32);
-    rawExports.beginOneClickClear = () => reserveResult(48);
-    rawExports.resumeOneClickClear = () => reserveResult(48);
+    rawExports.beginOneClickClear = () => reserveResult(52);
+    rawExports.resumeOneClickClear = () => reserveResult(52);
     const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
       instantiate: async () => arena.instance,
     });

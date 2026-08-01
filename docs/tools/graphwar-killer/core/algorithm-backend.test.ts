@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createGraphwarBackendExecution,
   createGraphwarBackendFallbackExecution,
+  createGraphwarWasmRequestNonce,
   createGraphwarTypescriptBackendContext,
   createGraphwarWasmBackendContext,
   GraphwarValidatedWasmRuntime,
@@ -122,6 +123,16 @@ describe("Graphwar algorithm backend contracts", () => {
         { attemptId: 2, backendGeneration: 4, outerTaskId: 1 },
       ),
     ).toBe(false);
+  });
+
+  it("derives task nonces from request and attempt identity rather than route cache ids", () => {
+    const attempt = { attemptId: 2, backendGeneration: 3, outerTaskId: 1 };
+    const nonce = createGraphwarWasmRequestNonce(attempt, 7);
+
+    expect(nonce).toBeGreaterThan(0);
+    expect(createGraphwarWasmRequestNonce(attempt, 7)).toBe(nonce);
+    expect(createGraphwarWasmRequestNonce(attempt, 8)).not.toBe(nonce);
+    expect(createGraphwarWasmRequestNonce({ ...attempt, attemptId: 3 }, 7)).not.toBe(nonce);
   });
 
   it("validates attempt-bearing business envelopes without weakening their payload boundary", () => {

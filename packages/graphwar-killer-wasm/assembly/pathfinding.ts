@@ -5947,20 +5947,629 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   return 0;
 }
 
-/** Placeholder for smart pathfinding composition above route jobs. */
-export function runSmartPathfinding(): i32 {
-  requireArenaInitialized();
-  return 0;
+const ONE_CLICK_EDGE_ID_OFFSET: u32 = 0;
+const ONE_CLICK_EDGE_FROM_OFFSET: u32 = 4;
+const ONE_CLICK_EDGE_TO_OFFSET: u32 = 8;
+const ONE_CLICK_EDGE_START_X_OFFSET: u32 = 16;
+const ONE_CLICK_EDGE_START_Y_OFFSET: u32 = 24;
+const ONE_CLICK_EDGE_TARGET_X_OFFSET: u32 = 32;
+const ONE_CLICK_EDGE_TARGET_Y_OFFSET: u32 = 40;
+const ONE_CLICK_EDGE_RESULT_ID_OFFSET: u32 = 0;
+const ONE_CLICK_EDGE_RESULT_REACHABLE_OFFSET: u32 = 4;
+const ONE_CLICK_EDGE_RESULT_X_POINTER_OFFSET: u32 = 8;
+const ONE_CLICK_EDGE_RESULT_Y_POINTER_OFFSET: u32 = 12;
+const ONE_CLICK_EDGE_RESULT_COUNT_OFFSET: u32 = 16;
+const ONE_CLICK_EDGE_RESULT_SESSION_NONCE_OFFSET: u32 = 20;
+const ONE_CLICK_EDGE_RESULT_REQUEST_NONCE_OFFSET: u32 = 24;
+
+let activeOneClickSessionPointer: u32 = 0;
+let nextOneClickSessionNonce: u32 = 1;
+
+@inline
+function compositionRequireFinite(value: f64): void {
+  if (!isFiniteValue(value)) trap();
 }
 
-/** Placeholder for starting one-click-clear state retained below its session mark. */
-export function beginOneClickClear(): i32 {
-  requireArenaInitialized();
-  return 0;
+function compositionValidatePointArrays(xPointer: u32, yPointer: u32, count: u32): void {
+  if (count == 0) {
+    if (xPointer != 0 || yPointer != 0) trap();
+    return;
+  }
+  if (count > u32.MAX_VALUE / sizeof<f64>()) trap();
+  requireArenaRange(xPointer, count * sizeof<f64>(), sizeof<f64>());
+  requireArenaRange(yPointer, count * sizeof<f64>(), sizeof<f64>());
+  let index: u32 = 0;
+  while (index < count) {
+    compositionRequireFinite(load<f64>(xPointer + index * sizeof<f64>()));
+    compositionRequireFinite(load<f64>(yPointer + index * sizeof<f64>()));
+    index += 1;
+  }
 }
 
-/** Placeholder for resuming one-click-clear after an external edge batch. */
-export function resumeOneClickClear(): i32 {
+@inline
+function compositionPointIsCollinear(
+  previousX: f64,
+  previousY: f64,
+  currentX: f64,
+  currentY: f64,
+  nextX: f64,
+  nextY: f64,
+): bool {
+  const deltaPreviousX = currentX - previousX;
+  const deltaPreviousY = currentY - previousY;
+  const deltaNextX = nextX - currentX;
+  const deltaNextY = nextY - currentY;
+  const cross = deltaPreviousX * deltaNextY - deltaPreviousY * deltaNextX;
+  const dot = deltaPreviousX * deltaNextX + deltaPreviousY * deltaNextY;
+  return cross == 0 && dot >= 0;
+}
+
+/** Runs the complete smart composition over a route candidate in one synchronous WASM command. */
+export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
-  return 0;
+  requireGraphwarGameConstantsInitialized();
+  if (inputByteLength != Layout.SMART_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, Layout.SMART_INPUT_BYTE_LENGTH, sizeof<u32>());
+  if (
+    load<u32>(inputPointer + Layout.SMART_INPUT_MAGIC_OFFSET) != Layout.SMART_INPUT_MAGIC ||
+    load<u32>(inputPointer + Layout.SMART_INPUT_VERSION_OFFSET) != Layout.SMART_INPUT_VERSION
+  ) trap();
+  const flags = load<u32>(inputPointer + Layout.SMART_INPUT_FLAGS_OFFSET);
+  if ((flags & ~Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0) trap();
+  const pointsXPointer = load<u32>(inputPointer + Layout.SMART_INPUT_POINTS_X_POINTER_OFFSET);
+  const pointsYPointer = load<u32>(inputPointer + Layout.SMART_INPUT_POINTS_Y_POINTER_OFFSET);
+  const pointCount = load<u32>(inputPointer + Layout.SMART_INPUT_POINT_COUNT_OFFSET);
+  const sourcePointCount = load<u32>(inputPointer + Layout.SMART_INPUT_SOURCE_POINT_COUNT_OFFSET);
+  if (sourcePointCount > pointCount) trap();
+  compositionValidatePointArrays(pointsXPointer, pointsYPointer, pointCount);
+  compositionRequireFinite(load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_X_OFFSET));
+  compositionRequireFinite(load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_Y_OFFSET));
+  const targetRadius = load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_RADIUS_OFFSET);
+  compositionRequireFinite(targetRadius);
+  if (targetRadius < 0) trap();
+  const routeContextPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_CONTEXT_POINTER_OFFSET);
+  if (routeContextPointer != 0) requireArenaRange(routeContextPointer, Layout.ROUTE_CONTEXT_BYTE_LENGTH, sizeof<u64>());
+
+  const resultPointer = reserveArena(Layout.SMART_RESULT_BYTE_LENGTH, sizeof<u64>());
+  if (pointCount == 0) {
+    store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
+    store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_FAILURE);
+    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_Y_POINTER_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 0);
+    store<u32>(resultPointer + 28, 0);
+    return resultPointer;
+  }
+
+  const targetX = load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_X_OFFSET);
+  const targetY = load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_Y_OFFSET);
+  const lastX = load<f64>(pointsXPointer + (pointCount - 1) * sizeof<f64>());
+  const lastY = load<f64>(pointsYPointer + (pointCount - 1) * sizeof<f64>());
+  const targetDeltaX = lastX - targetX;
+  const targetDeltaY = lastY - targetY;
+  const targetRadiusSquared = targetRadius * targetRadius;
+  if (targetDeltaX * targetDeltaX + targetDeltaY * targetDeltaY > targetRadiusSquared) {
+    store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
+    store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_FAILURE);
+    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_Y_POINTER_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, 0);
+    store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 0);
+    store<u32>(resultPointer + 28, 0);
+    return resultPointer;
+  }
+
+  const outputXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
+  const outputYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
+  memory.copy(outputXPointer, pointsXPointer, pointCount * sizeof<f64>());
+  memory.copy(outputYPointer, pointsYPointer, pointCount * sizeof<f64>());
+  let outputCount = pointCount;
+  let removedCount: u32 = 0;
+  if ((flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 && outputCount > sourcePointCount + 1) {
+    let index: u32 = sourcePointCount < 1 ? 1 : sourcePointCount;
+    while (index + 1 < outputCount) {
+      const previousX = load<f64>(outputXPointer + (index - 1) * sizeof<f64>());
+      const previousY = load<f64>(outputYPointer + (index - 1) * sizeof<f64>());
+      const currentX = load<f64>(outputXPointer + index * sizeof<f64>());
+      const currentY = load<f64>(outputYPointer + index * sizeof<f64>());
+      const nextX = load<f64>(outputXPointer + (index + 1) * sizeof<f64>());
+      const nextY = load<f64>(outputYPointer + (index + 1) * sizeof<f64>());
+      if (compositionPointIsCollinear(previousX, previousY, currentX, currentY, nextX, nextY)) {
+        let shift = index;
+        while (shift + 1 < outputCount) {
+          store<f64>(outputXPointer + shift * sizeof<f64>(), load<f64>(outputXPointer + (shift + 1) * sizeof<f64>()));
+          store<f64>(outputYPointer + shift * sizeof<f64>(), load<f64>(outputYPointer + (shift + 1) * sizeof<f64>()));
+          shift += 1;
+        }
+        outputCount -= 1;
+        removedCount += 1;
+      } else {
+        index += 1;
+      }
+    }
+  }
+
+  store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_SUCCESS);
+  store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, outputXPointer);
+  store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_Y_POINTER_OFFSET, outputYPointer);
+  store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, outputCount);
+  store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, removedCount);
+  store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 1);
+  store<u32>(resultPointer + 28, 0);
+  return resultPointer;
+}
+
+function compareOneClickTargetOrder(
+  xPointer: u32,
+  yPointer: u32,
+  leftIndex: u32,
+  rightIndex: u32,
+  isDescending: bool,
+): i32 {
+  const leftX = load<f64>(xPointer + leftIndex * sizeof<f64>());
+  const rightX = load<f64>(xPointer + rightIndex * sizeof<f64>());
+  if (leftX < rightX) return isDescending ? 1 : -1;
+  if (leftX > rightX) return isDescending ? -1 : 1;
+  const leftY = load<f64>(yPointer + leftIndex * sizeof<f64>());
+  const rightY = load<f64>(yPointer + rightIndex * sizeof<f64>());
+  if (leftY < rightY) return isDescending ? 1 : -1;
+  if (leftY > rightY) return isDescending ? -1 : 1;
+  return leftIndex < rightIndex ? -1 : leftIndex > rightIndex ? 1 : 0;
+}
+
+function writeOneClickResult(
+  status: u32,
+  nonce: u32,
+  requestNonce: u32,
+  sessionPointer: u32,
+  jobPointer: u32,
+  jobCount: u32,
+  targetOrderPointer: u32,
+  targetCount: u32,
+  pathXPointer: u32,
+  pathYPointer: u32,
+  pathCount: u32,
+  selectedEdgeCount: u32,
+): u32 {
+  const resultPointer = reserveArena(Layout.ONE_CLICK_RESULT_BYTE_LENGTH, sizeof<u64>());
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_STATUS_OFFSET, status);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_SESSION_POINTER_OFFSET, sessionPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_EDGE_JOB_POINTER_OFFSET, jobPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_EDGE_JOB_COUNT_OFFSET, jobCount);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_TARGET_ORDER_POINTER_OFFSET, targetOrderPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_TARGET_COUNT_OFFSET, targetCount);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_PATH_X_POINTER_OFFSET, pathXPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_PATH_Y_POINTER_OFFSET, pathYPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_PATH_COUNT_OFFSET, pathCount);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_SELECTED_EDGE_COUNT_OFFSET, selectedEdgeCount);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_NONCE_OFFSET, nonce);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_REQUEST_NONCE_OFFSET, requestNonce);
+  return resultPointer;
+}
+
+/** Starts one atomic one-click session and emits a stable edge batch for external Workers. */
+export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32 {
+  requireArenaInitialized();
+  requireGraphwarGameConstantsInitialized();
+  if (inputByteLength != Layout.ONE_CLICK_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, Layout.ONE_CLICK_INPUT_BYTE_LENGTH, sizeof<u32>());
+  if (
+    activeOneClickSessionPointer != 0 ||
+    load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_MAGIC_OFFSET) != Layout.ONE_CLICK_INPUT_MAGIC ||
+    load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_VERSION_OFFSET) != Layout.ONE_CLICK_INPUT_VERSION
+  ) trap();
+  const flags = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_FLAGS_OFFSET);
+  if (
+    (flags &
+      ~(
+        Layout.ONE_CLICK_INPUT_FLAG_DELETE_OPTIMIZATION |
+        Layout.ONE_CLICK_INPUT_FLAG_STEP_STATEFUL |
+        Layout.ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING
+      )) !=
+    0
+  )
+    trap();
+  const isTargetOrderDescending = (flags & Layout.ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING) != 0;
+  const candidateCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_COUNT_OFFSET);
+  const candidateXPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_X_POINTER_OFFSET);
+  const candidateYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_Y_POINTER_OFFSET);
+  const candidateRadiusPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_RADIUS_POINTER_OFFSET);
+  const candidateFlagsPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_FLAGS_POINTER_OFFSET);
+  compositionValidatePointArrays(candidateXPointer, candidateYPointer, candidateCount);
+  if (candidateCount > 0) {
+    requireArenaRange(candidateRadiusPointer, candidateCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(candidateFlagsPointer, candidateCount * sizeof<u32>(), sizeof<u32>());
+  } else if (candidateRadiusPointer != 0 || candidateFlagsPointer != 0) {
+    trap();
+  }
+  let candidateIndex: u32 = 0;
+  while (candidateIndex < candidateCount) {
+    const candidateFlags = load<u32>(candidateFlagsPointer + candidateIndex * sizeof<u32>());
+    if (candidateFlags != 1) trap();
+    const radius = load<f64>(candidateRadiusPointer + candidateIndex * sizeof<f64>());
+    compositionRequireFinite(radius);
+    if (radius < 0) trap();
+    candidateIndex += 1;
+  }
+  const pathXPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_PATH_X_POINTER_OFFSET);
+  const pathYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_PATH_Y_POINTER_OFFSET);
+  const pathCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_PATH_COUNT_OFFSET);
+  compositionValidatePointArrays(pathXPointer, pathYPointer, pathCount);
+  const routeContextPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_ROUTE_CONTEXT_POINTER_OFFSET);
+  if (routeContextPointer != 0) requireArenaRange(routeContextPointer, Layout.ROUTE_CONTEXT_BYTE_LENGTH, sizeof<u64>());
+  const requestedNonce = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_REQUEST_NONCE_OFFSET);
+  if (requestedNonce == 0 || nextOneClickSessionNonce == 0) trap();
+  const nonce = nextOneClickSessionNonce;
+  nextOneClickSessionNonce += 1;
+
+  const sessionPointer = reserveArena(Layout.ONE_CLICK_SESSION_BYTE_LENGTH, sizeof<u64>());
+  const targetXCopy = candidateCount == 0 ? 0 : reserveArena(candidateCount * sizeof<f64>(), sizeof<u64>());
+  const targetYCopy = candidateCount == 0 ? 0 : reserveArena(candidateCount * sizeof<f64>(), sizeof<u64>());
+  const targetRadiusCopy = candidateCount == 0 ? 0 : reserveArena(candidateCount * sizeof<f64>(), sizeof<u64>());
+  const targetOrderPointer = candidateCount == 0 ? 0 : reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  if (candidateCount != 0) {
+    memory.copy(targetXCopy, candidateXPointer, candidateCount * sizeof<f64>());
+    memory.copy(targetYCopy, candidateYPointer, candidateCount * sizeof<f64>());
+    memory.copy(targetRadiusCopy, candidateRadiusPointer, candidateCount * sizeof<f64>());
+    let index: u32 = 0;
+    while (index < candidateCount) {
+      store<u32>(targetOrderPointer + index * sizeof<u32>(), index);
+      index += 1;
+    }
+    index = 1;
+    while (index < candidateCount) {
+      const value = load<u32>(targetOrderPointer + index * sizeof<u32>());
+      let insertion = index;
+      while (
+        insertion > 0 &&
+        compareOneClickTargetOrder(
+          targetXCopy,
+          targetYCopy,
+          value,
+          load<u32>(targetOrderPointer + (insertion - 1) * sizeof<u32>()),
+          isTargetOrderDescending,
+        ) < 0
+      ) {
+        store<u32>(targetOrderPointer + insertion * sizeof<u32>(), load<u32>(targetOrderPointer + (insertion - 1) * sizeof<u32>()));
+        insertion -= 1;
+      }
+      store<u32>(targetOrderPointer + insertion * sizeof<u32>(), value);
+      index += 1;
+    }
+  }
+
+  let pairCount: u64 = 0;
+  let pairFrom: u32 = 0;
+  while (pairFrom < candidateCount) {
+    const pairFromIndex = load<u32>(targetOrderPointer + pairFrom * sizeof<u32>());
+    const pairFromX = load<f64>(targetXCopy + pairFromIndex * sizeof<f64>());
+    let pairTo: u32 = pairFrom + 1;
+    while (pairTo < candidateCount) {
+      const pairToIndex = load<u32>(targetOrderPointer + pairTo * sizeof<u32>());
+      const pairToX = load<f64>(targetXCopy + pairToIndex * sizeof<f64>());
+      if (isTargetOrderDescending ? pairToX < pairFromX : pairToX > pairFromX) pairCount += 1;
+      pairTo += 1;
+    }
+    pairFrom += 1;
+  }
+  const jobCount64 = candidateCount == 0 ? 0 : <u64>candidateCount + pairCount;
+  if (jobCount64 > <u64>u32.MAX_VALUE / Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH) trap();
+  const jobCount = <u32>jobCount64;
+  const jobPointer = jobCount == 0 ? 0 : reserveArena(jobCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH, sizeof<u64>());
+  const copiedPathX = pathCount == 0 ? 0 : reserveArena(pathCount * sizeof<f64>(), sizeof<u64>());
+  const copiedPathY = pathCount == 0 ? 0 : reserveArena(pathCount * sizeof<f64>(), sizeof<u64>());
+  if (pathCount != 0) {
+    memory.copy(copiedPathX, pathXPointer, pathCount * sizeof<f64>());
+    memory.copy(copiedPathY, pathYPointer, pathCount * sizeof<f64>());
+  }
+  let jobIndex: u32 = 0;
+  const startX = pathCount == 0 ? 0 : load<f64>(copiedPathX + (pathCount - 1) * sizeof<f64>());
+  const startY = pathCount == 0 ? 0 : load<f64>(copiedPathY + (pathCount - 1) * sizeof<f64>());
+  let targetPosition: u32 = 0;
+  while (targetPosition < candidateCount) {
+    const targetIndex = load<u32>(targetOrderPointer + targetPosition * sizeof<u32>());
+    const job = jobPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+    store<u32>(job + ONE_CLICK_EDGE_ID_OFFSET, jobIndex);
+    store<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET, u32.MAX_VALUE);
+    store<u32>(job + ONE_CLICK_EDGE_TO_OFFSET, targetPosition);
+    store<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET, startX);
+    store<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET, startY);
+    store<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET, load<f64>(targetXCopy + targetIndex * sizeof<f64>()));
+    store<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET, load<f64>(targetYCopy + targetIndex * sizeof<f64>()));
+    jobIndex += 1;
+    targetPosition += 1;
+  }
+  let fromPosition: u32 = 0;
+  while (fromPosition < candidateCount) {
+    const fromIndex = load<u32>(targetOrderPointer + fromPosition * sizeof<u32>());
+    let toPosition = fromPosition + 1;
+    while (toPosition < candidateCount) {
+      const toIndex = load<u32>(targetOrderPointer + toPosition * sizeof<u32>());
+      const fromX = load<f64>(targetXCopy + fromIndex * sizeof<f64>());
+      const toX = load<f64>(targetXCopy + toIndex * sizeof<f64>());
+      if (isTargetOrderDescending ? toX < fromX : toX > fromX) {
+        const job = jobPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+        store<u32>(job + ONE_CLICK_EDGE_ID_OFFSET, jobIndex);
+        store<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET, fromPosition);
+        store<u32>(job + ONE_CLICK_EDGE_TO_OFFSET, toPosition);
+        store<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET, fromX);
+        store<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET, load<f64>(targetYCopy + fromIndex * sizeof<f64>()));
+        store<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET, toX);
+        store<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET, load<f64>(targetYCopy + toIndex * sizeof<f64>()));
+        jobIndex += 1;
+      }
+      toPosition += 1;
+    }
+    fromPosition += 1;
+  }
+  if (jobIndex != jobCount) trap();
+
+  memory.fill(sessionPointer, 0, Layout.ONE_CLICK_SESSION_BYTE_LENGTH);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_MAGIC_OFFSET, Layout.ONE_CLICK_SESSION_MAGIC);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NONCE_OFFSET, nonce);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_WAITING_EDGE_BATCH);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_FLAGS_OFFSET, flags);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_X_POINTER_OFFSET, targetXCopy);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_Y_POINTER_OFFSET, targetYCopy);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_RADIUS_POINTER_OFFSET, targetRadiusCopy);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_COUNT_OFFSET, candidateCount);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET, copiedPathX);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET, copiedPathY);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_COUNT_OFFSET, pathCount);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_POINTER_OFFSET, jobPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_COUNT_OFFSET, jobCount);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_X_POINTER_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_Y_POINTER_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_COUNT_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_FLAGS_POINTER_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINTER_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINT_COUNT_POINTER_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CAPACITY_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET, targetOrderPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET, requestedNonce);
+  if (jobCount == 0) {
+    store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
+    activeOneClickSessionPointer = 0;
+    return writeOneClickResult(
+      Layout.ONE_CLICK_RESULT_STATUS_FAILURE,
+      nonce,
+      requestedNonce,
+      0,
+      0,
+      0,
+      targetOrderPointer,
+      candidateCount,
+      copiedPathX,
+      copiedPathY,
+      pathCount,
+      0,
+    );
+  }
+  const resultPointer = writeOneClickResult(
+    Layout.ONE_CLICK_RESULT_STATUS_WAITING_EDGE_BATCH,
+    nonce,
+    requestedNonce,
+    sessionPointer,
+    jobPointer,
+    jobCount,
+    targetOrderPointer,
+    candidateCount,
+    0,
+    0,
+    0,
+    0,
+  );
+  // Publish the session only after the result record has been reserved and written. A
+  // reserve/grow trap before this point must leave the instance reusable.
+  activeOneClickSessionPointer = sessionPointer;
+  return resultPointer;
+}
+
+/** Releases one matching raw session identity before its JS owner rewinds the retained arena mark. */
+export function cancelOneClickClear(expectedRequestNonce: u32): void {
+  requireArenaInitialized();
+  if (expectedRequestNonce == 0) trap();
+  if (activeOneClickSessionPointer == 0) return;
+  requireArenaRange(activeOneClickSessionPointer, Layout.ONE_CLICK_SESSION_BYTE_LENGTH, sizeof<u64>());
+  // A failed begin may race a previous retained session. Only the caller that owns
+  // this request nonce may release it; a mismatched cancellation is a no-op.
+  if (load<u32>(activeOneClickSessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET) != expectedRequestNonce) {
+    return;
+  }
+  if (
+    load<u32>(activeOneClickSessionPointer + Layout.ONE_CLICK_SESSION_MAGIC_OFFSET) != Layout.ONE_CLICK_SESSION_MAGIC ||
+    load<u32>(activeOneClickSessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET) !=
+      Layout.ONE_CLICK_SESSION_PHASE_WAITING_EDGE_BATCH
+  ) {
+    trap();
+  }
+  store<u32>(activeOneClickSessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
+  activeOneClickSessionPointer = 0;
+}
+
+/** Consumes one complete edge batch by stable job id and selects the longest reachable target chain. */
+export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u32 {
+  requireArenaInitialized();
+  if (inputByteLength != Layout.ONE_CLICK_RESUME_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, Layout.ONE_CLICK_RESUME_BYTE_LENGTH, sizeof<u32>());
+  const sessionPointer = load<u32>(inputPointer + Layout.ONE_CLICK_RESUME_SESSION_POINTER_OFFSET);
+  const nonce = load<u32>(inputPointer + Layout.ONE_CLICK_RESUME_NONCE_OFFSET);
+  const workPointer = load<u32>(inputPointer + Layout.ONE_CLICK_RESUME_WORK_POINTER_OFFSET);
+  const workCount = load<u32>(inputPointer + Layout.ONE_CLICK_RESUME_WORK_COUNT_OFFSET);
+  if (activeOneClickSessionPointer == 0 || sessionPointer != activeOneClickSessionPointer || nonce == 0) trap();
+  requireArenaRange(sessionPointer, Layout.ONE_CLICK_SESSION_BYTE_LENGTH, sizeof<u64>());
+  if (
+    load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_MAGIC_OFFSET) != Layout.ONE_CLICK_SESSION_MAGIC ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NONCE_OFFSET) != nonce ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET) != Layout.ONE_CLICK_SESSION_PHASE_WAITING_EDGE_BATCH
+  ) trap();
+  const requestNonce = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET);
+  if (requestNonce == 0) trap();
+  const jobCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_COUNT_OFFSET);
+  if (workCount != jobCount) trap();
+  if (workCount == 0) {
+    if (workPointer != 0) trap();
+  } else {
+    requireArenaRange(workPointer, workCount * Layout.ONE_CLICK_EDGE_RESULT_BYTE_LENGTH, sizeof<u32>());
+  }
+  const completedPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u8>(), 1);
+  const routeXPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  const routeYPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  const routeCountPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  if (jobCount != 0) {
+    memory.fill(completedPointer, 0, jobCount);
+    memory.fill(routeXPointer, 0, jobCount * sizeof<u32>());
+    memory.fill(routeYPointer, 0, jobCount * sizeof<u32>());
+    memory.fill(routeCountPointer, 0, jobCount * sizeof<u32>());
+  }
+  let workIndex: u32 = 0;
+  while (workIndex < workCount) {
+    const result = workPointer + workIndex * Layout.ONE_CLICK_EDGE_RESULT_BYTE_LENGTH;
+    const jobId = load<u32>(result + ONE_CLICK_EDGE_RESULT_ID_OFFSET);
+    if (jobId >= jobCount || load<u8>(completedPointer + jobId) != 0) trap();
+    if (
+      load<u32>(result + ONE_CLICK_EDGE_RESULT_SESSION_NONCE_OFFSET) != nonce ||
+      load<u32>(result + ONE_CLICK_EDGE_RESULT_REQUEST_NONCE_OFFSET) != requestNonce
+    ) trap();
+    const reachable = load<u32>(result + ONE_CLICK_EDGE_RESULT_REACHABLE_OFFSET);
+    if (reachable > 1) trap();
+    const xPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_X_POINTER_OFFSET);
+    const yPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_Y_POINTER_OFFSET);
+    const routeCount = load<u32>(result + ONE_CLICK_EDGE_RESULT_COUNT_OFFSET);
+    if (reachable == 0) {
+      if (xPointer != 0 || yPointer != 0 || routeCount != 0) trap();
+    } else {
+      compositionValidatePointArrays(xPointer, yPointer, routeCount);
+      if (routeCount < 2) trap();
+    }
+    store<u8>(completedPointer + jobId, 1);
+    store<u32>(routeXPointer + jobId * sizeof<u32>(), xPointer);
+    store<u32>(routeYPointer + jobId * sizeof<u32>(), yPointer);
+    store<u32>(routeCountPointer + jobId * sizeof<u32>(), routeCount);
+    workIndex += 1;
+  }
+
+  const targetCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_COUNT_OFFSET);
+  const bestScorePointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
+  const bestJobPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
+  if (targetCount != 0) {
+    memory.fill(bestScorePointer, 0, targetCount * sizeof<u32>());
+    memory.fill(bestJobPointer, 0xff, targetCount * sizeof<u32>());
+  }
+  let jobIndex: u32 = 0;
+  let bestTarget: u32 = u32.MAX_VALUE;
+  let bestTargetScore: u32 = 0;
+  const jobsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_POINTER_OFFSET);
+  while (jobIndex < jobCount) {
+    if (load<u8>(completedPointer + jobIndex) != 0 && load<u32>(routeCountPointer + jobIndex * sizeof<u32>()) > 1) {
+      const job = jobsPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+      const from = load<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET);
+      const to = load<u32>(job + ONE_CLICK_EDGE_TO_OFFSET);
+      if (to >= targetCount) trap();
+      const previousScore = from == u32.MAX_VALUE ? 0 : load<u32>(bestScorePointer + from * sizeof<u32>());
+      if (from != u32.MAX_VALUE && previousScore == 0) {
+        jobIndex += 1;
+        continue;
+      }
+      const score: u32 = previousScore + 1;
+      if (score > load<u32>(bestScorePointer + to * sizeof<u32>())) {
+        store<u32>(bestScorePointer + to * sizeof<u32>(), score);
+        store<u32>(bestJobPointer + to * sizeof<u32>(), jobIndex);
+      }
+      if (score > bestTargetScore || (score == bestTargetScore && to < bestTarget)) {
+        bestTarget = to;
+        bestTargetScore = score;
+      }
+    }
+    jobIndex += 1;
+  }
+  if (bestTarget == u32.MAX_VALUE) {
+    store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
+    activeOneClickSessionPointer = 0;
+    return writeOneClickResult(
+      Layout.ONE_CLICK_RESULT_STATUS_FAILURE,
+      nonce,
+      requestNonce,
+      0,
+      0,
+      0,
+      load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET),
+      targetCount,
+      load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET),
+      load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET),
+      load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_COUNT_OFFSET),
+      0,
+    );
+  }
+
+  const chainPointer = reserveArena((bestTargetScore + 1) * sizeof<u32>(), sizeof<u32>());
+  let chainCount: u32 = 0;
+  let currentTarget = bestTarget;
+  while (true) {
+    const selectedJob = load<u32>(bestJobPointer + currentTarget * sizeof<u32>());
+    if (selectedJob == u32.MAX_VALUE) trap();
+    store<u32>(chainPointer + chainCount * sizeof<u32>(), selectedJob);
+    chainCount += 1;
+    const from = load<u32>(jobsPointer + selectedJob * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH + ONE_CLICK_EDGE_FROM_OFFSET);
+    if (from == u32.MAX_VALUE) break;
+    currentTarget = from;
+  }
+  const sourcePathCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_COUNT_OFFSET);
+  let outputCapacity = sourcePathCount;
+  let chainIndex: u32 = 0;
+  while (chainIndex < chainCount) {
+    const selectedJob = load<u32>(chainPointer + chainIndex * sizeof<u32>());
+    outputCapacity += load<u32>(routeCountPointer + selectedJob * sizeof<u32>());
+    chainIndex += 1;
+  }
+  const outputXPointer = outputCapacity == 0 ? 0 : reserveArena(outputCapacity * sizeof<f64>(), sizeof<u64>());
+  const outputYPointer = outputCapacity == 0 ? 0 : reserveArena(outputCapacity * sizeof<f64>(), sizeof<u64>());
+  let outputCount: u32 = 0;
+  if (sourcePathCount != 0) {
+    const sourceX = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET);
+    const sourceY = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET);
+    memory.copy(outputXPointer, sourceX, sourcePathCount * sizeof<f64>());
+    memory.copy(outputYPointer, sourceY, sourcePathCount * sizeof<f64>());
+    outputCount = sourcePathCount;
+  }
+  chainIndex = chainCount;
+  while (chainIndex > 0) {
+    chainIndex -= 1;
+    const selectedJob = load<u32>(chainPointer + chainIndex * sizeof<u32>());
+    const routeCount = load<u32>(routeCountPointer + selectedJob * sizeof<u32>());
+    const routeX = load<u32>(routeXPointer + selectedJob * sizeof<u32>());
+    const routeY = load<u32>(routeYPointer + selectedJob * sizeof<u32>());
+    let routeIndex: u32 = outputCount == 0 ? 0 : 1;
+    while (routeIndex < routeCount) {
+      store<f64>(outputXPointer + outputCount * sizeof<f64>(), load<f64>(routeX + routeIndex * sizeof<f64>()));
+      store<f64>(outputYPointer + outputCount * sizeof<f64>(), load<f64>(routeY + routeIndex * sizeof<f64>()));
+      outputCount += 1;
+      routeIndex += 1;
+    }
+  }
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_X_POINTER_OFFSET, outputXPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_Y_POINTER_OFFSET, outputYPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_COUNT_OFFSET, outputCount);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
+  activeOneClickSessionPointer = 0;
+  return writeOneClickResult(
+    Layout.ONE_CLICK_RESULT_STATUS_COMPLETE,
+    nonce,
+    requestNonce,
+    0,
+    0,
+    0,
+    load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET),
+    targetCount,
+    outputXPointer,
+    outputYPointer,
+    outputCount,
+    chainCount,
+  );
 }

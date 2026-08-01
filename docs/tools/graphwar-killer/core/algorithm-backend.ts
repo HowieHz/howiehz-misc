@@ -96,6 +96,22 @@ export interface GraphwarBackendAttemptIdentity {
   readonly outerTaskId: number;
 }
 
+/**
+ * Derives a non-zero task nonce for flat WASM work records.
+ *
+ * Route-mask cache ids describe reusable geometry and therefore cannot identify an outer task. Mixing the complete
+ * attempt identity with the request id keeps edge results from a replaced backend attempt distinguishable even when the
+ * geometry inputs are byte-for-byte identical.
+ */
+export function createGraphwarWasmRequestNonce(attempt: GraphwarBackendAttemptIdentity, requestId: number): number {
+  let hash = 0x811c_9dc5;
+  for (const value of [attempt.outerTaskId, requestId, attempt.attemptId, attempt.backendGeneration]) {
+    hash ^= value >>> 0;
+    hash = Math.imul(hash, 0x0100_0193);
+  }
+  return hash >>> 0 || 1;
+}
+
 /** 通用业务 payload envelope；每个 task、event 和 result 都必须携带完整可替换 attempt 身份。 */
 export interface GraphwarBackendAttemptEnvelope<TPayload> {
   attempt: GraphwarBackendAttemptIdentity;

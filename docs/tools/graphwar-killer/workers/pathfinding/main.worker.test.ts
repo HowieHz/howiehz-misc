@@ -26,6 +26,7 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   buildOneClickClearPath: vi.fn(),
+  runSmartPathfinding: vi.fn(),
   createStepGlitchContext: vi.fn(),
   createStepGlitchContextInput: vi.fn((input: unknown) => input),
   createStepGlitchScanCommandInput: vi.fn((input: unknown) => ({ ...(input as object), type: "scan" })),
@@ -69,6 +70,10 @@ vi.mock("../../core/wasm/step-glitch-adapter", () => ({
   createGraphwarWasmStepGlitchContext: mocks.createStepGlitchContext,
   createGraphwarWasmStepGlitchContextInput: mocks.createStepGlitchContextInput,
   createGraphwarWasmStepGlitchScanCommandInput: mocks.createStepGlitchScanCommandInput,
+}));
+
+vi.mock("../../core/wasm/composition-adapter", () => ({
+  runGraphwarWasmSmartPathfinding: mocks.runSmartPathfinding,
 }));
 
 const originalSelfDescriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
@@ -358,13 +363,19 @@ describe("Step glitch smart-path validation", () => {
     const wasmPath = [input.sourcePath[0], createPixelPoint(130, 225), createPixelPoint(160, 225), input.targetPoint];
     const scanner = {
       dispose: vi.fn(),
-      replayRaw: vi.fn().mockReturnValueOnce({ status: "hit" }).mockReturnValueOnce({ status: "miss" }),
+      replayRaw: vi.fn().mockReturnValue({ status: "hit" }),
       scanRaw: vi.fn().mockReturnValue({
         evidence: { owned: { path: wasmPath } },
         status: "hit",
       }),
     };
     mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    mocks.runSmartPathfinding.mockReturnValue({
+      isValidated: true,
+      points: [input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint],
+      removedPointCount: 1,
+      status: "success",
+    });
     const run = findStepGlitchSmartPathWithWasm;
     if (!run) {
       throw new Error("WASM smart-path runner was not exported");
@@ -380,7 +391,7 @@ describe("Step glitch smart-path validation", () => {
 
     expect(result.path).toEqual([input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint]);
     expect(scanner.scanRaw).toHaveBeenCalledOnce();
-    expect(scanner.replayRaw).toHaveBeenCalledTimes(2);
+    expect(scanner.replayRaw).toHaveBeenCalledOnce();
     expect(scanner.dispose).toHaveBeenCalledOnce();
     expect(mocks.scanStepGlitchPath).not.toHaveBeenCalled();
     expect(mocks.validateTrajectory).not.toHaveBeenCalled();

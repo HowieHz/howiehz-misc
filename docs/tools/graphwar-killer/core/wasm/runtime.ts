@@ -12,6 +12,7 @@ export const graphwarWasmRequiredFunctionExports = [
   "runRouteTask",
   "runSmartPathfinding",
   "beginOneClickClear",
+  "cancelOneClickClear",
   "resumeOneClickClear",
   "initializeArena",
   "initializeGraphwarGameConstants",
@@ -32,7 +33,7 @@ const graphwarWasmRuntimeConstructionToken = Symbol("GraphwarWasmRuntimeConstruc
 const SMART_PATHFINDING_INPUT_BYTE_LENGTH = 56;
 const SMART_PATHFINDING_RESULT_BYTE_LENGTH = 32;
 const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 56;
-const ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH = 48;
+const ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH = 52;
 const ONE_CLICK_CLEAR_RESUME_INPUT_BYTE_LENGTH = 16;
 
 interface GraphwarWasmArenaExports {
@@ -58,6 +59,7 @@ interface GraphwarWasmAlgorithmExports {
   runRouteTask: (command: number, inputPointer: number, inputByteLength: number) => number;
   runSmartPathfinding: (inputPointer: number, inputByteLength: number) => number;
   beginOneClickClear: (inputPointer: number, inputByteLength: number) => number;
+  cancelOneClickClear: (requestNonce: number) => void;
   resumeOneClickClear: (inputPointer: number, inputByteLength: number) => number;
   runTrajectory: (inputPointer: number, inputByteLength: number) => number;
 }
@@ -222,6 +224,18 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       this.#exports.resetArenaAfterFault(markToken);
     } catch (error) {
       throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM faulted arena reset failed", "allocation");
+    }
+  }
+
+  /** Clears the kernel's retained one-click identity before its owner rewinds the arena mark. */
+  cancelOneClickClear(requestNonce: number) {
+    if (!isPositiveU32(requestNonce)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM one-click-clear request nonce must be a positive uint32");
+    }
+    try {
+      this.#exports.cancelOneClickClear(requestNonce);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM one-click-clear cancellation failed", "trap");
     }
   }
 

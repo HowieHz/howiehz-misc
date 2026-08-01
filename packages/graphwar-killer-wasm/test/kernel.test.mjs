@@ -20,6 +20,7 @@ const roleExports = [
   "runRouteTask",
   "runSmartPathfinding",
   "beginOneClickClear",
+  "cancelOneClickClear",
   "resumeOneClickClear",
 ];
 const arenaExports = [
@@ -256,7 +257,11 @@ test("keeps allocator count, canary, cursor, and high-water stable across long-l
       name !== "beginDetectionTask" &&
       name !== "resumeDetectionTask" &&
       name !== "runDetectionTemplateShard" &&
-      name !== "runRouteTask",
+      name !== "runRouteTask" &&
+      name !== "runSmartPathfinding" &&
+      name !== "beginOneClickClear" &&
+      name !== "cancelOneClickClear" &&
+      name !== "resumeOneClickClear",
   )) {
     assert.equal(exports[roleExport](), 0);
   }
@@ -441,4 +446,17 @@ test("guards the source and release configuration against managed hot-path alloc
   } finally {
     await rm(guardDirectory, { recursive: true, force: true });
   }
+});
+
+test("publishes a one-click session only after its waiting result is allocated", async () => {
+  const source = await readFile(join(packageRoot, "assembly", "pathfinding.ts"), "utf8");
+  const waitingResult = source.indexOf(
+    "const resultPointer = writeOneClickResult(\n    Layout.ONE_CLICK_RESULT_STATUS_WAITING_EDGE_BATCH,",
+  );
+  const publish = source.indexOf("activeOneClickSessionPointer = sessionPointer;", waitingResult);
+  const returnResult = source.indexOf("return resultPointer;", publish);
+
+  assert.ok(waitingResult >= 0, "waiting one-click result allocation is present");
+  assert.ok(publish > waitingResult, "active session is published after result allocation");
+  assert.ok(returnResult > publish, "published session is returned after the publication write");
 });

@@ -1,6 +1,7 @@
 /** 主线程侧 Graphwar 几何寻路 runner，集中管理 Worker 生命周期和取消。 */
 import {
   createGraphwarTypescriptWorkerBackendConfiguration,
+  createGraphwarWasmRequestNonce,
   graphwarBackendAttemptIdentitiesAreEqual,
   isGraphwarBackendControlMessage,
   type GraphwarBackendAttemptIdentity,
@@ -687,10 +688,20 @@ function cloneGraphwarPathfindingWorkerRequest(
   request: GraphwarPathfindingWorkerRequest,
 ): GraphwarPathfindingWorkerRequest {
   const clonedRequest = cloneGraphwarPathfindingWorkerRequestWithoutAttempt(request);
+  const task =
+    clonedRequest.task.type === "build-one-click-clear-path"
+      ? {
+          ...clonedRequest.task,
+          input: {
+            ...clonedRequest.task.input,
+            wasmRequestNonce: createGraphwarWasmRequestNonce(request.attempt, request.id),
+          },
+        }
+      : clonedRequest.task;
   return {
     attempt: cloneGraphwarBackendAttemptIdentity(request.attempt),
     id: clonedRequest.id,
-    task: clonedRequest.task,
+    task,
   };
 }
 
@@ -864,6 +875,7 @@ function cloneGraphwarOneClickClearPathWorkerInput(
     routeMode: input.routeMode,
     routeObstacleMask: cloneUint8Array(input.routeObstacleMask),
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+    ...(input.wasmRequestNonce === undefined ? {} : { wasmRequestNonce: input.wasmRequestNonce }),
     settings: cloneGraphwarTrajectoryFormulaSettings(input.settings),
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     ...(input.simulationMask ? { simulationMask: cloneUint8Array(input.simulationMask) } : {}),

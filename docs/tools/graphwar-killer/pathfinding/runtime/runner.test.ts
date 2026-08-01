@@ -222,6 +222,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
 
     const typescriptWorker = getWorker(1);
     const replayRequest = getOneClickClearRequest(typescriptWorker, 0);
+    expect(replayRequest.task.input.wasmRequestNonce).not.toBe(wasmRequest.task.input.wasmRequestNonce);
     typescriptWorker.emit({
       attempt: replayRequest.attempt,
       id: replayRequest.id,

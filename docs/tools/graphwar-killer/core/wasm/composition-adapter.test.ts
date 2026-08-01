@@ -121,6 +121,106 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("retains completed edges and returns only pending jobs for a partial batch", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const noProgress = started.handle.resume([]);
+    expect(noProgress.status).toBe("waiting-edge-batch");
+    if (noProgress.status !== "waiting-edge-batch") return;
+    expect(noProgress.edgeJobs.map(({ id }) => id)).toEqual([0, 1, 2]);
+
+    const partial = noProgress.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(partial.edgeJobs.map(({ id }) => id)).toEqual([1, 2]);
+
+    const complete = partial.handle.resume([
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(complete.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a completed edge submitted again after a partial batch", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const partial = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: false,
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(() =>
+      partial.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: false,
+          sessionNonce: started.handle.nonce,
+        },
+      ]),
+    ).toThrow(/not in the session/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("treats an all-unreachable edge batch as a normal failure", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const result = started.handle.resume(
+      started.edgeJobs.map((job) => ({
+        jobId: job.id,
+        requestNonce: started.handle.requestNonce,
+        reachable: false,
+        sessionNonce: started.handle.nonce,
+      })),
+    );
+    expect(result).toEqual({ path: [{ x: 0, y: 0 }], selectedEdgeCount: 0, status: "failure", targetOrder: [0, 1] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("supports descending target order for mirrored x+ maps", async () => {
     const runtime = await createRuntime();
     const started = beginGraphwarWasmOneClickClear(runtime, {
@@ -210,6 +310,280 @@ describe("Graphwar WASM composition adapter", () => {
     started.handle.cancel();
   });
 
+  it("keeps equal-x ordering stable on mirrored maps", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 10, y: 2 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 10, y: 8 }, hitRadius: 1, isEnemy: true },
+      ],
+      isTargetOrderDescending: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([1, 0]);
+      started.handle.cancel();
+    }
+  });
+
+  it("uses quantized forward columns instead of raw image x for target identity", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 1.1, y: 2 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 1.4, y: 8 }, hitRadius: 1, isEnemy: true },
+      ],
+      targetOrderKeys: [0, 0],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([1, 0]);
+      started.handle.cancel();
+    }
+  });
+
+  it("accepts friendly-fire candidates as valid one-click targets", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [{ hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: false }],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([0]);
+      started.handle.cancel();
+    }
+  });
+
+  it("preserves explicit DAG node identities for duplicate target pairs", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 2,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 1,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 3,
+        },
+        {
+          from: 0,
+          fromNodeId: 2,
+          id: 2,
+          startPoint: { x: 10, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 4,
+        },
+        {
+          from: 0,
+          fromNodeId: 3,
+          id: 3,
+          startPoint: { x: 10, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 5,
+        },
+      ],
+      dagNodeCount: 6,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(started.handle.dagNodeCount).toBe(6);
+    expect(started.edgeJobs.map(({ fromNodeId, id, toNodeId }) => ({ fromNodeId, id, toNodeId }))).toEqual([
+      { fromNodeId: 0xffff_ffff, id: 0, toNodeId: 2 },
+      { fromNodeId: 0xffff_ffff, id: 1, toNodeId: 3 },
+      { fromNodeId: 2, id: 2, toNodeId: 4 },
+      { fromNodeId: 3, id: 3, toNodeId: 5 },
+    ]);
+
+    const result = started.handle.resume(
+      started.edgeJobs.map((job) => ({
+        jobId: job.id,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [job.startPoint, job.targetPoint],
+        sessionNonce: started.handle.nonce,
+      })),
+    );
+    expect(result.status).toBe("complete");
+    if (result.status === "complete") {
+      expect(result.path).toEqual([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ]);
+      expect(result.selectedEdgeCount).toBe(2);
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("resolves an explicit DAG whose child job precedes its parent", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: 0,
+          fromNodeId: 2,
+          id: 0,
+          startPoint: { x: 10, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 4,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 1,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 2,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 2,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 3,
+        },
+      ],
+      dagNodeCount: 5,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    const result = started.handle.resume(
+      started.edgeJobs.map((job) => ({
+        jobId: job.id,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [job.startPoint, job.targetPoint],
+        sessionNonce: started.handle.nonce,
+      })),
+    );
+    expect(result.status).toBe("complete");
+    if (result.status === "complete") {
+      expect(result.path).toEqual([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ]);
+      expect(result.selectedEdgeCount).toBe(2);
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects unknown or duplicate explicit DAG node identities at the adapter boundary", async () => {
+    const runtime = await createRuntime();
+    const createJob = (toNodeId: number) => ({
+      from: -1,
+      fromNodeId: 0xffff_ffff,
+      id: 0,
+      startPoint: { x: 0, y: 0 },
+      targetPoint: { x: 10, y: 0 },
+      to: 0,
+      toNodeId,
+    });
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [createJob(2)],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/unknown DAG node/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+
+    const duplicateRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(duplicateRuntime, {
+        ...createOneClickInput(),
+        dagJobs: [createJob(1), { ...createJob(1), id: 1 }],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/duplicates a DAG node identity/u);
+    expect(duplicateRuntime.arenaCursor).toBe(duplicateRuntime.arenaBase);
+
+    const selfLoopRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(selfLoopRuntime, {
+        ...createOneClickInput(),
+        dagJobs: [{ ...createJob(1), from: 0, fromNodeId: 1, to: 1 }],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/invalid source identity/u);
+    expect(selfLoopRuntime.arenaCursor).toBe(selfLoopRuntime.arenaBase);
+
+    const emptyRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(emptyRuntime, {
+        ...createOneClickInput(),
+        dagJobs: [],
+        dagNodeCount: 1,
+      }),
+    ).toThrow(/dagNodeCount must be zero/u);
+    expect(emptyRuntime.arenaCursor).toBe(emptyRuntime.arenaBase);
+
+    const cycleRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(cycleRuntime, {
+        ...createOneClickInput(),
+        candidates: [
+          { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 30, y: 0 }, hitRadius: 1, isEnemy: true },
+        ],
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 2,
+          },
+          {
+            from: 0,
+            fromNodeId: 2,
+            id: 1,
+            startPoint: { x: 10, y: 0 },
+            targetPoint: { x: 20, y: 0 },
+            to: 1,
+            toNodeId: 3,
+          },
+          {
+            from: 1,
+            fromNodeId: 3,
+            id: 2,
+            startPoint: { x: 20, y: 0 },
+            targetPoint: { x: 30, y: 0 },
+            to: 2,
+            toNodeId: 2,
+          },
+        ],
+        dagNodeCount: 4,
+      }),
+    ).toThrow(/contain a cycle/u);
+    expect(cycleRuntime.arenaCursor).toBe(cycleRuntime.arenaBase);
+  });
+
   it("rejects duplicate edge ids and invalidates the retained session", async () => {
     const runtime = await createRuntime();
     const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
@@ -273,14 +647,49 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
-  it("keeps a paused session valid across linear-memory growth and supports cancellation", async () => {
+  it("keeps a paused partial session valid across linear-memory growth and supports cancellation", async () => {
     const runtime = await createRuntime(2_048);
     const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
     expect(started.status).toBe("waiting-edge-batch");
     if (started.status !== "waiting-edge-batch") return;
 
+    const partial = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
     runtime.reserveArena(runtime.buffer.byteLength * 2, 8);
-    const result = started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce));
+    const result = partial.handle.resume([
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
     expect(result.status).toBe("complete");
 
     const secondRuntime = await createRuntime();

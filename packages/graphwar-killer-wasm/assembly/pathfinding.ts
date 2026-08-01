@@ -5954,6 +5954,8 @@ const ONE_CLICK_EDGE_START_X_OFFSET: u32 = 16;
 const ONE_CLICK_EDGE_START_Y_OFFSET: u32 = 24;
 const ONE_CLICK_EDGE_TARGET_X_OFFSET: u32 = 32;
 const ONE_CLICK_EDGE_TARGET_Y_OFFSET: u32 = 40;
+const ONE_CLICK_EDGE_FROM_NODE_OFFSET: u32 = 48;
+const ONE_CLICK_EDGE_TO_NODE_OFFSET: u32 = 52;
 const ONE_CLICK_EDGE_RESULT_ID_OFFSET: u32 = 0;
 const ONE_CLICK_EDGE_RESULT_REACHABLE_OFFSET: u32 = 4;
 const ONE_CLICK_EDGE_RESULT_X_POINTER_OFFSET: u32 = 8;
@@ -6238,14 +6240,22 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
 function compareOneClickTargetOrder(
   xPointer: u32,
   yPointer: u32,
+  forwardColumnPointer: u32,
   leftIndex: u32,
   rightIndex: u32,
   isDescending: bool,
 ): i32 {
-  const leftX = load<f64>(xPointer + leftIndex * sizeof<f64>());
-  const rightX = load<f64>(xPointer + rightIndex * sizeof<f64>());
-  if (leftX < rightX) return isDescending ? 1 : -1;
-  if (leftX > rightX) return isDescending ? -1 : 1;
+  if (forwardColumnPointer != 0) {
+    const leftColumn = load<u32>(forwardColumnPointer + leftIndex * sizeof<u32>());
+    const rightColumn = load<u32>(forwardColumnPointer + rightIndex * sizeof<u32>());
+    if (leftColumn < rightColumn) return -1;
+    if (leftColumn > rightColumn) return 1;
+  } else {
+    const leftX = load<f64>(xPointer + leftIndex * sizeof<f64>());
+    const rightX = load<f64>(xPointer + rightIndex * sizeof<f64>());
+    if (leftX < rightX) return isDescending ? 1 : -1;
+    if (leftX > rightX) return isDescending ? -1 : 1;
+  }
   const leftY = load<f64>(yPointer + leftIndex * sizeof<f64>());
   const rightY = load<f64>(yPointer + rightIndex * sizeof<f64>());
   if (leftY < rightY) return 1;
@@ -6288,8 +6298,13 @@ function writeOneClickResult(
 export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
   requireGraphwarGameConstantsInitialized();
-  if (inputByteLength != Layout.ONE_CLICK_INPUT_BYTE_LENGTH) trap();
-  requireArenaRange(inputPointer, Layout.ONE_CLICK_INPUT_BYTE_LENGTH, sizeof<u32>());
+  const isLegacyInput = inputByteLength == Layout.ONE_CLICK_INPUT_LEGACY_BYTE_LENGTH;
+  const hasTargetOrderKeys =
+    inputByteLength == Layout.ONE_CLICK_INPUT_COLUMNS_BYTE_LENGTH || inputByteLength == Layout.ONE_CLICK_INPUT_BYTE_LENGTH;
+  const hasDagDescriptor = inputByteLength == Layout.ONE_CLICK_INPUT_BYTE_LENGTH;
+  if (!isLegacyInput && !hasTargetOrderKeys)
+    trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
   if (
     activeOneClickSessionPointer != 0 ||
     load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_MAGIC_OFFSET) != Layout.ONE_CLICK_INPUT_MAGIC ||
@@ -6301,11 +6316,14 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
       ~(
         Layout.ONE_CLICK_INPUT_FLAG_DELETE_OPTIMIZATION |
         Layout.ONE_CLICK_INPUT_FLAG_STEP_STATEFUL |
-        Layout.ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING
+        Layout.ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING |
+        Layout.ONE_CLICK_INPUT_FLAG_EXPLICIT_DAG
       )) !=
     0
   )
     trap();
+  const isExplicitDag = (flags & Layout.ONE_CLICK_INPUT_FLAG_EXPLICIT_DAG) != 0;
+  if (isExplicitDag && !hasDagDescriptor) trap();
   const isTargetOrderDescending = (flags & Layout.ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING) != 0;
   const candidateCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_COUNT_OFFSET);
   const candidateXPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_X_POINTER_OFFSET);
@@ -6319,10 +6337,95 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   } else if (candidateRadiusPointer != 0 || candidateFlagsPointer != 0) {
     trap();
   }
+  let targetOrderKeysPointer: u32 = 0;
+  if (hasTargetOrderKeys) {
+    targetOrderKeysPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_TARGET_ORDER_KEYS_POINTER_OFFSET);
+    const targetOrderKeysCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_TARGET_ORDER_KEYS_COUNT_OFFSET);
+    if (targetOrderKeysPointer == 0) {
+      if (targetOrderKeysCount != 0) trap();
+    } else {
+      if (targetOrderKeysCount != candidateCount) trap();
+      requireArenaRange(targetOrderKeysPointer, targetOrderKeysCount * sizeof<u32>(), sizeof<u32>());
+    }
+  }
+  let dagJobPointer: u32 = 0;
+  let dagJobCount: u32 = 0;
+  let dagNodeIdsPointer: u32 = 0;
+  let dagNodeIdsCount: u32 = 0;
+  let dagNodeCount: u32 = 0;
+  if (hasDagDescriptor) {
+    dagJobPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_JOB_POINTER_OFFSET);
+    dagJobCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_JOB_COUNT_OFFSET);
+    dagNodeIdsPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_IDS_POINTER_OFFSET);
+    dagNodeIdsCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_IDS_COUNT_OFFSET);
+    dagNodeCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_COUNT_OFFSET);
+    if (isExplicitDag) {
+      if (dagJobCount > u32.MAX_VALUE / Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH) trap();
+      if (dagJobCount == 0) {
+        if (dagJobPointer != 0 || dagNodeIdsPointer != 0 || dagNodeIdsCount != 0 || dagNodeCount != 0) trap();
+      } else {
+        if (dagJobPointer == 0 || dagNodeIdsPointer == 0 || dagNodeIdsCount != dagJobCount * 2 || dagNodeCount == 0)
+          trap();
+        requireArenaRange(
+          dagJobPointer,
+          dagJobCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH,
+          sizeof<u64>(),
+        );
+        requireArenaRange(dagNodeIdsPointer, dagNodeIdsCount * sizeof<u32>(), sizeof<u32>());
+      }
+    } else if (dagJobPointer != 0 || dagJobCount != 0 || dagNodeIdsPointer != 0 || dagNodeIdsCount != 0 || dagNodeCount != 0) {
+      trap();
+    }
+  } else if (isExplicitDag) {
+    trap();
+  }
+  if (isExplicitDag && dagJobCount != 0) {
+    let dagIndex: u32 = 0;
+    while (dagIndex < dagJobCount) {
+      const job = dagJobPointer + dagIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+      if (load<u32>(job + ONE_CLICK_EDGE_ID_OFFSET) != dagIndex) trap();
+      const from = load<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET);
+      const to = load<u32>(job + ONE_CLICK_EDGE_TO_OFFSET);
+      if (to >= candidateCount || (from != u32.MAX_VALUE && (from >= candidateCount || from >= to))) trap();
+      const fromNodeId = load<u32>(job + ONE_CLICK_EDGE_FROM_NODE_OFFSET);
+      const toNodeId = load<u32>(job + ONE_CLICK_EDGE_TO_NODE_OFFSET);
+      if (
+        toNodeId == u32.MAX_VALUE ||
+        toNodeId >= dagNodeCount ||
+        (from == u32.MAX_VALUE && fromNodeId != u32.MAX_VALUE) ||
+        (from != u32.MAX_VALUE &&
+          (fromNodeId == u32.MAX_VALUE || fromNodeId >= dagNodeCount || fromNodeId == toNodeId))
+      )
+        trap();
+      if (
+        load<u32>(dagNodeIdsPointer + dagIndex * 2 * sizeof<u32>()) != fromNodeId ||
+        load<u32>(dagNodeIdsPointer + (dagIndex * 2 + 1) * sizeof<u32>()) != toNodeId
+      )
+        trap();
+      compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET));
+      compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET));
+      compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET));
+      compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET));
+      let previousIndex: u32 = 0;
+      while (previousIndex < dagIndex) {
+        const previousJob = dagJobPointer + previousIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+        if (
+          load<u32>(previousJob + ONE_CLICK_EDGE_FROM_NODE_OFFSET) == fromNodeId &&
+          load<u32>(previousJob + ONE_CLICK_EDGE_TO_NODE_OFFSET) == toNodeId
+        )
+          trap();
+        previousIndex += 1;
+      }
+      dagIndex += 1;
+    }
+  }
   let candidateIndex: u32 = 0;
   while (candidateIndex < candidateCount) {
     const candidateFlags = load<u32>(candidateFlagsPointer + candidateIndex * sizeof<u32>());
-    if (candidateFlags != 1) trap();
+    // Friendly-fire mode legitimately supplies friendly soldiers as targets.
+    // Keep the field a validated binary enum even though target ordering does
+    // not otherwise depend on the faction bit.
+    if (candidateFlags > 1) trap();
     const radius = load<f64>(candidateRadiusPointer + candidateIndex * sizeof<f64>());
     compositionRequireFinite(radius);
     if (radius < 0) trap();
@@ -6365,6 +6468,7 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
         compareOneClickTargetOrder(
           targetXCopy,
           targetYCopy,
+          targetOrderKeysPointer,
           value,
           load<u32>(targetOrderPointer + (insertion - 1) * sizeof<u32>()),
           isTargetOrderDescending,
@@ -6378,71 +6482,98 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
     }
   }
 
-  let pairCount: u64 = 0;
-  let pairFrom: u32 = 0;
-  while (pairFrom < candidateCount) {
-    const pairFromIndex = load<u32>(targetOrderPointer + pairFrom * sizeof<u32>());
-    const pairFromX = load<f64>(targetXCopy + pairFromIndex * sizeof<f64>());
-    let pairTo: u32 = pairFrom + 1;
-    while (pairTo < candidateCount) {
-      const pairToIndex = load<u32>(targetOrderPointer + pairTo * sizeof<u32>());
-      const pairToX = load<f64>(targetXCopy + pairToIndex * sizeof<f64>());
-      if (isTargetOrderDescending ? pairToX < pairFromX : pairToX > pairFromX) pairCount += 1;
-      pairTo += 1;
+  let jobCount: u32 = 0;
+  let jobPointer: u32 = 0;
+  let nodeCount: u32 = isExplicitDag ? dagNodeCount : candidateCount;
+  if (isExplicitDag) {
+    jobCount = dagJobCount;
+    if (jobCount != 0) {
+      jobPointer = reserveArena(jobCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH, sizeof<u64>());
+      memory.copy(jobPointer, dagJobPointer, jobCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH);
     }
-    pairFrom += 1;
+  } else {
+    let pairCount: u64 = 0;
+    let pairFrom: u32 = 0;
+    while (pairFrom < candidateCount) {
+      const pairFromIndex = load<u32>(targetOrderPointer + pairFrom * sizeof<u32>());
+      const pairFromX = load<f64>(targetXCopy + pairFromIndex * sizeof<f64>());
+      let pairTo: u32 = pairFrom + 1;
+      while (pairTo < candidateCount) {
+        const pairToIndex = load<u32>(targetOrderPointer + pairTo * sizeof<u32>());
+        const pairToX = load<f64>(targetXCopy + pairToIndex * sizeof<f64>());
+        if (isTargetOrderDescending ? pairToX < pairFromX : pairToX > pairFromX) pairCount += 1;
+        pairTo += 1;
+      }
+      pairFrom += 1;
+    }
+    const jobCount64 = candidateCount == 0 ? 0 : <u64>candidateCount + pairCount;
+    if (jobCount64 > <u64>u32.MAX_VALUE / Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH) trap();
+    jobCount = <u32>jobCount64;
+    jobPointer = jobCount == 0 ? 0 : reserveArena(jobCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH, sizeof<u64>());
   }
-  const jobCount64 = candidateCount == 0 ? 0 : <u64>candidateCount + pairCount;
-  if (jobCount64 > <u64>u32.MAX_VALUE / Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH) trap();
-  const jobCount = <u32>jobCount64;
-  const jobPointer = jobCount == 0 ? 0 : reserveArena(jobCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH, sizeof<u64>());
   const copiedPathX = pathCount == 0 ? 0 : reserveArena(pathCount * sizeof<f64>(), sizeof<u64>());
   const copiedPathY = pathCount == 0 ? 0 : reserveArena(pathCount * sizeof<f64>(), sizeof<u64>());
   if (pathCount != 0) {
     memory.copy(copiedPathX, pathXPointer, pathCount * sizeof<f64>());
     memory.copy(copiedPathY, pathYPointer, pathCount * sizeof<f64>());
   }
-  let jobIndex: u32 = 0;
-  const startX = pathCount == 0 ? 0 : load<f64>(copiedPathX + (pathCount - 1) * sizeof<f64>());
-  const startY = pathCount == 0 ? 0 : load<f64>(copiedPathY + (pathCount - 1) * sizeof<f64>());
-  let targetPosition: u32 = 0;
-  while (targetPosition < candidateCount) {
-    const targetIndex = load<u32>(targetOrderPointer + targetPosition * sizeof<u32>());
-    const job = jobPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
-    store<u32>(job + ONE_CLICK_EDGE_ID_OFFSET, jobIndex);
-    store<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET, u32.MAX_VALUE);
-    store<u32>(job + ONE_CLICK_EDGE_TO_OFFSET, targetPosition);
-    store<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET, startX);
-    store<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET, startY);
-    store<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET, load<f64>(targetXCopy + targetIndex * sizeof<f64>()));
-    store<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET, load<f64>(targetYCopy + targetIndex * sizeof<f64>()));
-    jobIndex += 1;
-    targetPosition += 1;
+  const completedFlagsPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u8>(), 1);
+  const routeXPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  const routeYPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  const routeCountPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  if (jobCount != 0) {
+    memory.fill(completedFlagsPointer, 0, jobCount);
+    memory.fill(routeXPointer, 0, jobCount * sizeof<u32>());
+    memory.fill(routeYPointer, 0, jobCount * sizeof<u32>());
+    memory.fill(routeCountPointer, 0, jobCount * sizeof<u32>());
   }
-  let fromPosition: u32 = 0;
-  while (fromPosition < candidateCount) {
-    const fromIndex = load<u32>(targetOrderPointer + fromPosition * sizeof<u32>());
-    let toPosition = fromPosition + 1;
-    while (toPosition < candidateCount) {
-      const toIndex = load<u32>(targetOrderPointer + toPosition * sizeof<u32>());
-      const fromX = load<f64>(targetXCopy + fromIndex * sizeof<f64>());
-      const toX = load<f64>(targetXCopy + toIndex * sizeof<f64>());
-      if (isTargetOrderDescending ? toX < fromX : toX > fromX) {
-        const job = jobPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
-        store<u32>(job + ONE_CLICK_EDGE_ID_OFFSET, jobIndex);
-        store<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET, fromPosition);
-        store<u32>(job + ONE_CLICK_EDGE_TO_OFFSET, toPosition);
-        store<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET, fromX);
-        store<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET, load<f64>(targetYCopy + fromIndex * sizeof<f64>()));
-        store<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET, toX);
-        store<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET, load<f64>(targetYCopy + toIndex * sizeof<f64>()));
-        jobIndex += 1;
-      }
-      toPosition += 1;
+  if (!isExplicitDag) {
+    let jobIndex: u32 = 0;
+    const startX = pathCount == 0 ? 0 : load<f64>(copiedPathX + (pathCount - 1) * sizeof<f64>());
+    const startY = pathCount == 0 ? 0 : load<f64>(copiedPathY + (pathCount - 1) * sizeof<f64>());
+    let targetPosition: u32 = 0;
+    while (targetPosition < candidateCount) {
+      const targetIndex = load<u32>(targetOrderPointer + targetPosition * sizeof<u32>());
+      const job = jobPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+      store<u32>(job + ONE_CLICK_EDGE_ID_OFFSET, jobIndex);
+      store<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET, u32.MAX_VALUE);
+      store<u32>(job + ONE_CLICK_EDGE_TO_OFFSET, targetPosition);
+      store<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET, startX);
+      store<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET, startY);
+      store<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET, load<f64>(targetXCopy + targetIndex * sizeof<f64>()));
+      store<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET, load<f64>(targetYCopy + targetIndex * sizeof<f64>()));
+      store<u32>(job + ONE_CLICK_EDGE_FROM_NODE_OFFSET, u32.MAX_VALUE);
+      store<u32>(job + ONE_CLICK_EDGE_TO_NODE_OFFSET, targetPosition);
+      jobIndex += 1;
+      targetPosition += 1;
     }
-    fromPosition += 1;
+    let fromPosition: u32 = 0;
+    while (fromPosition < candidateCount) {
+      const fromIndex = load<u32>(targetOrderPointer + fromPosition * sizeof<u32>());
+      let toPosition = fromPosition + 1;
+      while (toPosition < candidateCount) {
+        const toIndex = load<u32>(targetOrderPointer + toPosition * sizeof<u32>());
+        const fromX = load<f64>(targetXCopy + fromIndex * sizeof<f64>());
+        const toX = load<f64>(targetXCopy + toIndex * sizeof<f64>());
+        if (isTargetOrderDescending ? toX < fromX : toX > fromX) {
+          const job = jobPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+          store<u32>(job + ONE_CLICK_EDGE_ID_OFFSET, jobIndex);
+          store<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET, fromPosition);
+          store<u32>(job + ONE_CLICK_EDGE_TO_OFFSET, toPosition);
+          store<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET, fromX);
+          store<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET, load<f64>(targetYCopy + fromIndex * sizeof<f64>()));
+          store<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET, toX);
+          store<f64>(job + ONE_CLICK_EDGE_TARGET_Y_OFFSET, load<f64>(targetYCopy + toIndex * sizeof<f64>()));
+          store<u32>(job + ONE_CLICK_EDGE_FROM_NODE_OFFSET, fromPosition);
+          store<u32>(job + ONE_CLICK_EDGE_TO_NODE_OFFSET, toPosition);
+          jobIndex += 1;
+        }
+        toPosition += 1;
+      }
+      fromPosition += 1;
+    }
+    if (jobIndex != jobCount) trap();
   }
-  if (jobIndex != jobCount) trap();
 
   memory.fill(sessionPointer, 0, Layout.ONE_CLICK_SESSION_BYTE_LENGTH);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_MAGIC_OFFSET, Layout.ONE_CLICK_SESSION_MAGIC);
@@ -6461,14 +6592,15 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_X_POINTER_OFFSET, 0);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_Y_POINTER_OFFSET, 0);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_COUNT_OFFSET, 0);
-  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_FLAGS_POINTER_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_FLAGS_POINTER_OFFSET, completedFlagsPointer);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET, 0);
-  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINTER_OFFSET, 0);
-  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINT_COUNT_POINTER_OFFSET, 0);
-  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CAPACITY_OFFSET, 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINTER_OFFSET, routeXPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINT_COUNT_POINTER_OFFSET, routeCountPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CAPACITY_OFFSET, routeYPointer);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET, targetOrderPointer);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET, requestedNonce);
   store<f64>(sessionPointer + Layout.ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET, verticalVariationScale);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET, nodeCount);
   if (jobCount == 0) {
     store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
     activeOneClickSessionPointer = 0;
@@ -6551,23 +6683,23 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   compositionRequireFinite(verticalVariationScale);
   if (verticalVariationScale < 0) trap();
   const jobCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_COUNT_OFFSET);
-  if (workCount != jobCount) trap();
+  if (jobCount == 0 || jobCount > u32.MAX_VALUE / sizeof<u32>()) trap();
+  const completedPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_FLAGS_POINTER_OFFSET);
+  const routeXByJobPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINTER_OFFSET);
+  const routeCountByJobPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_POINT_COUNT_POINTER_OFFSET);
+  const routeYByJobPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CAPACITY_OFFSET);
+  if (completedPointer == 0 || routeXByJobPointer == 0 || routeCountByJobPointer == 0 || routeYByJobPointer == 0) trap();
+  requireArenaRange(completedPointer, jobCount, 1);
+  requireArenaRange(routeXByJobPointer, jobCount * sizeof<u32>(), sizeof<u32>());
+  requireArenaRange(routeCountByJobPointer, jobCount * sizeof<u32>(), sizeof<u32>());
+  requireArenaRange(routeYByJobPointer, jobCount * sizeof<u32>(), sizeof<u32>());
+  let completedCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET);
+  if (completedCount > jobCount || workCount > jobCount - completedCount) trap();
   if (workCount == 0) {
     if (workPointer != 0) trap();
   } else {
+    if (workCount > u32.MAX_VALUE / Layout.ONE_CLICK_EDGE_RESULT_BYTE_LENGTH) trap();
     requireArenaRange(workPointer, workCount * Layout.ONE_CLICK_EDGE_RESULT_BYTE_LENGTH, sizeof<u32>());
-  }
-  const completedPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u8>(), 1);
-  const routeXPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
-  const routeYPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
-  const routeCountPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
-  const routeVariationPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<f64>(), sizeof<f64>());
-  if (jobCount != 0) {
-    memory.fill(completedPointer, 0, jobCount);
-    memory.fill(routeXPointer, 0, jobCount * sizeof<u32>());
-    memory.fill(routeYPointer, 0, jobCount * sizeof<u32>());
-    memory.fill(routeCountPointer, 0, jobCount * sizeof<u32>());
-    memory.fill(routeVariationPointer, 0, jobCount * sizeof<f64>());
   }
   let workIndex: u32 = 0;
   while (workIndex < workCount) {
@@ -6583,100 +6715,165 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
     const xPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_X_POINTER_OFFSET);
     const yPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_Y_POINTER_OFFSET);
     const routeCount = load<u32>(result + ONE_CLICK_EDGE_RESULT_COUNT_OFFSET);
-    let routeVariation: f64 = 0;
     if (reachable == 0) {
       if (xPointer != 0 || yPointer != 0 || routeCount != 0) trap();
     } else {
       compositionValidatePointArrays(xPointer, yPointer, routeCount);
       if (routeCount < 2) trap();
-      let routeIndex: u32 = 1;
-      while (routeIndex < routeCount) {
-        const previousY = load<f64>(yPointer + (routeIndex - 1) * sizeof<f64>());
-        const currentY = load<f64>(yPointer + routeIndex * sizeof<f64>());
-        routeVariation += NativeMath.abs(currentY - previousY) * verticalVariationScale;
-        routeIndex += 1;
-      }
     }
     store<u8>(completedPointer + jobId, 1);
-    store<u32>(routeXPointer + jobId * sizeof<u32>(), xPointer);
-    store<u32>(routeYPointer + jobId * sizeof<u32>(), yPointer);
-    store<u32>(routeCountPointer + jobId * sizeof<u32>(), routeCount);
-    store<f64>(routeVariationPointer + jobId * sizeof<f64>(), routeVariation);
+    store<u32>(routeXByJobPointer + jobId * sizeof<u32>(), xPointer);
+    store<u32>(routeYByJobPointer + jobId * sizeof<u32>(), yPointer);
+    store<u32>(routeCountByJobPointer + jobId * sizeof<u32>(), routeCount);
+    completedCount += 1;
     workIndex += 1;
+  }
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET, completedCount);
+
+  if (completedCount < jobCount) {
+    const pendingCount = jobCount - completedCount;
+    const pendingPointer = reserveArena(pendingCount * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH, sizeof<u64>());
+    const jobsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_POINTER_OFFSET);
+    let pendingIndex: u32 = 0;
+    let jobIndex: u32 = 0;
+    while (jobIndex < jobCount) {
+      if (load<u8>(completedPointer + jobIndex) == 0) {
+        memory.copy(
+          pendingPointer + pendingIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH,
+          jobsPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH,
+          Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH,
+        );
+        pendingIndex += 1;
+      }
+      jobIndex += 1;
+    }
+    if (pendingIndex != pendingCount) trap();
+    return writeOneClickResult(
+      Layout.ONE_CLICK_RESULT_STATUS_WAITING_EDGE_BATCH,
+      nonce,
+      requestNonce,
+      sessionPointer,
+      pendingPointer,
+      pendingCount,
+      load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET),
+      load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_COUNT_OFFSET),
+      0,
+      0,
+      0,
+      0,
+    );
   }
 
   const targetCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_COUNT_OFFSET);
-  const bestScorePointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
-  const bestRoutePointCountPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
-  const bestVariationPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<f64>(), sizeof<f64>());
-  const bestJobPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
-  if (targetCount != 0) {
-    memory.fill(bestScorePointer, 0, targetCount * sizeof<u32>());
-    memory.fill(bestRoutePointCountPointer, 0xff, targetCount * sizeof<u32>());
-    memory.fill(bestVariationPointer, 0, targetCount * sizeof<f64>());
-    memory.fill(bestJobPointer, 0xff, targetCount * sizeof<u32>());
+  const sessionNodeCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET);
+  if (jobCount != 0 && sessionNodeCount == 0) trap();
+  const bestScorePointer = sessionNodeCount == 0 ? 0 : reserveArena(sessionNodeCount * sizeof<u32>(), sizeof<u32>());
+  const bestRoutePointCountPointer =
+    sessionNodeCount == 0 ? 0 : reserveArena(sessionNodeCount * sizeof<u32>(), sizeof<u32>());
+  const bestVariationPointer = sessionNodeCount == 0 ? 0 : reserveArena(sessionNodeCount * sizeof<f64>(), sizeof<f64>());
+  const bestJobPointer = sessionNodeCount == 0 ? 0 : reserveArena(sessionNodeCount * sizeof<u32>(), sizeof<u32>());
+  if (sessionNodeCount != 0) {
+    memory.fill(bestScorePointer, 0, sessionNodeCount * sizeof<u32>());
+    memory.fill(bestRoutePointCountPointer, 0xff, sessionNodeCount * sizeof<u32>());
+    memory.fill(bestVariationPointer, 0, sessionNodeCount * sizeof<f64>());
+    memory.fill(bestJobPointer, 0xff, sessionNodeCount * sizeof<u32>());
   }
   let jobIndex: u32 = 0;
-  let bestTarget: u32 = u32.MAX_VALUE;
+  let bestTargetNode: u32 = u32.MAX_VALUE;
+  let bestTargetPosition: u32 = u32.MAX_VALUE;
   let bestTargetScore: u32 = 0;
   let bestTargetRoutePointCount: u32 = u32.MAX_VALUE;
   let bestTargetVariation: f64 = 0;
   const jobsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_POINTER_OFFSET);
-  while (jobIndex < jobCount) {
-    if (load<u8>(completedPointer + jobIndex) != 0 && load<u32>(routeCountPointer + jobIndex * sizeof<u32>()) > 1) {
-      const job = jobsPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
-      const from = load<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET);
-      const to = load<u32>(job + ONE_CLICK_EDGE_TO_OFFSET);
-      if (to >= targetCount) trap();
-      const previousScore = from == u32.MAX_VALUE ? 0 : load<u32>(bestScorePointer + from * sizeof<u32>());
-      if (from != u32.MAX_VALUE && previousScore == 0) {
-        jobIndex += 1;
-        continue;
+  let pass: u32 = 0;
+  let hasChanged = true;
+  while (pass < sessionNodeCount && hasChanged) {
+    hasChanged = false;
+    jobIndex = 0;
+    while (jobIndex < jobCount) {
+      if (load<u8>(completedPointer + jobIndex) != 0 && load<u32>(routeCountByJobPointer + jobIndex * sizeof<u32>()) > 1) {
+        const job = jobsPointer + jobIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+        const from = load<u32>(job + ONE_CLICK_EDGE_FROM_OFFSET);
+        const to = load<u32>(job + ONE_CLICK_EDGE_TO_OFFSET);
+        const fromNodeId = load<u32>(job + ONE_CLICK_EDGE_FROM_NODE_OFFSET);
+        const toNodeId = load<u32>(job + ONE_CLICK_EDGE_TO_NODE_OFFSET);
+        if (
+          to >= targetCount ||
+          toNodeId >= sessionNodeCount ||
+          (from != u32.MAX_VALUE && from >= targetCount) ||
+          (from == u32.MAX_VALUE && fromNodeId != u32.MAX_VALUE) ||
+          (from != u32.MAX_VALUE &&
+            (fromNodeId == u32.MAX_VALUE || fromNodeId >= sessionNodeCount || fromNodeId == toNodeId))
+        )
+          trap();
+        const previousScore =
+          fromNodeId == u32.MAX_VALUE ? 0 : load<u32>(bestScorePointer + fromNodeId * sizeof<u32>());
+        if (fromNodeId != u32.MAX_VALUE && previousScore == 0) {
+          jobIndex += 1;
+          continue;
+        }
+        if (previousScore == u32.MAX_VALUE) trap();
+        const score: u32 = previousScore + 1;
+        const routeCount = load<u32>(routeCountByJobPointer + jobIndex * sizeof<u32>());
+        const previousRoutePointCount = fromNodeId == u32.MAX_VALUE
+          ? 0
+          : load<u32>(bestRoutePointCountPointer + fromNodeId * sizeof<u32>());
+        if (<u64>previousRoutePointCount + <u64>routeCount - 1 > <u64>u32.MAX_VALUE) trap();
+        const routePointCount: u32 = previousRoutePointCount + routeCount - 1;
+        const routeY = load<u32>(routeYByJobPointer + jobIndex * sizeof<u32>());
+        if (routeY == 0) trap();
+        let routeVariation: f64 = 0;
+        let routeIndex: u32 = 1;
+        while (routeIndex < routeCount) {
+          routeVariation +=
+            NativeMath.abs(
+              load<f64>(routeY + routeIndex * sizeof<f64>()) - load<f64>(routeY + (routeIndex - 1) * sizeof<f64>()),
+            ) * verticalVariationScale;
+          routeIndex += 1;
+        }
+        const previousVariation = fromNodeId == u32.MAX_VALUE
+          ? 0
+          : load<f64>(bestVariationPointer + fromNodeId * sizeof<f64>());
+        const variation = previousVariation + routeVariation;
+        const existingScore = load<u32>(bestScorePointer + toNodeId * sizeof<u32>());
+        const existingRoutePointCount = load<u32>(bestRoutePointCountPointer + toNodeId * sizeof<u32>());
+        const existingVariation = load<f64>(bestVariationPointer + toNodeId * sizeof<f64>());
+        const existingJob = load<u32>(bestJobPointer + toNodeId * sizeof<u32>());
+        const isBetterForTarget =
+          score > existingScore ||
+          (score == existingScore &&
+            (routePointCount < existingRoutePointCount ||
+              (routePointCount == existingRoutePointCount &&
+                (variation < existingVariation ||
+                  (variation == existingVariation && jobIndex < existingJob)))));
+        if (isBetterForTarget) {
+          store<u32>(bestScorePointer + toNodeId * sizeof<u32>(), score);
+          store<u32>(bestRoutePointCountPointer + toNodeId * sizeof<u32>(), routePointCount);
+          store<f64>(bestVariationPointer + toNodeId * sizeof<f64>(), variation);
+          store<u32>(bestJobPointer + toNodeId * sizeof<u32>(), jobIndex);
+          hasChanged = true;
+        }
+        const isBetterTarget =
+          score > bestTargetScore ||
+          (score == bestTargetScore &&
+            (routePointCount < bestTargetRoutePointCount ||
+              (routePointCount == bestTargetRoutePointCount &&
+                (variation < bestTargetVariation ||
+                  (variation == bestTargetVariation &&
+                    (to < bestTargetPosition || (to == bestTargetPosition && toNodeId < bestTargetNode)))))));
+        if (isBetterTarget) {
+          bestTargetNode = toNodeId;
+          bestTargetPosition = to;
+          bestTargetScore = score;
+          bestTargetRoutePointCount = routePointCount;
+          bestTargetVariation = variation;
+        }
       }
-      const score: u32 = previousScore + 1;
-      const previousRoutePointCount = from == u32.MAX_VALUE
-        ? 0
-        : load<u32>(bestRoutePointCountPointer + from * sizeof<u32>());
-      const routePointCount: u32 =
-        previousRoutePointCount + load<u32>(routeCountPointer + jobIndex * sizeof<u32>()) - 1;
-      const previousVariation = from == u32.MAX_VALUE
-        ? 0
-        : load<f64>(bestVariationPointer + from * sizeof<f64>());
-      const variation = previousVariation + load<f64>(routeVariationPointer + jobIndex * sizeof<f64>());
-      const existingScore = load<u32>(bestScorePointer + to * sizeof<u32>());
-      const existingRoutePointCount = load<u32>(bestRoutePointCountPointer + to * sizeof<u32>());
-      const existingVariation = load<f64>(bestVariationPointer + to * sizeof<f64>());
-      const existingJob = load<u32>(bestJobPointer + to * sizeof<u32>());
-      const isBetterForTarget =
-        score > existingScore ||
-        (score == existingScore &&
-          (routePointCount < existingRoutePointCount ||
-            (routePointCount == existingRoutePointCount &&
-              (variation < existingVariation ||
-                (variation == existingVariation && jobIndex < existingJob)))));
-      if (isBetterForTarget) {
-        store<u32>(bestScorePointer + to * sizeof<u32>(), score);
-        store<u32>(bestRoutePointCountPointer + to * sizeof<u32>(), routePointCount);
-        store<f64>(bestVariationPointer + to * sizeof<f64>(), variation);
-        store<u32>(bestJobPointer + to * sizeof<u32>(), jobIndex);
-      }
-      const isBetterTarget =
-        score > bestTargetScore ||
-        (score == bestTargetScore &&
-          (routePointCount < bestTargetRoutePointCount ||
-            (routePointCount == bestTargetRoutePointCount &&
-              (variation < bestTargetVariation ||
-                (variation == bestTargetVariation && to < bestTarget)))));
-      if (isBetterTarget) {
-        bestTarget = to;
-        bestTargetScore = score;
-        bestTargetRoutePointCount = routePointCount;
-        bestTargetVariation = variation;
-      }
+      jobIndex += 1;
     }
-    jobIndex += 1;
+    pass += 1;
   }
-  if (bestTarget == u32.MAX_VALUE) {
+  if (bestTargetNode == u32.MAX_VALUE) {
     store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
     activeOneClickSessionPointer = 0;
     return writeOneClickResult(
@@ -6697,22 +6894,25 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
 
   const chainPointer = reserveArena((bestTargetScore + 1) * sizeof<u32>(), sizeof<u32>());
   let chainCount: u32 = 0;
-  let currentTarget = bestTarget;
+  let currentNode = bestTargetNode;
   while (true) {
-    const selectedJob = load<u32>(bestJobPointer + currentTarget * sizeof<u32>());
+    if (chainCount >= sessionNodeCount) trap();
+    const selectedJob = load<u32>(bestJobPointer + currentNode * sizeof<u32>());
     if (selectedJob == u32.MAX_VALUE) trap();
     store<u32>(chainPointer + chainCount * sizeof<u32>(), selectedJob);
     chainCount += 1;
-    const from = load<u32>(jobsPointer + selectedJob * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH + ONE_CLICK_EDGE_FROM_OFFSET);
-    if (from == u32.MAX_VALUE) break;
-    currentTarget = from;
+    const fromNodeId = load<u32>(
+      jobsPointer + selectedJob * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH + ONE_CLICK_EDGE_FROM_NODE_OFFSET,
+    );
+    if (fromNodeId == u32.MAX_VALUE) break;
+    currentNode = fromNodeId;
   }
   const sourcePathCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_COUNT_OFFSET);
   let outputCapacity = sourcePathCount;
   let chainIndex: u32 = 0;
   while (chainIndex < chainCount) {
     const selectedJob = load<u32>(chainPointer + chainIndex * sizeof<u32>());
-    outputCapacity += load<u32>(routeCountPointer + selectedJob * sizeof<u32>());
+    outputCapacity += load<u32>(routeCountByJobPointer + selectedJob * sizeof<u32>());
     chainIndex += 1;
   }
   const outputXPointer = outputCapacity == 0 ? 0 : reserveArena(outputCapacity * sizeof<f64>(), sizeof<u64>());
@@ -6729,9 +6929,9 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   while (chainIndex > 0) {
     chainIndex -= 1;
     const selectedJob = load<u32>(chainPointer + chainIndex * sizeof<u32>());
-    const routeCount = load<u32>(routeCountPointer + selectedJob * sizeof<u32>());
-    const routeX = load<u32>(routeXPointer + selectedJob * sizeof<u32>());
-    const routeY = load<u32>(routeYPointer + selectedJob * sizeof<u32>());
+    const routeCount = load<u32>(routeCountByJobPointer + selectedJob * sizeof<u32>());
+    const routeX = load<u32>(routeXByJobPointer + selectedJob * sizeof<u32>());
+    const routeY = load<u32>(routeYByJobPointer + selectedJob * sizeof<u32>());
     let routeIndex: u32 = outputCount == 0 ? 0 : 1;
     while (routeIndex < routeCount) {
       store<f64>(outputXPointer + outputCount * sizeof<f64>(), load<f64>(routeX + routeIndex * sizeof<f64>()));

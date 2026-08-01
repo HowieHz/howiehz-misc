@@ -3,6 +3,7 @@ import { GraphwarWasmFault, isGraphwarWasmFault } from "../../core/algorithm-bac
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual, xPlusGoesRight } from "../../core/geometry";
 import { graphXAdvancesStrictly } from "../../core/numbers";
+import { imageXToNearestPlaneColumn, planeColumnToForwardColumn } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import { clonePixelPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
@@ -1440,6 +1441,7 @@ async function buildOneClickClearStatelessDag(
       isTargetOrderDescending: !xPlusGoesRight(options.bounds),
       path: options.pathPoints,
       requestNonce: options.wasmRequestNonce ?? 1,
+      targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, targets),
       verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
     });
     if (composition.status === "waiting-edge-batch" && graphwarWasmJobsMatch(typescriptJobs, composition)) {
@@ -1776,6 +1778,7 @@ async function applyWasmPreferredStepDagPath(
     isTargetOrderDescending: !xPlusGoesRight(options.bounds),
     path: options.pathPoints,
     requestNonce: options.wasmRequestNonce ?? 1,
+    targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
     verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
   });
   if (composition.status !== "waiting-edge-batch") {
@@ -1869,6 +1872,20 @@ async function applyWasmPreferredStepDagPath(
   } finally {
     session.cancel();
   }
+}
+
+/** 目标分配已经按该统一 forward 列排序；把相同量化列身份显式带入 WASM。 */
+function createOneClickClearWasmTargetOrderKeys(
+  options: Pick<GraphwarOneClickClearOptions, "bounds" | "boundsRect">,
+  targets: readonly Pick<OneClickClearTarget, "routePoint">[],
+) {
+  const isMirrored = !xPlusGoesRight(options.bounds);
+  return targets.map((target) =>
+    planeColumnToForwardColumn(
+      imageXToNearestPlaneColumn(target.routePoint.x, options.boundsRect, isMirrored),
+      isMirrored,
+    ),
+  );
 }
 
 function deriveOneClickClearPreferredTargetIndexes(

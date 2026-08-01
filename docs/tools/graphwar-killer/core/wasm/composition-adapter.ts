@@ -15,12 +15,12 @@ import type { GraphwarWasmPoint } from "./task-adapter";
 
 /** Versioned flat records shared by the AssemblyScript composition exports. */
 export const graphwarWasmCompositionLayout = {
-  oneClickEdgeJobByteLength: 48,
+  oneClickEdgeJobByteLength: 56,
   oneClickEdgeResultByteLength: 28,
-  oneClickInputByteLength: 64,
+  oneClickInputByteLength: 96,
   oneClickResultByteLength: 52,
   oneClickResumeByteLength: 16,
-  oneClickSessionByteLength: 104,
+  oneClickSessionByteLength: 112,
   smartInputByteLength: 64,
   smartResultByteLength: 32,
 } as const;
@@ -35,6 +35,7 @@ const oneClickInputVersion = 1;
 const oneClickDeleteOptimizationFlag = 1;
 const oneClickStepStatefulFlag = 2;
 const oneClickTargetOrderDescendingFlag = 4;
+const oneClickExplicitDagFlag = 8;
 const oneClickResultMagic = 0x4f_4352_53;
 const oneClickSessionMagic = 0x4f_4353_53;
 const oneClickSessionWaitingPhase = 1;
@@ -85,6 +86,13 @@ const oneClickInput = {
   routeContext: 44,
   requestNonce: 48,
   verticalVariationScale: 56,
+  targetOrderKeys: 64,
+  targetOrderKeyCount: 68,
+  dagJobs: 72,
+  dagJobCount: 76,
+  dagNodeIds: 80,
+  dagNodeIdCount: 84,
+  dagNodeCount: 88,
 } as const;
 
 const oneClickResult = {
@@ -111,6 +119,8 @@ const oneClickEdgeJob = {
   startY: 24,
   targetX: 32,
   targetY: 40,
+  fromNodeId: 48,
+  toNodeId: 52,
 } as const;
 
 const oneClickEdgeResult = {
@@ -148,6 +158,7 @@ const oneClickSession = {
   targetOrder: 84,
   requestNonce: 88,
   verticalVariationScale: 96,
+  nodeCount: 104,
 } as const;
 
 const oneClickResume = {
@@ -190,6 +201,10 @@ export interface GraphwarWasmOneClickCandidate {
 
 export interface GraphwarWasmOneClickClearInput {
   readonly candidates: readonly GraphwarWasmOneClickCandidate[];
+  /** Optional full DAG descriptor; when present WASM consumes these jobs verbatim. */
+  readonly dagJobs?: readonly GraphwarWasmOneClickDagJob[];
+  /** Number of interned DAG nodes referenced by dagJobs. */
+  readonly dagNodeCount?: number;
   readonly isDeleteOptimizationEnabled: boolean;
   readonly isStepStateful: boolean;
   /** Sorts image-x descending when Graphwar's native x+ direction is mirrored. */
@@ -197,6 +212,8 @@ export interface GraphwarWasmOneClickClearInput {
   readonly path: readonly GraphwarWasmPoint[];
   readonly requestNonce: number;
   readonly routeContextPointer?: number;
+  /** Quantized forward-plane columns used to preserve target-assignment identity. */
+  readonly targetOrderKeys?: readonly number[];
   /** Graphwar-unit vertical variation per image-pixel y unit. */
   readonly verticalVariationScale?: number;
 }
@@ -207,6 +224,15 @@ export interface GraphwarWasmOneClickEdgeJob {
   readonly startPoint: GraphwarWasmPoint;
   readonly targetPoint: GraphwarWasmPoint;
   readonly to: number;
+  /** Adapter-interned node identities, present for explicit DAG sessions. */
+  readonly fromNodeId?: number;
+  readonly toNodeId?: number;
+}
+
+/** Full DAG edge descriptor with identities that remain valid for arbitrary-precision Step keys. */
+export interface GraphwarWasmOneClickDagJob extends GraphwarWasmOneClickEdgeJob {
+  readonly fromNodeId: number;
+  readonly toNodeId: number;
 }
 
 export interface GraphwarWasmOneClickEdgeResult {
@@ -239,6 +265,7 @@ export interface GraphwarWasmOneClickSession {
   readonly nonce: number;
   readonly requestNonce: number;
   readonly targetOrder: readonly number[];
+  readonly dagNodeCount?: number;
   cancel(): void;
   resume(results: readonly GraphwarWasmOneClickEdgeResult[]): GraphwarWasmOneClickClearResult;
 }
@@ -252,6 +279,7 @@ interface DecodedOneClickSessionIdentity {
 interface DecodedWaitingOneClickResult {
   readonly __session: DecodedOneClickSessionIdentity;
   readonly edgeJobs: readonly GraphwarWasmOneClickEdgeJob[];
+  readonly dagNodeCount: number;
   readonly status: "waiting-edge-batch";
   readonly targetOrder: readonly number[];
 }
@@ -496,12 +524,60 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     throw new GraphwarWasmAdapterError("invalid-session-identity", "requestNonce must be non-zero", "input");
   }
   const verticalVariationScale = validateNonNegativeFinite(input.verticalVariationScale ?? 1, "verticalVariationScale");
+  const targetOrderKeys = input.targetOrderKeys
+    ? input.targetOrderKeys.map((value, index) => validateGraphwarWasmU32(value, `targetOrderKeys[${index}]`, "input"))
+    : [];
+  if (targetOrderKeys.length !== 0 && targetOrderKeys.length !== candidates.length) {
+    throw new GraphwarWasmAdapterError("invalid-index", "targetOrderKeys must match candidate count", "input");
+  }
+  const dagJobs = input.dagJobs ? input.dagJobs.map((job, index) => validateDagJob(job, index, candidates.length)) : [];
+  const dagNodeCount = input.dagJobs ? validateGraphwarWasmU32(input.dagNodeCount ?? 0, "dagNodeCount", "input") : 0;
+  if (input.dagJobs && dagJobs.length > 0 && dagNodeCount === 0) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "dagNodeCount must be positive", "input");
+  }
+  if (input.dagJobs && dagJobs.length === 0 && dagNodeCount !== 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "dagNodeCount must be zero when dagJobs is empty",
+      "input",
+    );
+  }
+  const dagEdgeIdentities = new Set<string>();
+  for (const [index, job] of dagJobs.entries()) {
+    if (
+      job.toNodeId >= dagNodeCount ||
+      (job.fromNodeId !== oneClickEdgeStartSentinel && job.fromNodeId >= dagNodeCount)
+    ) {
+      throw new GraphwarWasmAdapterError("invalid-index", `dagJobs[${index}] references an unknown DAG node`, "input");
+    }
+    const identity = `${job.fromNodeId}:${job.toNodeId}`;
+    if (dagEdgeIdentities.has(identity)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `dagJobs[${index}] duplicates a DAG node identity`,
+        "input",
+      );
+    }
+    dagEdgeIdentities.add(identity);
+  }
+  validateDagNodeAcyclic(dagJobs);
+  if (!input.dagJobs && input.dagNodeCount !== undefined) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "dagNodeCount requires dagJobs", "input");
+  }
+  const dagNodeIds = new Uint32Array(dagJobs.length * 2);
+  dagJobs.forEach((job, index) => {
+    dagNodeIds[index * 2] = job.fromNodeId;
+    dagNodeIds[index * 2 + 1] = job.toNodeId;
+  });
   return {
     candidateFlags: writeGraphwarWasmUint32Values(
       runtime,
       Uint32Array.from(candidates, ({ flags }) => flags),
       runtime.arenaBase,
     ),
+    dagJobs: writeOneClickDagJobs(runtime, dagJobs),
+    dagNodeCount,
+    dagNodeIds: writeGraphwarWasmUint32Values(runtime, dagNodeIds, runtime.arenaBase),
     candidateX: writeGraphwarWasmFloat64Values(
       runtime,
       new Float64Array(candidates.map(({ point }) => point.x)),
@@ -520,14 +596,118 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     flags:
       (input.isDeleteOptimizationEnabled ? oneClickDeleteOptimizationFlag : 0) |
       (input.isStepStateful ? oneClickStepStatefulFlag : 0) |
-      (input.isTargetOrderDescending ? oneClickTargetOrderDescendingFlag : 0),
+      (input.isTargetOrderDescending ? oneClickTargetOrderDescendingFlag : 0) |
+      (input.dagJobs ? oneClickExplicitDagFlag : 0),
     pathX: writeGraphwarWasmFloat64Values(runtime, new Float64Array(path.map(({ x }) => x)), runtime.arenaBase),
     pathY: writeGraphwarWasmFloat64Values(runtime, new Float64Array(path.map(({ y }) => y)), runtime.arenaBase),
     pathCount: path.length,
     requestNonce,
     routeContextPointer: validateOptionalPointer(input.routeContextPointer, "routeContextPointer"),
+    targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
   };
+}
+
+function validateDagJob(job: GraphwarWasmOneClickDagJob, index: number, targetCount: number) {
+  const id = validateGraphwarWasmU32(job.id, `dagJobs[${index}].id`, "input");
+  if (id !== index) {
+    throw new GraphwarWasmAdapterError("unexpected-work-id", `dagJobs[${index}] id is not stable`, "input");
+  }
+  const from = job.from === -1 ? -1 : validateGraphwarWasmU32(job.from, `dagJobs[${index}].from`, "input");
+  const to = validateGraphwarWasmU32(job.to, `dagJobs[${index}].to`, "input");
+  if (to >= targetCount || (from >= 0 && from >= to)) {
+    throw new GraphwarWasmAdapterError("invalid-index", `dagJobs[${index}] has invalid target indices`, "input");
+  }
+  const fromNodeId = validateGraphwarWasmU32(job.fromNodeId, `dagJobs[${index}].fromNodeId`, "input");
+  const toNodeId = validateGraphwarWasmU32(job.toNodeId, `dagJobs[${index}].toNodeId`, "input");
+  if (toNodeId === oneClickEdgeStartSentinel || (from === -1 && fromNodeId !== oneClickEdgeStartSentinel)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      `dagJobs[${index}] has invalid start identity`,
+      "input",
+    );
+  }
+  if (from >= 0 && (fromNodeId === oneClickEdgeStartSentinel || fromNodeId === toNodeId)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      `dagJobs[${index}] has invalid source identity`,
+      "input",
+    );
+  }
+  return {
+    from,
+    fromNodeId,
+    id,
+    startPoint: validatePoint(job.startPoint, `dagJobs[${index}].startPoint`),
+    targetPoint: validatePoint(job.targetPoint, `dagJobs[${index}].targetPoint`),
+    to,
+    toNodeId,
+  };
+}
+
+function validateDagNodeAcyclic(jobs: readonly ReturnType<typeof validateDagJob>[]) {
+  const indegree = new Map<number, number>();
+  const outgoing = new Map<number, number[]>();
+  for (const job of jobs) {
+    if (job.fromNodeId === oneClickEdgeStartSentinel) {
+      indegree.set(job.toNodeId, indegree.get(job.toNodeId) ?? 0);
+      continue;
+    }
+    indegree.set(job.fromNodeId, indegree.get(job.fromNodeId) ?? 0);
+    indegree.set(job.toNodeId, (indegree.get(job.toNodeId) ?? 0) + 1);
+    const successors = outgoing.get(job.fromNodeId);
+    if (successors) {
+      successors.push(job.toNodeId);
+    } else {
+      outgoing.set(job.fromNodeId, [job.toNodeId]);
+    }
+  }
+  const ready = Array.from(indegree.entries())
+    .filter(([, degree]) => degree === 0)
+    .map(([nodeId]) => nodeId);
+  let processedCount = 0;
+  while (ready.length > 0) {
+    const nodeId = ready.pop();
+    if (nodeId === undefined) {
+      break;
+    }
+    processedCount += 1;
+    for (const successor of outgoing.get(nodeId) ?? []) {
+      const nextDegree = (indegree.get(successor) ?? 0) - 1;
+      indegree.set(successor, nextDegree);
+      if (nextDegree === 0) {
+        ready.push(successor);
+      }
+    }
+  }
+  if (processedCount !== indegree.size) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "DAG node identities contain a cycle", "input");
+  }
+}
+
+function writeOneClickDagJobs(runtime: GraphwarWasmKernelRuntime, jobs: readonly ReturnType<typeof validateDagJob>[]) {
+  if (jobs.length === 0) {
+    return { length: 0, pointer: 0 };
+  }
+  const pointer = runtime.reserveArena(jobs.length * graphwarWasmCompositionLayout.oneClickEdgeJobByteLength, 8);
+  const view = new DataView(
+    runtime.buffer,
+    pointer,
+    jobs.length * graphwarWasmCompositionLayout.oneClickEdgeJobByteLength,
+  );
+  jobs.forEach((job, index) => {
+    const offset = index * graphwarWasmCompositionLayout.oneClickEdgeJobByteLength;
+    view.setUint32(offset + oneClickEdgeJob.id, job.id, true);
+    view.setUint32(offset + oneClickEdgeJob.from, job.from === -1 ? oneClickEdgeStartSentinel : job.from, true);
+    view.setUint32(offset + oneClickEdgeJob.to, job.to, true);
+    view.setFloat64(offset + oneClickEdgeJob.startX, job.startPoint.x, true);
+    view.setFloat64(offset + oneClickEdgeJob.startY, job.startPoint.y, true);
+    view.setFloat64(offset + oneClickEdgeJob.targetX, job.targetPoint.x, true);
+    view.setFloat64(offset + oneClickEdgeJob.targetY, job.targetPoint.y, true);
+    view.setUint32(offset + oneClickEdgeJob.fromNodeId, job.fromNodeId, true);
+    view.setUint32(offset + oneClickEdgeJob.toNodeId, job.toNodeId, true);
+  });
+  return { length: jobs.length, pointer };
 }
 
 function writeOneClickInput(
@@ -550,6 +730,13 @@ function writeOneClickInput(
   view.setUint32(oneClickInput.routeContext, packed.routeContextPointer, true);
   view.setUint32(oneClickInput.requestNonce, packed.requestNonce, true);
   view.setFloat64(oneClickInput.verticalVariationScale, packed.verticalVariationScale, true);
+  view.setUint32(oneClickInput.targetOrderKeys, packed.targetOrderKeys.pointer, true);
+  view.setUint32(oneClickInput.targetOrderKeyCount, packed.targetOrderKeys.length, true);
+  view.setUint32(oneClickInput.dagJobs, packed.dagJobs.pointer, true);
+  view.setUint32(oneClickInput.dagJobCount, packed.dagJobs.length, true);
+  view.setUint32(oneClickInput.dagNodeIds, packed.dagNodeIds.pointer, true);
+  view.setUint32(oneClickInput.dagNodeIdCount, packed.dagNodeIds.length, true);
+  view.setUint32(oneClickInput.dagNodeCount, packed.dagNodeCount, true);
 }
 
 function copyOneClickResult(
@@ -636,6 +823,7 @@ function copyOneClickResult(
         pointer: session.pointer,
         requestNonce: session.requestNonce,
       },
+      dagNodeCount: session.dagNodeCount,
       edgeJobs: session.edgeJobs,
       status: "waiting-edge-batch",
       targetOrder: Array.from(session.targetOrder),
@@ -699,6 +887,7 @@ function createOneClickSession(
     get targetOrder() {
       return currentTargetOrder;
     },
+    dagNodeCount: decoded.dagNodeCount,
     cancel() {
       finish(false);
     },
@@ -735,6 +924,7 @@ function createOneClickSession(
           currentEdgeJobs = decodedResult.edgeJobs;
           currentTargetOrder = decodedResult.targetOrder;
           return {
+            dagNodeCount: decodedResult.dagNodeCount,
             edgeJobs: decodedResult.edgeJobs,
             handle: this,
             status: "waiting-edge-batch",
@@ -758,15 +948,19 @@ function packEdgeResults(
   expectedSessionNonce: number,
   expectedRequestNonce: number,
 ) {
-  if (results.length !== jobs.length) {
+  if (results.length > jobs.length) {
     throw new GraphwarWasmAdapterError(
       "invalid-work-batch",
-      "one-click edge result count does not match the session",
+      "one-click edge result count exceeds the pending session work",
       "input",
     );
   }
-  const seen = new Uint8Array(jobs.length);
-  const records = runtime.reserveArena(results.length * graphwarWasmCompositionLayout.oneClickEdgeResultByteLength, 4);
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
+  const seen = new Set<number>();
+  const records =
+    results.length === 0
+      ? 0
+      : runtime.reserveArena(results.length * graphwarWasmCompositionLayout.oneClickEdgeResultByteLength, 4);
   for (const [index, result] of results.entries()) {
     const jobId = validateGraphwarWasmU32(result.jobId, `edgeResults[${index}].jobId`, "input");
     const sessionNonce = validateGraphwarWasmU32(result.sessionNonce, `edgeResults[${index}].sessionNonce`, "input");
@@ -778,13 +972,14 @@ function packEdgeResults(
         "input",
       );
     }
-    if (jobId >= jobs.length) {
+    const job = jobsById.get(jobId);
+    if (!job) {
       throw new GraphwarWasmAdapterError("unexpected-work-id", `edge result ${jobId} is not in the session`, "input");
     }
-    if (seen[jobId] !== 0) {
+    if (seen.has(jobId)) {
       throw new GraphwarWasmAdapterError("duplicate-work-id", `edge result ${jobId} is duplicated`, "input");
     }
-    seen[jobId] = 1;
+    seen.add(jobId);
     if (typeof result.reachable !== "boolean") {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
@@ -808,7 +1003,6 @@ function packEdgeResults(
       );
     }
     if (result.reachable) {
-      const job = jobs[jobId];
       const first = route[0];
       const last = route.at(-1);
       if (!job || !first || !last || !pointsEqual(first, job.startPoint) || !pointsEqual(last, job.targetPoint)) {
@@ -842,11 +1036,6 @@ function packEdgeResults(
     view.setUint32(oneClickEdgeResult.sessionNonce, sessionNonce, true);
     view.setUint32(oneClickEdgeResult.requestNonce, requestNonce, true);
   }
-  for (const [jobId, value] of seen.entries()) {
-    if (value === 0) {
-      throw new GraphwarWasmAdapterError("missing-work-id", `edge result ${jobId} is missing`, "input");
-    }
-  }
   return { count: results.length, pointer: records };
 }
 
@@ -873,7 +1062,7 @@ function readOneClickSession(
   if (
     nonce === 0 ||
     requestNonce === 0 ||
-    (flags & ~7) !== 0 ||
+    (flags & ~15) !== 0 ||
     view.getUint32(oneClickSession.phase, true) !== oneClickSessionWaitingPhase
   ) {
     throw new GraphwarWasmAdapterError(
@@ -918,6 +1107,11 @@ function readOneClickSession(
   if (sessionTargetCount !== targetCount) {
     throw new GraphwarWasmAdapterError("invalid-session-identity", "one-click session target count changed", "output");
   }
+  const isExplicitDag = (flags & oneClickExplicitDagFlag) !== 0;
+  const dagNodeCount = validateGraphwarWasmU32(
+    view.getUint32(oneClickSession.nodeCount, true),
+    "session DAG node count",
+  );
   const targetOrderValue = validateGraphwarWasmU32(
     view.getUint32(oneClickSession.targetOrder, true),
     "session target order pointer",
@@ -974,30 +1168,147 @@ function readOneClickSession(
     view.getUint32(oneClickSession.edgeJobCount, true),
     "session edge job count",
   );
-  if (
-    sessionJobPointer !== edgeJobPointer ||
-    sessionJobCount !== edgeJobCount ||
-    sessionJobCount === 0 ||
-    sessionJobPointer === 0
-  ) {
-    throw new GraphwarWasmAdapterError("invalid-session-identity", "one-click session edge batch changed", "output");
-  }
-  if (
-    view.getUint32(oneClickSession.completedFlags, true) !== 0 ||
-    view.getUint32(oneClickSession.completedCount, true) !== 0 ||
-    view.getUint32(oneClickSession.resultPathX, true) !== 0 ||
-    view.getUint32(oneClickSession.resultPathY, true) !== 0 ||
-    view.getUint32(oneClickSession.resultPathCount, true) !== 0 ||
-    view.getUint32(oneClickSession.route, true) !== 0 ||
-    view.getUint32(oneClickSession.routePointCount, true) !== 0 ||
-    view.getUint32(oneClickSession.routeCapacity, true) !== 0
-  ) {
+  if (sessionJobPointer === 0 || sessionJobCount === 0) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-state",
-      "waiting one-click session contains completed state",
+      "waiting one-click session has no full edge batch",
       "output",
     );
   }
+  if (
+    view.getUint32(oneClickSession.resultPathX, true) !== 0 ||
+    view.getUint32(oneClickSession.resultPathY, true) !== 0 ||
+    view.getUint32(oneClickSession.resultPathCount, true) !== 0
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "waiting one-click session already has a final path",
+      "output",
+    );
+  }
+  const completedFlagsPointer = validateGraphwarWasmU32(
+    view.getUint32(oneClickSession.completedFlags, true),
+    "session completed flags pointer",
+  );
+  const completedCount = validateGraphwarWasmU32(
+    view.getUint32(oneClickSession.completedCount, true),
+    "session completed count",
+  );
+  if (completedFlagsPointer === 0 || completedCount > sessionJobCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "one-click session completed state is invalid",
+      "output",
+    );
+  }
+  const completedFlagsRange = validateGraphwarWasmMemoryRange(
+    runtime,
+    { pointer: completedFlagsPointer, length: sessionJobCount },
+    { alignment: 1, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+  );
+  const completedFlags = new Uint8Array(
+    completedFlagsRange.buffer,
+    completedFlagsRange.byteOffset,
+    completedFlagsRange.elementLength,
+  ).slice();
+  const routeXByJob = copyGraphwarWasmUint32Values(
+    runtime,
+    {
+      pointer: validateGraphwarWasmU32(view.getUint32(oneClickSession.route, true), "session route x pointer"),
+      length: sessionJobCount,
+    },
+    runtime.arenaBase,
+  );
+  const routeCountByJob = copyGraphwarWasmUint32Values(
+    runtime,
+    {
+      pointer: validateGraphwarWasmU32(
+        view.getUint32(oneClickSession.routePointCount, true),
+        "session route point count pointer",
+      ),
+      length: sessionJobCount,
+    },
+    runtime.arenaBase,
+  );
+  const routeYByJob = copyGraphwarWasmUint32Values(
+    runtime,
+    {
+      pointer: validateGraphwarWasmU32(view.getUint32(oneClickSession.routeCapacity, true), "session route y pointer"),
+      length: sessionJobCount,
+    },
+    runtime.arenaBase,
+  );
+  let observedCompletedCount = 0;
+  for (const [jobId, flag] of completedFlags.entries()) {
+    if (flag > 1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `session completed flag ${jobId} is not boolean`,
+        "output",
+      );
+    }
+    const routeX = routeXByJob[jobId];
+    const routeY = routeYByJob[jobId];
+    const routeCount = routeCountByJob[jobId];
+    if (flag === 0) {
+      if (routeX !== 0 || routeY !== 0 || routeCount !== 0) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          `pending edge ${jobId} retains route data`,
+          "output",
+        );
+      }
+      continue;
+    }
+    observedCompletedCount += 1;
+    if (routeCount === 0) {
+      if (routeX !== 0 || routeY !== 0) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          `unreachable edge ${jobId} retains route data`,
+          "output",
+        );
+      }
+      continue;
+    }
+    if (routeX === 0 || routeY === 0 || routeCount < 2) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `completed edge ${jobId} has no valid route`,
+        "output",
+      );
+    }
+    copyGraphwarWasmFloat64Values(runtime, { pointer: routeX, length: routeCount }, runtime.arenaBase);
+    copyGraphwarWasmFloat64Values(runtime, { pointer: routeY, length: routeCount }, runtime.arenaBase);
+  }
+  if (observedCompletedCount !== completedCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "one-click session completed count does not match its flags",
+      "output",
+    );
+  }
+  const pendingCount = sessionJobCount - completedCount;
+  if (edgeJobCount !== pendingCount || (pendingCount === 0 ? edgeJobPointer !== 0 : edgeJobPointer === 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click result does not contain exactly the pending edge batch",
+      "output",
+    );
+  }
+  const fullEdgeJobs = copyEdgeJobs(
+    runtime,
+    sessionJobPointer,
+    sessionJobCount,
+    targetCount,
+    targetOrder,
+    targetX,
+    targetY,
+    path,
+    dagNodeCount,
+    isExplicitDag,
+    { isStableJobIdRequired: true, jobIdLimit: sessionJobCount },
+  );
   const edgeJobs = copyEdgeJobs(
     runtime,
     edgeJobPointer,
@@ -1007,8 +1318,60 @@ function readOneClickSession(
     targetX,
     targetY,
     path,
+    dagNodeCount,
+    isExplicitDag,
+    { isStableJobIdRequired: false, jobIdLimit: sessionJobCount },
   );
-  return { edgeJobs, nonce, pointer, requestNonce, targetOrder };
+  const fullJobsById = new Map(fullEdgeJobs.map((job) => [job.id, job]));
+  const pendingIds = new Set<number>();
+  for (const job of edgeJobs) {
+    if (completedFlags[job.id] !== 0) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `completed edge ${job.id} was returned in the pending batch`,
+        "output",
+      );
+    }
+    const fullJob = fullJobsById.get(job.id);
+    if (
+      !fullJob ||
+      fullJob.from !== job.from ||
+      fullJob.to !== job.to ||
+      fullJob.startPoint.x !== job.startPoint.x ||
+      fullJob.startPoint.y !== job.startPoint.y ||
+      fullJob.targetPoint.x !== job.targetPoint.x ||
+      fullJob.targetPoint.y !== job.targetPoint.y ||
+      fullJob.fromNodeId !== job.fromNodeId ||
+      fullJob.toNodeId !== job.toNodeId
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `pending edge ${job.id} does not match its retained descriptor`,
+        "output",
+      );
+    }
+    pendingIds.add(job.id);
+  }
+  for (const [jobId, flag] of completedFlags.entries()) {
+    if ((flag === 0) !== pendingIds.has(jobId)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `pending edge batch is missing edge ${jobId}`,
+        "output",
+      );
+    }
+  }
+  if (!isExplicitDag && dagNodeCount !== targetCount) {
+    throw new GraphwarWasmAdapterError("invalid-session-identity", "one-click session node count changed", "output");
+  }
+  if (isExplicitDag && dagNodeCount === 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "explicit one-click session has no DAG nodes",
+      "output",
+    );
+  }
+  return { dagNodeCount, edgeJobs, nonce, pointer, requestNonce, targetOrder };
 }
 
 function copyEdgeJobs(
@@ -1020,6 +1383,9 @@ function copyEdgeJobs(
   targetX: Float64Array,
   targetY: Float64Array,
   path: readonly GraphwarWasmPoint[],
+  dagNodeCount: number,
+  isExplicitDag: boolean,
+  options: { readonly isStableJobIdRequired: boolean; readonly jobIdLimit: number },
 ): GraphwarWasmOneClickEdgeJob[] {
   const range = validateGraphwarWasmMemoryRange(
     runtime,
@@ -1027,6 +1393,8 @@ function copyEdgeJobs(
     { alignment: 8, elementByteLength: 1, minimumPointer: runtime.arenaBase },
   );
   const view = new DataView(range.buffer, range.byteOffset, range.byteLength);
+  const jobIds = new Set<number>();
+  const edgeIdentities = new Set<string>();
   return Array.from({ length: count }, (_, index) => {
     const offset = index * graphwarWasmCompositionLayout.oneClickEdgeJobByteLength;
     const id = validateGraphwarWasmU32(view.getUint32(offset + oneClickEdgeJob.id, true), `edgeJobs[${index}].id`);
@@ -1034,12 +1402,48 @@ function copyEdgeJobs(
     const from =
       fromValue === oneClickEdgeStartSentinel ? -1 : validateGraphwarWasmU32(fromValue, `edgeJobs[${index}].from`);
     const to = validateGraphwarWasmU32(view.getUint32(offset + oneClickEdgeJob.to, true), `edgeJobs[${index}].to`);
-    if (id !== index || to >= targetCount || (from >= 0 && (from >= targetCount || from >= to))) {
+    const fromNodeId = validateGraphwarWasmU32(
+      view.getUint32(offset + oneClickEdgeJob.fromNodeId, true),
+      `edgeJobs[${index}].fromNodeId`,
+    );
+    const toNodeId = validateGraphwarWasmU32(
+      view.getUint32(offset + oneClickEdgeJob.toNodeId, true),
+      `edgeJobs[${index}].toNodeId`,
+    );
+    if (id >= options.jobIdLimit || (options.isStableJobIdRequired && id !== index) || jobIds.has(id)) {
+      throw new GraphwarWasmAdapterError(
+        options.isStableJobIdRequired ? "unexpected-work-id" : "duplicate-work-id",
+        `edge job ${id} does not have a unique retained identity`,
+        "output",
+      );
+    }
+    jobIds.add(id);
+    if (
+      to >= targetCount ||
+      (from >= 0 && (from >= targetCount || from >= to)) ||
+      toNodeId === oneClickEdgeStartSentinel ||
+      toNodeId >= dagNodeCount ||
+      (from < 0 && fromNodeId !== oneClickEdgeStartSentinel) ||
+      (from >= 0 &&
+        (fromNodeId === oneClickEdgeStartSentinel || fromNodeId >= dagNodeCount || fromNodeId === toNodeId)) ||
+      (!isExplicitDag && (fromNodeId !== fromValue || toNodeId !== to))
+    ) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-identity",
         `edge job ${index} has invalid DAG indices`,
         "output",
       );
+    }
+    if (isExplicitDag) {
+      const identity = `${fromNodeId}:${toNodeId}`;
+      if (edgeIdentities.has(identity)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `edge job ${index} duplicates a DAG node identity`,
+          "output",
+        );
+      }
+      edgeIdentities.add(identity);
     }
     const expectedTarget = {
       x: targetX[targetOrder[to]],
@@ -1072,7 +1476,7 @@ function copyEdgeJobs(
         `edgeJobs[${index}].targetY`,
       ),
     };
-    if (!pointsEqual(startPoint, expectedStart) || !pointsEqual(targetPoint, expectedTarget)) {
+    if (!isExplicitDag && (!pointsEqual(startPoint, expectedStart) || !pointsEqual(targetPoint, expectedTarget))) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-identity",
         `edge job ${index} endpoints do not match its target descriptors`,
@@ -1085,6 +1489,7 @@ function copyEdgeJobs(
       startPoint,
       targetPoint,
       to,
+      ...(isExplicitDag ? { fromNodeId, toNodeId } : {}),
     };
   });
 }

@@ -307,6 +307,7 @@ export const ONE_CLICK_INPUT_VERSION: u32 = 1;
 export const ONE_CLICK_INPUT_FLAG_DELETE_OPTIMIZATION: u32 = 1;
 export const ONE_CLICK_INPUT_FLAG_STEP_STATEFUL: u32 = 2;
 export const ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING: u32 = 4;
+export const ONE_CLICK_INPUT_FLAG_EXPLICIT_DAG: u32 = 8;
 export const ONE_CLICK_INPUT_MAGIC_OFFSET: u32 = 0;
 export const ONE_CLICK_INPUT_VERSION_OFFSET: u32 = 4;
 export const ONE_CLICK_INPUT_FLAGS_OFFSET: u32 = 8;
@@ -321,7 +322,17 @@ export const ONE_CLICK_INPUT_PATH_COUNT_OFFSET: u32 = 40;
 export const ONE_CLICK_INPUT_ROUTE_CONTEXT_POINTER_OFFSET: u32 = 44;
 export const ONE_CLICK_INPUT_REQUEST_NONCE_OFFSET: u32 = 48;
 export const ONE_CLICK_INPUT_VERTICAL_VARIATION_SCALE_OFFSET: u32 = 56;
-export const ONE_CLICK_INPUT_BYTE_LENGTH: u32 = 64;
+/** Optional extension carrying the already-quantized forward-plane target columns. */
+export const ONE_CLICK_INPUT_TARGET_ORDER_KEYS_POINTER_OFFSET: u32 = 64;
+export const ONE_CLICK_INPUT_TARGET_ORDER_KEYS_COUNT_OFFSET: u32 = 68;
+export const ONE_CLICK_INPUT_DAG_JOB_POINTER_OFFSET: u32 = 72;
+export const ONE_CLICK_INPUT_DAG_JOB_COUNT_OFFSET: u32 = 76;
+export const ONE_CLICK_INPUT_DAG_NODE_IDS_POINTER_OFFSET: u32 = 80;
+export const ONE_CLICK_INPUT_DAG_NODE_IDS_COUNT_OFFSET: u32 = 84;
+export const ONE_CLICK_INPUT_DAG_NODE_COUNT_OFFSET: u32 = 88;
+export const ONE_CLICK_INPUT_LEGACY_BYTE_LENGTH: u32 = 64;
+export const ONE_CLICK_INPUT_COLUMNS_BYTE_LENGTH: u32 = 72;
+export const ONE_CLICK_INPUT_BYTE_LENGTH: u32 = 96;
 
 export const ONE_CLICK_RESULT_MAGIC: u32 = 0x4f_4352_53;
 export const ONE_CLICK_RESULT_STATUS_COMPLETE: u32 = 0;
@@ -342,12 +353,14 @@ export const ONE_CLICK_RESULT_NONCE_OFFSET: u32 = 44;
 export const ONE_CLICK_RESULT_REQUEST_NONCE_OFFSET: u32 = 48;
 export const ONE_CLICK_RESULT_BYTE_LENGTH: u32 = 52;
 
-// Edge jobs are flat f64 records: id, from target index (-1 encoded as 0xffffffff),
-// to target index, start x/y, target x/y. Results carry the same id plus a route
-// point span, letting the session consume completion in any order.
-export const ONE_CLICK_EDGE_JOB_U32_LENGTH: u32 = 3;
+// Edge jobs are flat records: three leading u32 fields for id/from/to, four f64
+// endpoint fields, then two u32 node identities. Results carry the same id plus
+// a route point span, letting the session consume completion in any order.
+export const ONE_CLICK_EDGE_JOB_U32_LENGTH: u32 = 5;
 export const ONE_CLICK_EDGE_JOB_F64_LENGTH: u32 = 4;
-export const ONE_CLICK_EDGE_JOB_BYTE_LENGTH: u32 = 48;
+export const ONE_CLICK_EDGE_JOB_FROM_NODE_OFFSET: u32 = 48;
+export const ONE_CLICK_EDGE_JOB_TO_NODE_OFFSET: u32 = 52;
+export const ONE_CLICK_EDGE_JOB_BYTE_LENGTH: u32 = 56;
 export const ONE_CLICK_EDGE_RESULT_BYTE_LENGTH: u32 = 28;
 export const ONE_CLICK_SESSION_MAGIC_OFFSET: u32 = 0;
 export const ONE_CLICK_SESSION_MAGIC: u32 = 0x4f_4353_53;
@@ -374,7 +387,8 @@ export const ONE_CLICK_SESSION_ROUTE_CAPACITY_OFFSET: u32 = 80;
 export const ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET: u32 = 84;
 export const ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET: u32 = 88;
 export const ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET: u32 = 96;
-export const ONE_CLICK_SESSION_BYTE_LENGTH: u32 = 104;
+export const ONE_CLICK_SESSION_NODE_COUNT_OFFSET: u32 = 104;
+export const ONE_CLICK_SESSION_BYTE_LENGTH: u32 = 112;
 export const ONE_CLICK_SESSION_PHASE_WAITING_EDGE_BATCH: u32 = 1;
 export const ONE_CLICK_SESSION_PHASE_COMPLETE: u32 = 2;
 export const ONE_CLICK_RESUME_SESSION_POINTER_OFFSET: u32 = 0;

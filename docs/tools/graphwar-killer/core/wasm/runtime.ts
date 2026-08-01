@@ -32,7 +32,9 @@ type GraphwarWasmRequiredFunctionExport = (typeof graphwarWasmRequiredFunctionEx
 const graphwarWasmRuntimeConstructionToken = Symbol("GraphwarWasmRuntimeConstructionToken");
 const SMART_PATHFINDING_INPUT_BYTE_LENGTH = 64;
 const SMART_PATHFINDING_RESULT_BYTE_LENGTH = 32;
-const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 64;
+const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 72;
+const ONE_CLICK_CLEAR_LEGACY_INPUT_BYTE_LENGTH = 64;
+const ONE_CLICK_CLEAR_DAG_INPUT_BYTE_LENGTH = 96;
 const ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH = 52;
 const ONE_CLICK_CLEAR_RESUME_INPUT_BYTE_LENGTH = 16;
 
@@ -408,7 +410,11 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       this,
       inputPointer,
       inputByteLength,
-      ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH,
+      [
+        ONE_CLICK_CLEAR_LEGACY_INPUT_BYTE_LENGTH,
+        ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH,
+        ONE_CLICK_CLEAR_DAG_INPUT_BYTE_LENGTH,
+      ],
       "one-click-clear",
     );
     let resultPointer: number;
@@ -634,16 +640,17 @@ function validateFixedCommandInput(
   runtime: GraphwarWasmKernelRuntime,
   inputPointer: number,
   inputByteLength: number,
-  expectedByteLength: number,
+  expectedByteLength: number | readonly number[],
   commandName: string,
 ) {
   if (!isPositiveU32(inputPointer) || inputPointer % 4 !== 0) {
     throw new GraphwarWasmFault("input", `Graphwar WASM ${commandName} input pointer is invalid`);
   }
-  if (inputByteLength !== expectedByteLength) {
+  const expectedByteLengths = Array.isArray(expectedByteLength) ? expectedByteLength : [expectedByteLength];
+  if (!expectedByteLengths.includes(inputByteLength)) {
     throw new GraphwarWasmFault(
       "input",
-      `Graphwar WASM ${commandName} input must be exactly ${expectedByteLength} bytes`,
+      `Graphwar WASM ${commandName} input must be exactly ${expectedByteLengths.join(" or ")} bytes`,
     );
   }
   const cursor = runtime.arenaCursor;

@@ -1,6 +1,17 @@
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "./game-constants";
 import { floorFormulaDecimal, serializeMagnitudeDecimal } from "./decimal";
-import { FORMULA_EQUATION_DDY, FORMULA_EQUATION_DY, FORMULA_EQUATION_Y } from "./formula-layout";
+import {
+  FORMULA_EQUATION_DDY,
+  FORMULA_EQUATION_DY,
+  FORMULA_EQUATION_Y,
+  FORMULA_INPUT_POINT_COUNT_OFFSET,
+  FORMULA_INPUT_POINT_X_POINTER_OFFSET,
+  FORMULA_INPUT_POINT_Y_POINTER_OFFSET,
+  FORMULA_INPUT_BOUNDS_MIN_X_OFFSET,
+  FORMULA_INPUT_BOUNDS_MAX_X_OFFSET,
+  FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET,
+  FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET,
+} from "./formula-layout";
 import {
   createStepFormulaResolutionFromPlateauState,
   getStepFormulaResolutionStateCount,
@@ -14,6 +25,28 @@ import {
 } from "./formula-step-resolution";
 import { commitArena, markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
 import * as Layout from "./pathfinding-layout";
+import { runTrajectoryRequest } from "./trajectory";
+import {
+  TRAJECTORY_INPUT_BYTE_LENGTH,
+  TRAJECTORY_INPUT_BOUNDS_RECT_X_OFFSET,
+  TRAJECTORY_INPUT_BOUNDS_RECT_Y_OFFSET,
+  TRAJECTORY_INPUT_BOUNDS_RECT_WIDTH_OFFSET,
+  TRAJECTORY_INPUT_BOUNDS_RECT_HEIGHT_OFFSET,
+  TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET,
+  TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET,
+  TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET,
+  TRAJECTORY_RESULT_FLAGS_OFFSET,
+  TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET,
+  TRAJECTORY_RESULT_STOP_REASON_OFFSET,
+  TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET,
+  TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET,
+  TRAJECTORY_RESULT_PATH_ERROR_OFFSET,
+  TRAJECTORY_RESULT_POINT_COUNT_OFFSET,
+  TRAJECTORY_RESULT_POINT_X_POINTER_OFFSET,
+  TRAJECTORY_RESULT_POINT_Y_POINTER_OFFSET,
+  TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR,
+  TRAJECTORY_RESULT_LAUNCH_STATUS_SUCCESS,
+} from "./trajectory-layout";
 import {
   createStepGlitchGeometryContext,
   prepareStepGlitchCandidateFormulaForTest,
@@ -6008,6 +6041,20 @@ function compositionValidateRoutePointArrays(xPointer: u32, yPointer: u32, count
   }
 }
 
+function compositionValidateFloat64Array(pointer: u32, count: u32): void {
+  if (count == 0) {
+    if (pointer != 0) trap();
+    return;
+  }
+  if (count > u32.MAX_VALUE / sizeof<f64>()) trap();
+  requireArenaRange(pointer, count * sizeof<f64>(), sizeof<f64>());
+  let index: u32 = 0;
+  while (index < count) {
+    compositionRequireFinite(load<f64>(pointer + index * sizeof<f64>()));
+    index += 1;
+  }
+}
+
 @inline
 function compositionPointIsCollinear(
   previousX: f64,
@@ -6027,7 +6074,13 @@ function compositionPointIsCollinear(
 }
 
 @inline
-function writeSmartFailure(resultPointer: u32, reason: u32): void {
+function writeSmartFailure(
+  resultPointer: u32,
+  reason: u32,
+  hasBlockedPoint: bool,
+  blockedPointX: f64,
+  blockedPointY: f64,
+): void {
   store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
   store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_FAILURE);
   store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, 0);
@@ -6036,6 +6089,20 @@ function writeSmartFailure(resultPointer: u32, reason: u32): void {
   store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, 0);
   store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 0);
   store<u32>(resultPointer + Layout.SMART_RESULT_FAILURE_REASON_OFFSET, reason);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_GRAPH_X_POINTER_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_ROUTE_X_POINTER_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_ROUTE_Y_POINTER_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_EVIDENCE_COUNT_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATION_ROLE_OFFSET, Layout.SMART_RESULT_VALIDATION_ROLE_NONE);
+  store<u32>(
+    resultPointer + Layout.SMART_RESULT_DETAIL_FLAGS_OFFSET,
+    hasBlockedPoint ? Layout.SMART_RESULT_DETAIL_FLAG_BLOCKED_POINT : 0,
+  );
+  store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_X_OFFSET, 0);
+  store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_Y_OFFSET, 0);
+  store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_RADIUS_OFFSET, 0);
+  store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_X_OFFSET, hasBlockedPoint ? blockedPointX : 0);
+  store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_Y_OFFSET, hasBlockedPoint ? blockedPointY : 0);
 }
 
 @inline
@@ -6049,15 +6116,43 @@ function smartRoutePointOutsideContext(routeX: f64, routeY: f64): bool {
 }
 
 @inline
-function smartPathFailureReason(contextPointer: u32, routeXPointer: u32, routeYPointer: u32, pointCount: u32): u32 {
-  if (contextPointer == 0 || pointCount == 0) return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+function smartTargetPointMatches(
+  pointX: f64,
+  pointY: f64,
+  targetX: f64,
+  targetY: f64,
+  targetRadius: f64,
+): bool {
+  const deltaX = pointX - targetX;
+  const deltaY = pointY - targetY;
+  const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+  // Route-only keeps its pre-trajectory endpoint identity contract: a positive
+  // circle includes its boundary, while zero remains exact-point identity.
+  if (targetRadius <= 0) return distanceSquared <= 0;
+  return distanceSquared <= targetRadius * targetRadius;
+}
+
+@inline
+function smartPathGraphRuleFailureReason(routeGraphXPointer: u32, pointCount: u32): u32 {
+  if (routeGraphXPointer == 0 || pointCount == 0) return Layout.SMART_RESULT_FAILURE_REASON_NONE;
   let index: u32 = 1;
   while (index < pointCount) {
-    const previousX = load<f64>(routeXPointer + (index - 1) * sizeof<f64>());
-    const nextX = load<f64>(routeXPointer + index * sizeof<f64>());
+    const previousX = load<f64>(routeGraphXPointer + (index - 1) * sizeof<f64>());
+    const nextX = load<f64>(routeGraphXPointer + index * sizeof<f64>());
     if (!(nextX > previousX)) return Layout.SMART_RESULT_FAILURE_REASON_GRAPH_RULE;
     index += 1;
   }
+  return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+}
+
+function smartPathRouteFailureReason(
+  contextPointer: u32,
+  routeXPointer: u32,
+  routeYPointer: u32,
+  pointCount: u32,
+): u32 {
+  if (contextPointer == 0 || pointCount == 0) return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+  let index: u32 = 1;
   const firstRouteX = load<f64>(routeXPointer);
   const firstRouteY = load<f64>(routeYPointer);
   if (
@@ -6094,6 +6189,117 @@ function smartPathFailureReason(contextPointer: u32, routeXPointer: u32, routeYP
   return Layout.SMART_RESULT_FAILURE_REASON_NONE;
 }
 
+function smartStepPathFailureReason(
+  contextPointer: u32,
+  graphXPointer: u32,
+  graphYPointer: u32,
+  pointCount: u32,
+): u32 {
+  const modelPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_STEP_MODEL_POINTER_OFFSET);
+  let resolvedY = load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_ORIGIN_Y_OFFSET);
+  let stateSign: i32 = 0;
+  let statePointer: u32 = 0;
+  let stateCount: u32 = 0;
+  const transitionInputPointer = reserveArena(Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(transitionInputPointer, 0, Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH);
+  store<u32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_CONTEXT_POINTER_OFFSET, contextPointer);
+  let index: u32 = 1;
+  while (index < pointCount) {
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_X_OFFSET,
+      load<f64>(graphXPointer + (index - 1) * sizeof<f64>()),
+    );
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_Y_OFFSET,
+      load<f64>(graphYPointer + (index - 1) * sizeof<f64>()),
+    );
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_X_OFFSET,
+      load<f64>(graphXPointer + index * sizeof<f64>()),
+    );
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_Y_OFFSET,
+      load<f64>(graphYPointer + index * sizeof<f64>()),
+    );
+    store<f64>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_RESOLVED_Y_OFFSET, resolvedY);
+    store<i32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_SIGN_OFFSET, stateSign);
+    store<u32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_POINTER_OFFSET, statePointer);
+    store<u32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_COUNT_OFFSET, stateCount);
+    const transitionPointer = runStepTransition(
+      transitionInputPointer,
+      Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH,
+    );
+    if (
+      load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET) !=
+      Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS
+    ) {
+      return Layout.SMART_RESULT_FAILURE_REASON_TRAJECTORY;
+    }
+    resolvedY = load<f64>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET);
+    stateSign = load<i32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET);
+    statePointer = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET);
+    stateCount = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET);
+    index += 1;
+  }
+  return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+}
+
+function smartCandidateFailureReason(
+  contextPointer: u32,
+  routeXPointer: u32,
+  routeYPointer: u32,
+  graphXPointer: u32,
+  graphYPointer: u32,
+  pointCount: u32,
+): u32 {
+  if (contextPointer == 0) return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+  if (
+    graphYPointer != 0 &&
+    (load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) != 0
+  ) {
+    return smartStepPathFailureReason(contextPointer, graphXPointer, graphYPointer, pointCount);
+  }
+  if (graphYPointer != 0) return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+  return smartPathRouteFailureReason(contextPointer, routeXPointer, routeYPointer, pointCount);
+}
+
+@inline
+function smartTrajectoryCandidateIsValid(resultPointer: u32): bool {
+  if (load<i32>(resultPointer + TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET) != TRAJECTORY_RESULT_LAUNCH_STATUS_SUCCESS) {
+    return false;
+  }
+  const targetHitIndex = load<i32>(resultPointer + TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET);
+  const obstacleHitIndex = load<i32>(resultPointer + TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET);
+  return targetHitIndex >= 0 && (obstacleHitIndex < 0 || targetHitIndex <= obstacleHitIndex);
+}
+
+@inline
+function smartTrajectoryPathError(resultPointer: u32): f64 {
+  const hasPathError =
+    (load<u32>(resultPointer + TRAJECTORY_RESULT_FLAGS_OFFSET) & TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) != 0;
+  const pathError = load<f64>(resultPointer + TRAJECTORY_RESULT_PATH_ERROR_OFFSET);
+  if (hasPathError) {
+    if (pathError != pathError || pathError < 0 || pathError == f64.NEGATIVE_INFINITY) trap();
+  } else if (pathError != 0) {
+    trap();
+  }
+  return pathError;
+}
+
+@inline
+function smartCandidatePathErrorIsBetter(
+  hasCandidatePathError: bool,
+  candidatePathError: f64,
+  hasBestPathError: bool,
+  bestPathError: f64,
+): bool {
+  if (!hasCandidatePathError || !hasBestPathError) return false;
+  const isCandidateFinite = candidatePathError != f64.POSITIVE_INFINITY;
+  const isBestFinite = bestPathError != f64.POSITIVE_INFINITY;
+  if (isCandidateFinite && isBestFinite) return candidatePathError < bestPathError;
+  return isCandidateFinite && !isBestFinite;
+}
+
 /** Runs the complete smart composition over a route candidate in one synchronous WASM command. */
 export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
@@ -6107,13 +6313,19 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const flags = load<u32>(inputPointer + Layout.SMART_INPUT_FLAGS_OFFSET);
   if (
     (flags &
-      ~(Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION | Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION)) !=
+      ~(
+        Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION |
+        Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION |
+        Layout.SMART_INPUT_FLAG_GRAPH_VALIDATION |
+        Layout.SMART_INPUT_FLAG_TRAJECTORY_VALIDATION
+      )) !=
     0
   ) trap();
   const pointsXPointer = load<u32>(inputPointer + Layout.SMART_INPUT_POINTS_X_POINTER_OFFSET);
   const pointsYPointer = load<u32>(inputPointer + Layout.SMART_INPUT_POINTS_Y_POINTER_OFFSET);
   const routePointsXPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_POINTS_X_POINTER_OFFSET);
   const routePointsYPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_POINTS_Y_POINTER_OFFSET);
+  const routeGraphXPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_GRAPH_X_POINTER_OFFSET);
   const pointCount = load<u32>(inputPointer + Layout.SMART_INPUT_POINT_COUNT_OFFSET);
   const sourcePointCount = load<u32>(inputPointer + Layout.SMART_INPUT_SOURCE_POINT_COUNT_OFFSET);
   if (sourcePointCount > pointCount) trap();
@@ -6125,46 +6337,36 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   if (targetRadius < 0) trap();
   const routeContextPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_CONTEXT_POINTER_OFFSET);
   const hasRouteContextValidation = (flags & Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION) != 0;
+  const hasGraphValidation = (flags & Layout.SMART_INPUT_FLAG_GRAPH_VALIDATION) != 0;
+  const hasTrajectoryValidation = (flags & Layout.SMART_INPUT_FLAG_TRAJECTORY_VALIDATION) != 0;
   if (hasRouteContextValidation != (routeContextPointer != 0)) trap();
+  if (hasGraphValidation != (hasRouteContextValidation || hasTrajectoryValidation)) trap();
   if (routeContextPointer != 0) requireRouteContext(routeContextPointer);
   if (hasRouteContextValidation) {
     compositionValidateRoutePointArrays(routePointsXPointer, routePointsYPointer, pointCount);
-  } else if (routePointsXPointer != 0 || routePointsYPointer != 0) {
+    compositionValidateFloat64Array(routeGraphXPointer, pointCount);
+  } else if (routePointsXPointer != 0 || routePointsYPointer != 0 || routeGraphXPointer != 0) {
+    trap();
+  }
+  const trajectoryCommandPointer = load<u32>(inputPointer + Layout.SMART_INPUT_TRAJECTORY_COMMAND_POINTER_OFFSET);
+  const trajectoryCommandByteLength = load<u32>(
+    inputPointer + Layout.SMART_INPUT_TRAJECTORY_COMMAND_BYTE_LENGTH_OFFSET,
+  );
+  if (hasTrajectoryValidation) {
+    if (trajectoryCommandByteLength != TRAJECTORY_INPUT_BYTE_LENGTH || pointCount < 2) trap();
+    requireArenaRange(trajectoryCommandPointer, TRAJECTORY_INPUT_BYTE_LENGTH, sizeof<u64>());
+  } else if (trajectoryCommandPointer != 0 || trajectoryCommandByteLength != 0) {
     trap();
   }
 
   const resultPointer = reserveArena(Layout.SMART_RESULT_BYTE_LENGTH, sizeof<u64>());
   if (pointCount == 0) {
-    writeSmartFailure(resultPointer, Layout.SMART_RESULT_FAILURE_REASON_NONE);
-    return resultPointer;
-  }
-
-  const initialFailureReason = smartPathFailureReason(
-    routeContextPointer,
-    routePointsXPointer,
-    routePointsYPointer,
-    pointCount,
-  );
-  if (initialFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
-    writeSmartFailure(resultPointer, initialFailureReason);
+    writeSmartFailure(resultPointer, Layout.SMART_RESULT_FAILURE_REASON_NONE, false, 0, 0);
     return resultPointer;
   }
 
   const targetX = load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_X_OFFSET);
   const targetY = load<f64>(inputPointer + Layout.SMART_INPUT_TARGET_Y_OFFSET);
-  const lastX = load<f64>(pointsXPointer + (pointCount - 1) * sizeof<f64>());
-  const lastY = load<f64>(pointsYPointer + (pointCount - 1) * sizeof<f64>());
-  const targetDeltaX = lastX - targetX;
-  const targetDeltaY = lastY - targetY;
-  const targetRadiusSquared = targetRadius * targetRadius;
-  if (targetDeltaX * targetDeltaX + targetDeltaY * targetDeltaY > targetRadiusSquared) {
-    writeSmartFailure(
-      resultPointer,
-      routeContextPointer == 0 ? Layout.SMART_RESULT_FAILURE_REASON_NONE : Layout.SMART_RESULT_FAILURE_REASON_TARGET,
-    );
-    return resultPointer;
-  }
-
   const outputXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
   const outputYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
   const outputRouteXPointer = hasRouteContextValidation
@@ -6173,15 +6375,151 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const outputRouteYPointer = hasRouteContextValidation
     ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
     : 0;
+  const outputGraphXPointer = hasGraphValidation
+    ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+    : 0;
+  const outputGraphYPointer = hasTrajectoryValidation
+    ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+    : 0;
   memory.copy(outputXPointer, pointsXPointer, pointCount * sizeof<f64>());
   memory.copy(outputYPointer, pointsYPointer, pointCount * sizeof<f64>());
   if (hasRouteContextValidation) {
     memory.copy(outputRouteXPointer, routePointsXPointer, pointCount * sizeof<f64>());
     memory.copy(outputRouteYPointer, routePointsYPointer, pointCount * sizeof<f64>());
   }
+  if (hasTrajectoryValidation) {
+    const boundsMinX = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MIN_X_OFFSET);
+    const boundsMaxX = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MAX_X_OFFSET);
+    const boundsMinY = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET);
+    const boundsMaxY = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET);
+    const boundsRectX = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_X_OFFSET);
+    const boundsRectY = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_Y_OFFSET);
+    const boundsRectWidth = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_WIDTH_OFFSET);
+    const boundsRectHeight = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_HEIGHT_OFFSET);
+    compositionRequireFinite(boundsMinX);
+    compositionRequireFinite(boundsMaxX);
+    compositionRequireFinite(boundsMinY);
+    compositionRequireFinite(boundsMaxY);
+    compositionRequireFinite(boundsRectX);
+    compositionRequireFinite(boundsRectY);
+    compositionRequireFinite(boundsRectWidth);
+    compositionRequireFinite(boundsRectHeight);
+    if (boundsMinX == boundsMaxX || boundsMinY == boundsMaxY || !(boundsRectWidth > 0) || !(boundsRectHeight > 0)) {
+      trap();
+    }
+    let graphIndex: u32 = 0;
+    while (graphIndex < pointCount) {
+      const graphX =
+        boundsMinX +
+        ((load<f64>(outputXPointer + graphIndex * sizeof<f64>()) - boundsRectX) / boundsRectWidth) *
+          (boundsMaxX - boundsMinX);
+      const graphY =
+        boundsMaxY -
+        ((load<f64>(outputYPointer + graphIndex * sizeof<f64>()) - boundsRectY) / boundsRectHeight) *
+          (boundsMaxY - boundsMinY);
+      compositionRequireFinite(graphX);
+      compositionRequireFinite(graphY);
+      store<f64>(outputGraphXPointer + graphIndex * sizeof<f64>(), graphX);
+      store<f64>(outputGraphYPointer + graphIndex * sizeof<f64>(), graphY);
+      if (hasRouteContextValidation && graphX != load<f64>(routeGraphXPointer + graphIndex * sizeof<f64>())) trap();
+      graphIndex += 1;
+    }
+  } else if (hasRouteContextValidation) {
+    memory.copy(outputGraphXPointer, routeGraphXPointer, pointCount * sizeof<f64>());
+  }
+  let initialFailureReason = smartPathGraphRuleFailureReason(outputGraphXPointer, pointCount);
+  if (initialFailureReason == Layout.SMART_RESULT_FAILURE_REASON_NONE && !hasTrajectoryValidation) {
+    const initialLastX = load<f64>(outputXPointer + (pointCount - 1) * sizeof<f64>());
+    const initialLastY = load<f64>(outputYPointer + (pointCount - 1) * sizeof<f64>());
+    if (!smartTargetPointMatches(initialLastX, initialLastY, targetX, targetY, targetRadius)) {
+      writeSmartFailure(
+        resultPointer,
+        hasGraphValidation ? Layout.SMART_RESULT_FAILURE_REASON_TARGET : Layout.SMART_RESULT_FAILURE_REASON_NONE,
+        false,
+        0,
+        0,
+      );
+      return resultPointer;
+    }
+  }
+  let hasInitialBlockedPoint = false;
+  let initialBlockedPointX = 0.0;
+  let initialBlockedPointY = 0.0;
+  if (initialFailureReason == Layout.SMART_RESULT_FAILURE_REASON_NONE) {
+    const initialValidationMark = markArena();
+    initialFailureReason = smartCandidateFailureReason(
+      routeContextPointer,
+      outputRouteXPointer,
+      outputRouteYPointer,
+      outputGraphXPointer,
+      outputGraphYPointer,
+      pointCount,
+    );
+    if (initialFailureReason == Layout.SMART_RESULT_FAILURE_REASON_NONE && hasTrajectoryValidation) {
+      store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_COUNT_OFFSET, pointCount);
+      store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, outputGraphXPointer);
+      store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, outputGraphYPointer);
+      const qualityPointCount = pointCount > 2 ? pointCount - 2 : 0;
+      store<u32>(
+        trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET,
+        qualityPointCount == 0 ? 0 : outputGraphXPointer + sizeof<f64>(),
+      );
+      store<u32>(
+        trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET,
+        qualityPointCount == 0 ? 0 : outputGraphYPointer + sizeof<f64>(),
+      );
+      store<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET, qualityPointCount);
+      const trajectoryResultPointer = runTrajectoryRequest(
+        trajectoryCommandPointer,
+        trajectoryCommandByteLength,
+        0,
+      );
+      smartTrajectoryPathError(trajectoryResultPointer);
+      if (!smartTrajectoryCandidateIsValid(trajectoryResultPointer)) {
+        initialFailureReason = Layout.SMART_RESULT_FAILURE_REASON_TRAJECTORY;
+        const obstacleHitIndex = load<i32>(trajectoryResultPointer + TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET);
+        if (obstacleHitIndex >= 0) {
+          const trajectoryPointCount = load<u32>(trajectoryResultPointer + TRAJECTORY_RESULT_POINT_COUNT_OFFSET);
+          if (<u32>obstacleHitIndex >= trajectoryPointCount) trap();
+          const trajectoryPointXPointer = load<u32>(
+            trajectoryResultPointer + TRAJECTORY_RESULT_POINT_X_POINTER_OFFSET,
+          );
+          const trajectoryPointYPointer = load<u32>(
+            trajectoryResultPointer + TRAJECTORY_RESULT_POINT_Y_POINTER_OFFSET,
+          );
+          const graphX = load<f64>(trajectoryPointXPointer + <u32>obstacleHitIndex * sizeof<f64>());
+          const graphY = load<f64>(trajectoryPointYPointer + <u32>obstacleHitIndex * sizeof<f64>());
+          const boundsMinX = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MIN_X_OFFSET);
+          const boundsMaxX = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MAX_X_OFFSET);
+          const boundsMinY = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET);
+          const boundsMaxY = load<f64>(trajectoryCommandPointer + FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET);
+          const boundsRectX = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_X_OFFSET);
+          const boundsRectY = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_Y_OFFSET);
+          const boundsRectWidth = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_WIDTH_OFFSET);
+          const boundsRectHeight = load<f64>(trajectoryCommandPointer + TRAJECTORY_INPUT_BOUNDS_RECT_HEIGHT_OFFSET);
+          initialBlockedPointX = boundsRectX + ((graphX - boundsMinX) / (boundsMaxX - boundsMinX)) * boundsRectWidth;
+          initialBlockedPointY = boundsRectY + ((boundsMaxY - graphY) / (boundsMaxY - boundsMinY)) * boundsRectHeight;
+          compositionRequireFinite(initialBlockedPointX);
+          compositionRequireFinite(initialBlockedPointY);
+          hasInitialBlockedPoint = true;
+        }
+      }
+    }
+    resetArena(initialValidationMark);
+  }
+  if (initialFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
+    writeSmartFailure(
+      resultPointer,
+      initialFailureReason,
+      hasInitialBlockedPoint,
+      initialBlockedPointX,
+      initialBlockedPointY,
+    );
+    return resultPointer;
+  }
   let outputCount = pointCount;
   let removedCount: u32 = 0;
-  if ((flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 && outputCount > sourcePointCount + 1) {
+  if ((flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 && !hasTrajectoryValidation) {
     let index: u32 = sourcePointCount < 1 ? 1 : sourcePointCount;
     while (index + 1 < outputCount) {
       const previousX = load<f64>(outputXPointer + (index - 1) * sizeof<f64>());
@@ -6190,40 +6528,221 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
       const currentY = load<f64>(outputYPointer + index * sizeof<f64>());
       const nextX = load<f64>(outputXPointer + (index + 1) * sizeof<f64>());
       const nextY = load<f64>(outputYPointer + (index + 1) * sizeof<f64>());
-      if (compositionPointIsCollinear(previousX, previousY, currentX, currentY, nextX, nextY)) {
-        let shift = index;
-        while (shift + 1 < outputCount) {
-          store<f64>(outputXPointer + shift * sizeof<f64>(), load<f64>(outputXPointer + (shift + 1) * sizeof<f64>()));
-          store<f64>(outputYPointer + shift * sizeof<f64>(), load<f64>(outputYPointer + (shift + 1) * sizeof<f64>()));
-          if (hasRouteContextValidation) {
-            store<f64>(
-              outputRouteXPointer + shift * sizeof<f64>(),
-              load<f64>(outputRouteXPointer + (shift + 1) * sizeof<f64>()),
-            );
-            store<f64>(
-              outputRouteYPointer + shift * sizeof<f64>(),
-              load<f64>(outputRouteYPointer + (shift + 1) * sizeof<f64>()),
-            );
-          }
-          shift += 1;
+      if (!compositionPointIsCollinear(previousX, previousY, currentX, currentY, nextX, nextY)) {
+        index += 1;
+        continue;
+      }
+      let shiftIndex = index;
+      while (shiftIndex + 1 < outputCount) {
+        store<f64>(
+          outputXPointer + shiftIndex * sizeof<f64>(),
+          load<f64>(outputXPointer + (shiftIndex + 1) * sizeof<f64>()),
+        );
+        store<f64>(
+          outputYPointer + shiftIndex * sizeof<f64>(),
+          load<f64>(outputYPointer + (shiftIndex + 1) * sizeof<f64>()),
+        );
+        if (hasRouteContextValidation) {
+          store<f64>(
+            outputRouteXPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputRouteXPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+          store<f64>(
+            outputRouteYPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputRouteYPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
         }
-        outputCount -= 1;
-        removedCount += 1;
-      } else {
+        if (hasGraphValidation) {
+          store<f64>(
+            outputGraphXPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputGraphXPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+        }
+        shiftIndex += 1;
+      }
+      outputCount -= 1;
+      removedCount += 1;
+    }
+  } else if (
+    (flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 &&
+    pointCount > 3 &&
+    outputCount > sourcePointCount + 1
+  ) {
+    const candidateXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
+    const candidateYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
+    const candidateRouteXPointer = hasRouteContextValidation
+      ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+      : 0;
+    const candidateRouteYPointer = hasRouteContextValidation
+      ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+      : 0;
+    const candidateGraphXPointer = hasGraphValidation
+      ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+      : 0;
+    const candidateGraphYPointer = hasTrajectoryValidation
+      ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+      : 0;
+    const firstOptimizableIndex = sourcePointCount < 1 ? 1 : sourcePointCount;
+    while (outputCount > sourcePointCount + 1) {
+      let hasBestCandidate = false;
+      let bestCandidateIndex: u32 = 0;
+      let hasBestPathError = false;
+      let bestPathError = 0.0;
+      let index: u32 = firstOptimizableIndex;
+      while (index + 1 < outputCount) {
+        let sourceIndex: u32 = 0;
+        let candidateIndex: u32 = 0;
+        while (sourceIndex < outputCount) {
+          if (sourceIndex != index) {
+            store<f64>(
+              candidateXPointer + candidateIndex * sizeof<f64>(),
+              load<f64>(outputXPointer + sourceIndex * sizeof<f64>()),
+            );
+            store<f64>(
+              candidateYPointer + candidateIndex * sizeof<f64>(),
+              load<f64>(outputYPointer + sourceIndex * sizeof<f64>()),
+            );
+            if (hasRouteContextValidation) {
+              store<f64>(
+                candidateRouteXPointer + candidateIndex * sizeof<f64>(),
+                load<f64>(outputRouteXPointer + sourceIndex * sizeof<f64>()),
+              );
+              store<f64>(
+                candidateRouteYPointer + candidateIndex * sizeof<f64>(),
+                load<f64>(outputRouteYPointer + sourceIndex * sizeof<f64>()),
+              );
+            }
+            if (hasGraphValidation) {
+              store<f64>(
+                candidateGraphXPointer + candidateIndex * sizeof<f64>(),
+                load<f64>(outputGraphXPointer + sourceIndex * sizeof<f64>()),
+              );
+            }
+            if (hasTrajectoryValidation) {
+              store<f64>(
+                candidateGraphYPointer + candidateIndex * sizeof<f64>(),
+                load<f64>(outputGraphYPointer + sourceIndex * sizeof<f64>()),
+              );
+            }
+            candidateIndex += 1;
+          }
+          sourceIndex += 1;
+        }
+        const candidatePointCount = outputCount - 1;
+        let isCandidateValid =
+          smartPathGraphRuleFailureReason(candidateGraphXPointer, candidatePointCount) ==
+          Layout.SMART_RESULT_FAILURE_REASON_NONE;
+        let hasCandidatePathError = false;
+        let candidatePathError = 0.0;
+        if (isCandidateValid) {
+          const candidateMark = markArena();
+          isCandidateValid =
+            smartCandidateFailureReason(
+              routeContextPointer,
+              candidateRouteXPointer,
+              candidateRouteYPointer,
+              candidateGraphXPointer,
+              candidateGraphYPointer,
+              candidatePointCount,
+            ) == Layout.SMART_RESULT_FAILURE_REASON_NONE;
+          if (isCandidateValid && hasTrajectoryValidation) {
+            store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_COUNT_OFFSET, candidatePointCount);
+            store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, candidateGraphXPointer);
+            store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, candidateGraphYPointer);
+            const qualityPointCount = candidatePointCount > 2 ? candidatePointCount - 2 : 0;
+            store<u32>(
+              trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET,
+              qualityPointCount == 0 ? 0 : candidateGraphXPointer + sizeof<f64>(),
+            );
+            store<u32>(
+              trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET,
+              qualityPointCount == 0 ? 0 : candidateGraphYPointer + sizeof<f64>(),
+            );
+            store<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET, qualityPointCount);
+            const trajectoryResultPointer = runTrajectoryRequest(
+              trajectoryCommandPointer,
+              trajectoryCommandByteLength,
+              0,
+            );
+            hasCandidatePathError =
+              (load<u32>(trajectoryResultPointer + TRAJECTORY_RESULT_FLAGS_OFFSET) &
+                TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) !=
+              0;
+            candidatePathError = smartTrajectoryPathError(trajectoryResultPointer);
+            isCandidateValid = smartTrajectoryCandidateIsValid(trajectoryResultPointer);
+          }
+          resetArena(candidateMark);
+        }
+        if (
+          isCandidateValid &&
+          (!hasBestCandidate ||
+            smartCandidatePathErrorIsBetter(
+              hasCandidatePathError,
+              candidatePathError,
+              hasBestPathError,
+              bestPathError,
+            ))
+        ) {
+          hasBestCandidate = true;
+          bestCandidateIndex = index;
+          hasBestPathError = hasCandidatePathError;
+          bestPathError = candidatePathError;
+        }
         index += 1;
       }
+      if (!hasBestCandidate) break;
+      let shiftIndex = bestCandidateIndex;
+      while (shiftIndex + 1 < outputCount) {
+        store<f64>(
+          outputXPointer + shiftIndex * sizeof<f64>(),
+          load<f64>(outputXPointer + (shiftIndex + 1) * sizeof<f64>()),
+        );
+        store<f64>(
+          outputYPointer + shiftIndex * sizeof<f64>(),
+          load<f64>(outputYPointer + (shiftIndex + 1) * sizeof<f64>()),
+        );
+        if (hasRouteContextValidation) {
+          store<f64>(
+            outputRouteXPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputRouteXPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+          store<f64>(
+            outputRouteYPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputRouteYPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+        }
+        if (hasGraphValidation) {
+          store<f64>(
+            outputGraphXPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputGraphXPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+        }
+        if (hasTrajectoryValidation) {
+          store<f64>(
+            outputGraphYPointer + shiftIndex * sizeof<f64>(),
+            load<f64>(outputGraphYPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+        }
+        shiftIndex += 1;
+      }
+      outputCount -= 1;
+      removedCount += 1;
     }
   }
-
-  const outputFailureReason = smartPathFailureReason(
-    routeContextPointer,
-    outputRouteXPointer,
-    outputRouteYPointer,
-    outputCount,
-  );
-  if (outputFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
-    writeSmartFailure(resultPointer, outputFailureReason);
-    return resultPointer;
+  if (!hasTrajectoryValidation) {
+    let outputFailureReason = smartPathGraphRuleFailureReason(outputGraphXPointer, outputCount);
+    if (outputFailureReason == Layout.SMART_RESULT_FAILURE_REASON_NONE) {
+      outputFailureReason = smartPathRouteFailureReason(
+        routeContextPointer,
+        outputRouteXPointer,
+        outputRouteYPointer,
+        outputCount,
+      );
+    }
+    if (outputFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
+      writeSmartFailure(resultPointer, outputFailureReason, false, 0, 0);
+      return resultPointer;
+    }
   }
 
   store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
@@ -6234,6 +6753,25 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, removedCount);
   store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 1);
   store<u32>(resultPointer + Layout.SMART_RESULT_FAILURE_REASON_OFFSET, Layout.SMART_RESULT_FAILURE_REASON_NONE);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_GRAPH_X_POINTER_OFFSET, outputGraphXPointer);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_ROUTE_X_POINTER_OFFSET, outputRouteXPointer);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_ROUTE_Y_POINTER_OFFSET, outputRouteYPointer);
+  store<u32>(
+    resultPointer + Layout.SMART_RESULT_OUTPUT_EVIDENCE_COUNT_OFFSET,
+    hasGraphValidation ? outputCount : 0,
+  );
+  store<u32>(
+    resultPointer + Layout.SMART_RESULT_VALIDATION_ROLE_OFFSET,
+    hasTrajectoryValidation
+      ? Layout.SMART_RESULT_VALIDATION_ROLE_TRAJECTORY
+      : Layout.SMART_RESULT_VALIDATION_ROLE_ROUTE_ONLY,
+  );
+  store<u32>(resultPointer + Layout.SMART_RESULT_DETAIL_FLAGS_OFFSET, 0);
+  store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_X_OFFSET, targetX);
+  store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_Y_OFFSET, targetY);
+  store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_RADIUS_OFFSET, targetRadius);
+  store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_X_OFFSET, 0);
+  store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_Y_OFFSET, 0);
   return resultPointer;
 }
 

@@ -1752,6 +1752,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 100, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toThrow(/disposed/u);
     expect(() => context.dispose()).toThrow(/disposed/u);
@@ -1784,6 +1785,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 200, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ removedPointCount: 1, status: "success" });
 
@@ -1798,6 +1800,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 200, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "graph-rule", status: "failure" });
 
@@ -1811,6 +1814,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 600, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "target", status: "failure" });
 
@@ -1821,6 +1825,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 1, y: 1 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
 
@@ -1831,6 +1836,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: -1, y: 1 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
 
@@ -1845,6 +1851,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 600, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "graph-rule", status: "failure" });
 
@@ -1858,6 +1865,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 600, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
     context.dispose();
@@ -1886,6 +1894,7 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 100, y: 225 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ status: "success" });
     context.dispose();
@@ -1913,8 +1922,41 @@ describe("Graphwar WASM route context", () => {
         sourcePointCount: 1,
         target: { x: 1, y: 1 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
+    context.dispose();
+  });
+
+  it.each([
+    { name: "normal", isMirrored: false },
+    { name: "mirrored", isMirrored: true },
+  ])("keeps continuous Graphwar x+ for subpixel points in a scaled $name map", async ({ isMirrored }) => {
+    const runtime = await createRuntime();
+    const scaledBoundsRect = { height: 900, width: 1540, x: 10.25, y: 20.75 };
+    const routeBounds = isMirrored ? { ...bounds, maxX: bounds.minX, minX: bounds.maxX } : bounds;
+    const firstPoint = createPixelPoint(scaledBoundsRect.x + (isMirrored ? 200.4 : 200.1), scaledBoundsRect.y + 450);
+    const targetPoint = createPixelPoint(scaledBoundsRect.x + (isMirrored ? 200.1 : 200.4), scaledBoundsRect.y + 450);
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds: routeBounds,
+      boundsRect: scaledBoundsRect,
+      routeOriginPoint: imageToGraphPoint(firstPoint, routeBounds, scaledBoundsRect),
+      routeTolerancePlanePixels: 0,
+      sourceMask: new Uint8Array(planeCellCount),
+      sourceMaskType: "route",
+    });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [firstPoint, targetPoint],
+        sourcePointCount: 1,
+        target: targetPoint,
+        targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ status: "success" });
     context.dispose();
   });
 

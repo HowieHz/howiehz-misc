@@ -25,7 +25,7 @@ import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createPixelPoint } from "../../core/types";
 import type { GraphBounds, PixelPoint } from "../../core/types";
 import { runGraphwarWasmSmartPathfinding } from "../../core/wasm/composition-adapter";
-import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
+import { createGraphwarWasmRouteContext, type GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
   createGraphwarWasmStepGlitchContext,
@@ -729,40 +729,7 @@ async function findSmartPathResult(
         : {}),
     });
     try {
-      // The retained route context owns graph-rule and route-mask validation
-      // for the effective WASM composition command. Numeric trajectory checks
-      // remain the single TypeScript result boundary until the smart core ABI
-      // carries formula/trajectory evidence.
-      const composed = measureSyncStage(timings, "optimize-path", () =>
-        wasmRouteContext.runSmartPathfinding({
-          isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
-          points: normalizedPath,
-          sourcePointCount: input.sourcePath.length,
-          target: input.targetPoint,
-          targetRadius: input.hitTarget.radius,
-        }),
-      );
-      if (composed.status === "failure") {
-        return {
-          failureReason: composed.failureReason === "graph-rule" ? "graph-rule" : "route",
-          timings,
-        };
-      }
-      const path = composed.points.map(({ x, y }) => createPixelPoint(x, y));
-      const validation = measureSyncStage(timings, "validate-trajectory", () =>
-        validateSmartPathfindingTrajectory(input, path, formulaMode, runtimePolicy, debugMetrics, wasmRuntime),
-      );
-      if (!validation.followsGraphRule) {
-        return { failureReason: "graph-rule", timings };
-      }
-      if (!validation.reachesTargetBeforeObstacle) {
-        return {
-          ...(validation.blockedPoint ? { blockedPoint: validation.blockedPoint } : {}),
-          failureReason: "trajectory",
-          timings,
-        };
-      }
-      return { path, timings };
+      return findOrdinarySmartPathWithWasm(input, normalizedPath, formulaMode, wasmRouteContext, timings);
     } finally {
       wasmRouteContext.dispose();
     }
@@ -789,6 +756,87 @@ async function findSmartPathResult(
         )
       : normalizedPath;
   return { path, timings };
+}
+
+/**
+ * 打包普通智能寻路候选，并由单个 WASM 命令负责路线检查、轨迹回放和删点。
+ *
+ * 该导出测试缝无需伪造真实 retained route-context 指针，也能证明 effective WASM 分支成功后不再运行 TypeScript 轨迹和优化核心。
+ */
+export function findOrdinarySmartPathWithWasm(
+  input: GraphwarSmartPathfindingPathInput,
+  normalizedPath: readonly PixelPoint[],
+  formulaMode: GraphwarTrajectoryFormulaMode,
+  wasmRouteContext: Pick<GraphwarWasmRouteContext, "runSmartPathfinding">,
+  timings: GraphwarSmartPathfindingWorkerTiming[],
+): GraphwarSmartPathfindingPathResult {
+  const graphPoints = normalizedPath.map((point) => imageToGraphPoint(point, input.bounds, input.boundsRect));
+  const soldierCenter = graphPoints[0];
+  if (!soldierCenter) {
+    return { failureReason: "route", timings };
+  }
+
+  // 单个原子命令绑定候选公式、命中圈、模拟碰撞策略和质量点，避免 WASM 成功后再由 TS 重放。
+  const shouldOptimizePath = input.isDeleteOptimizationEnabled && normalizedPath.length > 3;
+  const composed = measureSyncStage(timings, shouldOptimizePath ? "optimize-path" : "validate-trajectory", () =>
+    wasmRouteContext.runSmartPathfinding({
+      isDeleteOptimizationEnabled: shouldOptimizePath,
+      points: normalizedPath,
+      sourcePointCount: input.sourcePath.length,
+      target: input.hitTarget.center,
+      targetRadius: input.hitTarget.radius,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: input.bounds,
+          points: graphPoints,
+          settings: formulaMode.settings,
+          soldierCenter,
+        },
+        stop: {
+          boundsRect: input.boundsRect,
+          collision: input.simulationMask
+            ? {
+                boundaryExpansion: input.simulationBoundaryExpansion,
+                mask: input.simulationMask,
+                type: "mask",
+              }
+            : { type: "none" },
+          continueAfterTargetsUntilGraphX: { type: "none" },
+          orderedTargets: [input.hitTarget],
+          qualityPoints: graphPoints.slice(1, -1),
+          requiredTargets: [],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets",
+        },
+        type: "trajectory",
+      },
+    }),
+  );
+  if (composed.status === "success") {
+    return { path: composed.points.map(({ x, y }) => createPixelPoint(x, y)), timings };
+  }
+  return {
+    ...(composed.blockedPoint
+      ? { blockedPoint: createPixelPoint(composed.blockedPoint.x, composed.blockedPoint.y) }
+      : {}),
+    failureReason: mapWasmSmartFailureReason(composed.failureReason),
+    timings,
+  };
+}
+
+/** 把 WASM composition 的细分失败映射回智能寻路原有的公开失败分类。 */
+export function mapWasmSmartFailureReason(
+  reason: "graph-rule" | "route-obstacle" | "target" | "trajectory" | undefined,
+): "graph-rule" | "route" | "trajectory" {
+  if (reason === "graph-rule") {
+    return "graph-rule";
+  }
+  if (reason === "target" || reason === "trajectory") {
+    return "trajectory";
+  }
+  return "route";
 }
 
 /** Step ODE 邪道单目标直接扫描控制点；不经过普通 route mask、Theta* 或可视图。 */
@@ -956,22 +1004,30 @@ export function findStepGlitchSmartPathWithWasm(
       sourcePointCount: input.sourcePath.length,
       target: input.targetPoint,
       targetRadius: input.hitTarget.radius,
+      trajectoryValidation: { type: "route-only" },
     });
-    if (composed.status === "success") {
-      const composedPath = composed.points.map(({ x, y }) => createPixelPoint(x, y));
-      const replay = scanner.replayRaw({
-        controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
-        finalValidation: { type: "none" },
-        path: composedPath,
-        targetSequence: [input.hitTarget],
-        type: "replay",
-        windows: { type: "automatic" },
-      });
-      if (replay.status === "hit") {
-        path = composedPath;
-      }
+    if (composed.status !== "success") {
+      return {
+        ...(composed.blockedPoint
+          ? { blockedPoint: graphToImagePoint(composed.blockedPoint, input.bounds, input.boundsRect) }
+          : {}),
+        failureReason: mapWasmSmartFailureReason(composed.failureReason),
+        timings,
+      };
     }
-    // The production evidence ABI intentionally carries no complete prefix evidence; do not publish a synthetic one.
+    const composedPath = composed.points.map(({ x, y }) => createPixelPoint(x, y));
+    const replay = scanner.replayRaw({
+      controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
+      finalValidation: { type: "none" },
+      path: composedPath,
+      targetSequence: [input.hitTarget],
+      type: "replay",
+      windows: { type: "automatic" },
+    });
+    if (replay.status === "hit") {
+      path = composedPath;
+    }
+    // 当前生产 evidence ABI 不携带完整 prefix evidence，不能据此合成一份可复用证据。
     return { path, timings };
   } finally {
     scanner.dispose();

@@ -9,13 +9,14 @@ import type {
   PlaneMaskClosedRegion,
 } from "../../pathfinding/routing/step-envelope";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
-import { graphToImagePoint } from "../geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../geometry";
 import {
   imagePointToPlaneGridPoint,
   mirrorPlaneGridPoint,
   planeGridPointsEqual,
   type PlaneGridPoint,
 } from "../plane-grid";
+import { createPixelPoint } from "../types";
 import type { GraphPoint } from "../types";
 import {
   GraphwarWasmAdapterError,
@@ -128,10 +129,16 @@ export interface GraphwarWasmRouteContext {
   lineHitsObstacle: (start: PlaneGridPoint, end: PlaneGridPoint) => boolean;
   pointHitsObstacle: (point: PlaneGridPoint) => boolean;
   /** Runs smart composition while this retained context remains the validator owner. */
-  runSmartPathfinding: (
-    input: Omit<GraphwarWasmSmartPathfindingInput, "routeContextPointer" | "routeValidationPoints">,
-  ) => GraphwarWasmSmartPathfindingResult;
+  runSmartPathfinding: (input: GraphwarWasmRouteSmartPathfindingInput) => GraphwarWasmSmartPathfindingResult;
 }
+
+type OmitGraphwarWasmSmartRouteContext<Input> = Input extends GraphwarWasmSmartPathfindingInput
+  ? Omit<Input, "routeContextPointer" | "routeValidationEvidence">
+  : never;
+
+/** The retained route context supplies its own pointer and coordinate-bound validation evidence. */
+export type GraphwarWasmRouteSmartPathfindingInput =
+  OmitGraphwarWasmSmartRouteContext<GraphwarWasmSmartPathfindingInput>;
 
 /** Canonical Step state is always transported with both its finite runtime height and exact integer identity. */
 export interface GraphwarWasmStepRouteState {
@@ -741,9 +748,14 @@ export function createGraphwarWasmRouteContext(
         return runGraphwarWasmSmartPathfinding(runtime, {
           ...smartInput,
           routeContextPointer: contextPointer,
-          routeValidationPoints: smartInput.points.map((point) =>
-            imagePointToSmartRouteValidationPoint(point, input.boundsRect, isMirrored),
-          ),
+          routeValidationEvidence: {
+            graphX: smartInput.points.map(
+              (point) => imageToGraphPoint(createPixelPoint(point.x, point.y), routeBounds, routeBoundsRect).x,
+            ),
+            points: smartInput.points.map((point) =>
+              imagePointToSmartRouteValidationPoint(point, input.boundsRect, isMirrored),
+            ),
+          },
         });
       },
       dispose() {

@@ -358,17 +358,20 @@ test("guards the source and release configuration against managed hot-path alloc
 
   const trajectorySource = executableSources.find(({ file }) => file === "trajectory.ts")?.source ?? "";
   const stepGlitchSource = executableSources.find(({ file }) => file === "step-glitch.ts")?.source ?? "";
+  const pathfindingSource = executableSources.find(({ file }) => file === "pathfinding.ts")?.source ?? "";
   const trajectoryRequestReferenceFiles = executableSources
     .filter(({ source }) => /\brunTrajectoryRequest\b/.test(source))
     .map(({ file }) => file)
     .sort();
-  assert.deepEqual(trajectoryRequestReferenceFiles, ["step-glitch.ts", "trajectory.ts"]);
-  assert.equal((combinedSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 5);
+  assert.deepEqual(trajectoryRequestReferenceFiles, ["pathfinding.ts", "step-glitch.ts", "trajectory.ts"]);
+  assert.equal((combinedSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 8);
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 2);
   assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 3);
-  assert.equal((combinedSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 4);
+  assert.equal((pathfindingSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 3);
+  assert.equal((combinedSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 6);
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
   assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
+  assert.equal((pathfindingSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
   assert.match(stepGlitchSource, /import \{ runTrajectoryRequest(?:, runTrajectoryRequestWithMetadata)? \} ;/);
   const prepareLaunchReferenceFiles = executableSources
     .filter(({ source }) => /\brunPrepareLaunch\b/.test(source))

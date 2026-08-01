@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { GraphwarWasmFault } from "../algorithm-backend";
 import { createGraphwarGameConstantData } from "../game/constants";
+import { graphwarWasmCompositionLayout } from "./composition-adapter";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import {
   compileGraphwarWasmModule,
@@ -117,11 +118,15 @@ describe("Graphwar WASM runtime boundary", () => {
     const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
       instantiate: async () => arena.instance,
     });
-    const inputPointer = runtime.reserveArena(64, 4);
+    const inputPointer = runtime.reserveArena(graphwarWasmCompositionLayout.smartInputByteLength, 4);
 
     expect(() => runtime.runSmartPathfinding(inputPointer, 55)).toThrowError(GraphwarWasmFault);
-    expect(() => runtime.runSmartPathfinding(inputPointer + 2, 64)).toThrowError(GraphwarWasmFault);
-    expect(() => runtime.runSmartPathfinding(runtime.arenaCursor, 64)).toThrowError(GraphwarWasmFault);
+    expect(() =>
+      runtime.runSmartPathfinding(inputPointer + 2, graphwarWasmCompositionLayout.smartInputByteLength),
+    ).toThrowError(GraphwarWasmFault);
+    expect(() =>
+      runtime.runSmartPathfinding(runtime.arenaCursor, graphwarWasmCompositionLayout.smartInputByteLength),
+    ).toThrowError(GraphwarWasmFault);
     expect(runSmartPathfinding).not.toHaveBeenCalled();
   });
 
@@ -131,15 +136,15 @@ describe("Graphwar WASM runtime boundary", () => {
     );
     const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
     const reserveResult = (byteLength: number) => rawExports.reserveArena(byteLength, 8);
-    rawExports.runSmartPathfinding = () => reserveResult(32);
+    rawExports.runSmartPathfinding = () => reserveResult(graphwarWasmCompositionLayout.smartResultByteLength);
     rawExports.beginOneClickClear = () => reserveResult(52);
     rawExports.resumeOneClickClear = () => reserveResult(52);
     const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
       instantiate: async () => arena.instance,
     });
 
-    const inputPointer = runtime.reserveArena(64, 4);
-    expect(runtime.runSmartPathfinding(inputPointer, 64) % 8).toBe(0);
+    const inputPointer = runtime.reserveArena(graphwarWasmCompositionLayout.smartInputByteLength, 4);
+    expect(runtime.runSmartPathfinding(inputPointer, graphwarWasmCompositionLayout.smartInputByteLength) % 8).toBe(0);
     expect(runtime.beginOneClickClear(inputPointer, 64) % 8).toBe(0);
 
     const resumePointer = runtime.reserveArena(16, 4);
@@ -155,9 +160,11 @@ describe("Graphwar WASM runtime boundary", () => {
     const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
       instantiate: async () => arena.instance,
     });
-    const inputPointer = runtime.reserveArena(64, 4);
+    const inputPointer = runtime.reserveArena(graphwarWasmCompositionLayout.smartInputByteLength, 4);
 
-    expect(() => runtime.runSmartPathfinding(inputPointer, 64)).toThrowError(GraphwarWasmFault);
+    expect(() =>
+      runtime.runSmartPathfinding(inputPointer, graphwarWasmCompositionLayout.smartInputByteLength),
+    ).toThrowError(GraphwarWasmFault);
   });
 
   it("uploads the canonical game constants once and releases the initialization scratch", async () => {

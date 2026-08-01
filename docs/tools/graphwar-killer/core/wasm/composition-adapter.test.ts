@@ -24,16 +24,20 @@ describe("Graphwar WASM composition adapter", () => {
       sourcePointCount: 1,
       target: { x: 2, y: 2 },
       targetRadius: 0,
+      trajectoryValidation: { type: "route-only" },
     });
 
     expect(result).toEqual({
-      isValidated: true,
       points: [
         { x: 0, y: 0 },
         { x: 2, y: 2 },
       ],
       removedPointCount: 1,
       status: "success",
+      validation: {
+        target: { center: { x: 2, y: 2 }, radius: 0 },
+        type: "route-only",
+      },
     });
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
@@ -48,6 +52,7 @@ describe("Graphwar WASM composition adapter", () => {
         sourcePointCount: 0,
         target: { x: 2, y: 2 },
         targetRadius: 1,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
 
@@ -58,8 +63,76 @@ describe("Graphwar WASM composition adapter", () => {
         sourcePointCount: 0,
         target: { x: 2, y: 2 },
         targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
       }),
     ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
+  });
+
+  it("keeps route-only positive target radii closed while reserving zero for exact identity", async () => {
+    const runtime = await createRuntime();
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 2, y: 0 },
+        targetRadius: 1,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ status: "success" });
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 0, y: 0 },
+          { x: 0.99, y: 0 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 2, y: 0 },
+        targetRadius: 1,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 1, y: 0 },
+        targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ status: "success" });
+  });
+
+  it("does not apply trajectory deletion semantics to a non-collinear route-only path", async () => {
+    const runtime = await createRuntime();
+    const points = [
+      { x: 0, y: 0 },
+      { x: 1, y: 1 },
+      { x: 2, y: 0 },
+      { x: 3, y: 1 },
+    ];
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: true,
+        points,
+        sourcePointCount: 1,
+        target: points[3],
+        targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ points, removedPointCount: 0, status: "success" });
   });
 
   it("consumes one-click edge results by stable job id, independent of completion order", async () => {

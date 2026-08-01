@@ -86,6 +86,8 @@ export interface GraphwarWasmMemoryLayout {
   elementByteLength: number;
   /** 可选的更窄调用方下界；不能放宽 memory source 自身的 arenaBase。 */
   minimumPointer?: number;
+  /** Slice 来自外部输入还是 WASM 输出；memory source 自身仍始终属于 ABI。 */
+  sliceFaultDomain?: GraphwarWasmAdapterFaultDomain;
 }
 
 /** 与验证时观察到的精确当前 memory buffer 绑定的已验证范围。 */
@@ -122,8 +124,9 @@ export function validateGraphwarWasmMemoryRange(
   slice: GraphwarWasmMemorySlice,
   layout: GraphwarWasmMemoryLayout,
 ): GraphwarWasmValidatedMemoryRange {
-  const pointer = validateGraphwarWasmU32(slice.pointer, "pointer", "abi");
-  const length = validateGraphwarWasmU32(slice.length, "length", "abi");
+  const sliceFaultDomain = layout.sliceFaultDomain ?? "abi";
+  const pointer = validateGraphwarWasmU32(slice.pointer, "pointer", sliceFaultDomain);
+  const length = validateGraphwarWasmU32(slice.length, "length", sliceFaultDomain);
   const alignment = validatePositiveGraphwarWasmU32(layout.alignment, "alignment");
   const elementByteLength = validatePositiveGraphwarWasmU32(layout.elementByteLength, "elementByteLength");
   const sourceArenaBase = validateGraphwarWasmU32(memory.arenaBase, "arenaBase", "abi");
@@ -148,28 +151,44 @@ export function validateGraphwarWasmMemoryRange(
 
   if (length === 0) {
     if (pointer !== 0) {
-      throw new GraphwarWasmAdapterError("range-out-of-bounds", "empty WASM arrays must use a null pointer");
+      throw new GraphwarWasmAdapterError(
+        "range-out-of-bounds",
+        "empty WASM arrays must use a null pointer",
+        sliceFaultDomain,
+      );
     }
     return { buffer, byteLength: 0, byteOffset: 0, elementLength: 0 };
   }
   if (pointer === 0 || pointer < minimumPointer) {
-    throw new GraphwarWasmAdapterError("range-out-of-bounds", "WASM pointer is outside the raw arena");
+    throw new GraphwarWasmAdapterError(
+      "range-out-of-bounds",
+      "WASM pointer is outside the raw arena",
+      sliceFaultDomain,
+    );
   }
   if (pointer % alignment !== 0) {
-    throw new GraphwarWasmAdapterError("invalid-alignment", "WASM pointer does not satisfy its element alignment");
+    throw new GraphwarWasmAdapterError(
+      "invalid-alignment",
+      "WASM pointer does not satisfy its element alignment",
+      sliceFaultDomain,
+    );
   }
 
   // 先约束两个运算再计算，保证后续 Number 算术保持精确。
   if (length > Math.floor(UINT32_ADDRESS_SPACE_SIZE / elementByteLength)) {
-    throw new GraphwarWasmAdapterError("range-overflow", "WASM array byte length exceeds memory32");
+    throw new GraphwarWasmAdapterError("range-overflow", "WASM array byte length exceeds memory32", sliceFaultDomain);
   }
   const byteLength = length * elementByteLength;
   if (pointer > UINT32_ADDRESS_SPACE_SIZE - byteLength) {
-    throw new GraphwarWasmAdapterError("range-overflow", "WASM array end address wraps memory32");
+    throw new GraphwarWasmAdapterError("range-overflow", "WASM array end address wraps memory32", sliceFaultDomain);
   }
   const end = pointer + byteLength;
   if (end > sourceArenaCursor) {
-    throw new GraphwarWasmAdapterError("range-out-of-bounds", "WASM array extends beyond the allocated raw arena");
+    throw new GraphwarWasmAdapterError(
+      "range-out-of-bounds",
+      "WASM array extends beyond the allocated raw arena",
+      sliceFaultDomain,
+    );
   }
   return { buffer, byteLength, byteOffset: pointer, elementLength: length };
 }
@@ -193,11 +212,13 @@ export function copyGraphwarWasmFloat64Values(
   memory: GraphwarWasmMemorySource,
   slice: GraphwarWasmMemorySlice,
   minimumPointer = 0,
+  sliceFaultDomain: GraphwarWasmAdapterFaultDomain = "abi",
 ): Float64Array {
   const range = validateGraphwarWasmMemoryRange(memory, slice, {
     alignment: Float64Array.BYTES_PER_ELEMENT,
     elementByteLength: Float64Array.BYTES_PER_ELEMENT,
     minimumPointer,
+    sliceFaultDomain,
   });
   return new Float64Array(range.buffer, range.byteOffset, range.elementLength).slice();
 }

@@ -219,6 +219,15 @@ export interface GraphwarWasmTrajectoryInput {
   stop: GraphwarWasmStopPolicy;
 }
 
+/**
+ * Arena-owned raw trajectory command. The command remains valid until the caller's enclosing arena mark is reset; no
+ * view escapes this record.
+ */
+export interface GraphwarWasmPackedTrajectoryCommandTemplate {
+  readonly pointer: number;
+  readonly byteLength: number;
+}
+
 interface PackedFormulaInput {
   inputPointer: number;
   pointCount: number;
@@ -542,6 +551,116 @@ export function runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(
   return runGraphwarWasmTrajectoryCommand(runtime, input, "step-glitch-test");
 }
 
+/**
+ * Packs a cold trajectory request without crossing the WASM boundary. Smart composition keeps this template in the same
+ * arena scope and replaces only the formula point spans for each deletion candidate.
+ */
+export function packGraphwarWasmTrajectoryCommandTemplate(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmTrajectoryInput,
+): GraphwarWasmPackedTrajectoryCommandTemplate {
+  if (input.start.type !== "cold") {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Smart trajectory templates must start from cold state",
+      "input",
+    );
+  }
+  if (input.stop.type !== "targets") {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "Smart trajectory templates require a targets stop policy",
+      "input",
+    );
+  }
+  const { commandPointer } = packGraphwarWasmTrajectoryCommand(runtime, input);
+  return {
+    byteLength: TRAJECTORY_INPUT_BYTE_LENGTH,
+    pointer: commandPointer,
+  };
+}
+
+function packGraphwarWasmTrajectoryCommand(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmTrajectoryInput) {
+  const { descriptor, start, stop } = input;
+  const packedFormula = packFormulaInput(runtime, descriptor, undefined, [], true);
+  const commandPointer = runtime.reserveArena(TRAJECTORY_INPUT_BYTE_LENGTH, 8);
+  if (commandPointer !== packedFormula.inputPointer + FORMULA_INPUT_BYTE_LENGTH) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-memory-buffer",
+      "Trajectory command is not adjacent to formula input",
+      "abi",
+    );
+  }
+  new Uint8Array(runtime.buffer, commandPointer, FORMULA_INPUT_BYTE_LENGTH).set(
+    new Uint8Array(runtime.buffer, packedFormula.inputPointer, FORMULA_INPUT_BYTE_LENGTH),
+  );
+  new Uint8Array(
+    runtime.buffer,
+    commandPointer + FORMULA_INPUT_BYTE_LENGTH,
+    TRAJECTORY_INPUT_BYTE_LENGTH - FORMULA_INPUT_BYTE_LENGTH,
+  ).fill(0);
+  const packedStop = packGraphwarWasmStopPolicy(runtime, stop);
+  const packedEvidence =
+    start.type === "cold"
+      ? { byteLength: 0, pointer: 0 }
+      : packGraphwarWasmTrajectoryEvidence(
+          runtime,
+          start.evidence,
+          descriptor.settings.equation,
+          packedFormula.segmentCount,
+        );
+  const commandView = new DataView(runtime.buffer, commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH);
+  let commandFlags = start.type === "continuation" ? TRAJECTORY_FLAG_HAS_CONTINUATION_EVIDENCE : 0;
+  commandView.setUint32(
+    176,
+    packedStop.type === "natural"
+      ? TRAJECTORY_STOP_TYPE_NATURAL
+      : packedStop.type === "stop-x-observations"
+        ? TRAJECTORY_STOP_TYPE_STOP_X
+        : TRAJECTORY_STOP_TYPE_TARGETS,
+    true,
+  );
+  commandView.setUint32(200, 0, true);
+  if (packedStop.type === "stop-x-observations") {
+    commandView.setFloat64(184, packedStop.stopX, true);
+    commandView.setUint32(256, packedStop.observationXs.pointer, true);
+    commandView.setUint32(260, packedStop.observationXs.length, true);
+  } else if (packedStop.type === "targets") {
+    const packedCollision = packedStop.collision;
+    const packedContinueGraphX = packedStop.continueAfterTargetsUntilGraphX;
+    const hasContinueGraphX = packedContinueGraphX.type === "value";
+    commandFlags |=
+      (hasContinueGraphX ? TRAJECTORY_FLAG_HAS_CONTINUE_GRAPH_X : 0) |
+      (packedStop.shouldCollectVisiblePixels ? TRAJECTORY_FLAG_COLLECT_VISIBLE_PIXELS : 0) |
+      (packedStop.shouldStopOnTargetsComplete ? TRAJECTORY_FLAG_STOP_ON_TARGETS_COMPLETE : 0);
+    commandView.setFloat64(184, packedContinueGraphX.type === "value" ? packedContinueGraphX.graphX : 0, true);
+    commandView.setUint32(192, packedCollision.type === "mask" ? packedCollision.mask.pointer : 0, true);
+    commandView.setUint32(196, packedCollision.type === "mask" ? packedCollision.mask.length : 0, true);
+    commandView.setUint32(204, packedStop.orderedTargetCount, true);
+    commandView.setUint32(208, packedStop.requiredTargetCount, true);
+    commandView.setUint32(212, packedStop.trackedTargetCount, true);
+    commandView.setUint32(216, packedStop.targetRecords.pointer, true);
+    commandView.setUint32(
+      220,
+      packedCollision.type === "mask"
+        ? validateGraphwarWasmU32(Math.floor(packedCollision.boundaryExpansion), "collision.boundaryExpansion", "input")
+        : 0,
+      true,
+    );
+    commandView.setFloat64(224, packedStop.boundsRect.x, true);
+    commandView.setFloat64(232, packedStop.boundsRect.y, true);
+    commandView.setFloat64(240, packedStop.boundsRect.width, true);
+    commandView.setFloat64(248, packedStop.boundsRect.height, true);
+    commandView.setUint32(264, packedStop.qualityPoints.x.pointer, true);
+    commandView.setUint32(268, packedStop.qualityPoints.y.pointer, true);
+    commandView.setUint32(272, packedStop.qualityPoints.length, true);
+  }
+  commandView.setUint32(180, commandFlags, true);
+  commandView.setUint32(276, packedEvidence.pointer, true);
+  commandView.setUint32(280, packedEvidence.byteLength, true);
+  return { commandPointer, packedFormula, packedStop };
+}
+
 function runGraphwarWasmTrajectoryCommand(
   runtime: GraphwarWasmKernelRuntime,
   input: GraphwarWasmTrajectoryInput,
@@ -549,85 +668,7 @@ function runGraphwarWasmTrajectoryCommand(
 ): GraphwarWasmTrajectoryResult | undefined {
   return withFormulaArenaScope(runtime, () => {
     const { descriptor, start, stop } = input;
-    const packedFormula = packFormulaInput(runtime, descriptor, undefined, [], true);
-    const commandPointer = runtime.reserveArena(TRAJECTORY_INPUT_BYTE_LENGTH, 8);
-    if (commandPointer !== packedFormula.inputPointer + FORMULA_INPUT_BYTE_LENGTH) {
-      throw new GraphwarWasmAdapterError(
-        "invalid-memory-buffer",
-        "Trajectory command is not adjacent to formula input",
-      );
-    }
-    new Uint8Array(runtime.buffer, commandPointer, FORMULA_INPUT_BYTE_LENGTH).set(
-      new Uint8Array(runtime.buffer, packedFormula.inputPointer, FORMULA_INPUT_BYTE_LENGTH),
-    );
-    new Uint8Array(
-      runtime.buffer,
-      commandPointer + FORMULA_INPUT_BYTE_LENGTH,
-      TRAJECTORY_INPUT_BYTE_LENGTH - FORMULA_INPUT_BYTE_LENGTH,
-    ).fill(0);
-    const packedStop = packGraphwarWasmStopPolicy(runtime, stop);
-    const packedEvidence =
-      start.type === "cold"
-        ? { byteLength: 0, pointer: 0 }
-        : packGraphwarWasmTrajectoryEvidence(
-            runtime,
-            start.evidence,
-            descriptor.settings.equation,
-            packedFormula.segmentCount,
-          );
-    const commandView = new DataView(runtime.buffer, commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH);
-    let commandFlags = start.type === "continuation" ? TRAJECTORY_FLAG_HAS_CONTINUATION_EVIDENCE : 0;
-    commandView.setUint32(
-      176,
-      packedStop.type === "natural"
-        ? TRAJECTORY_STOP_TYPE_NATURAL
-        : packedStop.type === "stop-x-observations"
-          ? TRAJECTORY_STOP_TYPE_STOP_X
-          : TRAJECTORY_STOP_TYPE_TARGETS,
-      true,
-    );
-    commandView.setUint32(200, 0, true);
-    if (packedStop.type === "stop-x-observations") {
-      commandView.setFloat64(184, packedStop.stopX, true);
-      commandView.setUint32(256, packedStop.observationXs.pointer, true);
-      commandView.setUint32(260, packedStop.observationXs.length, true);
-    } else if (packedStop.type === "targets") {
-      const packedCollision = packedStop.collision;
-      const packedContinueGraphX = packedStop.continueAfterTargetsUntilGraphX;
-      const hasContinueGraphX = packedContinueGraphX.type === "value";
-      commandFlags |=
-        (hasContinueGraphX ? TRAJECTORY_FLAG_HAS_CONTINUE_GRAPH_X : 0) |
-        (packedStop.shouldCollectVisiblePixels ? TRAJECTORY_FLAG_COLLECT_VISIBLE_PIXELS : 0) |
-        (packedStop.shouldStopOnTargetsComplete ? TRAJECTORY_FLAG_STOP_ON_TARGETS_COMPLETE : 0);
-      commandView.setFloat64(184, packedContinueGraphX.type === "value" ? packedContinueGraphX.graphX : 0, true);
-      commandView.setUint32(192, packedCollision.type === "mask" ? packedCollision.mask.pointer : 0, true);
-      commandView.setUint32(196, packedCollision.type === "mask" ? packedCollision.mask.length : 0, true);
-      commandView.setUint32(204, packedStop.orderedTargetCount, true);
-      commandView.setUint32(208, packedStop.requiredTargetCount, true);
-      commandView.setUint32(212, packedStop.trackedTargetCount, true);
-      commandView.setUint32(216, packedStop.targetRecords.pointer, true);
-      commandView.setUint32(
-        220,
-        packedCollision.type === "mask"
-          ? validateGraphwarWasmU32(
-              Math.floor(packedCollision.boundaryExpansion),
-              "collision.boundaryExpansion",
-              "input",
-            )
-          : 0,
-        true,
-      );
-      commandView.setFloat64(224, packedStop.boundsRect.x, true);
-      commandView.setFloat64(232, packedStop.boundsRect.y, true);
-      commandView.setFloat64(240, packedStop.boundsRect.width, true);
-      commandView.setFloat64(248, packedStop.boundsRect.height, true);
-      commandView.setUint32(264, packedStop.qualityPoints.x.pointer, true);
-      commandView.setUint32(268, packedStop.qualityPoints.y.pointer, true);
-      commandView.setUint32(272, packedStop.qualityPoints.length, true);
-    }
-    commandView.setUint32(180, commandFlags, true);
-    commandView.setUint32(276, packedEvidence.pointer, true);
-    commandView.setUint32(280, packedEvidence.byteLength, true);
+    const { commandPointer, packedFormula, packedStop } = packGraphwarWasmTrajectoryCommand(runtime, input);
     const outputMinimumPointer = runtime.arenaCursor;
     const resultPointer =
       execution === "production"

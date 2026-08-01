@@ -10,8 +10,9 @@ import {
   writeGraphwarWasmUint32Values,
   type GraphwarWasmMemorySource,
 } from "./abi";
+import { packGraphwarWasmTrajectoryCommandTemplate } from "./formula-adapter";
 import type { GraphwarWasmKernelRuntime } from "./runtime";
-import type { GraphwarWasmPoint } from "./task-adapter";
+import type { GraphwarWasmFormulaInputDescriptor, GraphwarWasmPoint, GraphwarWasmStopPolicy } from "./task-adapter";
 
 /** Versioned flat records shared by the AssemblyScript composition exports. */
 export const graphwarWasmCompositionLayout = {
@@ -21,14 +22,16 @@ export const graphwarWasmCompositionLayout = {
   oneClickResultByteLength: 52,
   oneClickResumeByteLength: 16,
   oneClickSessionByteLength: 112,
-  smartInputByteLength: 64,
-  smartResultByteLength: 32,
+  smartInputByteLength: 80,
+  smartResultByteLength: 96,
 } as const;
 
 const smartInputMagic = 0x534d_4152;
-const smartInputVersion = 1;
+const smartInputVersion = 2;
 const smartInputDeleteOptimizationFlag = 1;
 const smartInputRouteContextValidationFlag = 2;
+const smartInputGraphValidationFlag = 4;
+const smartInputTrajectoryValidationFlag = 8;
 const smartResultMagic = 0x534d_5253;
 const oneClickInputMagic = 0x4f_434c_52;
 const oneClickInputVersion = 1;
@@ -53,6 +56,9 @@ const smartInput = {
   routePointsX: 52,
   routePointsY: 56,
   routeContext: 60,
+  routeGraphX: 64,
+  trajectoryCommand: 72,
+  trajectoryCommandByteLength: 76,
 } as const;
 
 const smartResult = {
@@ -64,6 +70,17 @@ const smartResult = {
   removedPointCount: 20,
   validated: 24,
   failureReason: 28,
+  outputGraphX: 32,
+  outputRouteX: 36,
+  outputRouteY: 40,
+  evidenceCount: 44,
+  validationRole: 48,
+  detailFlags: 52,
+  targetX: 56,
+  targetY: 64,
+  targetRadius: 72,
+  blockedPointX: 80,
+  blockedPointY: 88,
 } as const;
 
 const smartFailureReason = {
@@ -71,7 +88,16 @@ const smartFailureReason = {
   target: 1,
   graphRule: 2,
   routeObstacle: 3,
+  trajectory: 4,
 } as const;
+
+const smartValidationRole = {
+  none: 0,
+  routeOnly: 1,
+  trajectory: 2,
+} as const;
+
+const smartResultBlockedPointFlag = 1;
 
 const oneClickInput = {
   flags: 8,
@@ -168,29 +194,53 @@ const oneClickResume = {
   workCount: 12,
 } as const;
 
-export interface GraphwarWasmSmartPathfindingInput {
+interface GraphwarWasmSmartPathfindingInputBase {
   readonly isDeleteOptimizationEnabled: boolean;
   readonly points: readonly GraphwarWasmPoint[];
   readonly routeContextPointer?: number;
-  /** Forward-plane integer points used only by the retained route-context validator. */
-  readonly routeValidationPoints?: readonly GraphwarWasmPoint[];
+  /** Atomic route evidence: quantized mask points and their continuous Graphwar x identity. */
+  readonly routeValidationEvidence?: GraphwarWasmSmartRouteValidationEvidence;
   readonly sourcePointCount: number;
   readonly target: GraphwarWasmPoint;
   readonly targetRadius: number;
 }
 
+export interface GraphwarWasmSmartTrajectoryValidation {
+  readonly descriptor: GraphwarWasmFormulaInputDescriptor;
+  readonly stop: Extract<GraphwarWasmStopPolicy, { type: "targets" }>;
+  readonly type: "trajectory";
+}
+
+/** Route-only is an explicit test/partial-composition state; production smart requests use trajectory validation. */
+export type GraphwarWasmSmartPathfindingInput = GraphwarWasmSmartPathfindingInputBase &
+  (
+    | { readonly trajectoryValidation: { readonly type: "route-only" } }
+    | { readonly trajectoryValidation: GraphwarWasmSmartTrajectoryValidation }
+  );
+
+export interface GraphwarWasmSmartRouteValidationEvidence {
+  /** Forward-plane integer points used only by the retained route-context validator. */
+  readonly points: readonly GraphwarWasmPoint[];
+  /** Continuous Graphwar x values paired by index with `points`. */
+  readonly graphX: readonly number[];
+}
+
 export type GraphwarWasmSmartPathfindingResult =
   | {
-      readonly failureReason?: "graph-rule" | "route-obstacle" | "target";
+      readonly blockedPoint?: GraphwarWasmPoint;
+      readonly failureReason?: "graph-rule" | "route-obstacle" | "target" | "trajectory";
       readonly points: readonly GraphwarWasmPoint[];
       readonly removedPointCount: number;
       readonly status: "failure";
     }
   | {
-      readonly isValidated: true;
       readonly points: readonly GraphwarWasmPoint[];
       readonly removedPointCount: number;
       readonly status: "success";
+      readonly validation: {
+        readonly target: { readonly center: GraphwarWasmPoint; readonly radius: number };
+        readonly type: "route-only" | "trajectory";
+      };
     };
 
 export interface GraphwarWasmOneClickCandidate {
@@ -298,11 +348,12 @@ export function runGraphwarWasmSmartPathfinding(
     const packed = packSmartInput(runtime, input);
     const commandPointer = runtime.reserveArena(graphwarWasmCompositionLayout.smartInputByteLength, 8);
     writeSmartInput(runtime, commandPointer, packed);
+    const outputMinimumPointer = runtime.arenaCursor;
     const resultPointer = runtime.runSmartPathfinding(
       commandPointer,
       graphwarWasmCompositionLayout.smartInputByteLength,
     );
-    const result = copySmartResult(runtime, resultPointer, input.points.length);
+    const result = copySmartResult(runtime, resultPointer, input, outputMinimumPointer);
     runtime.resetArena(mark);
     return result;
   } catch (error) {
@@ -367,33 +418,48 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
   const target = validatePoint(input.target, "target");
   const targetRadius = validateNonNegativeFinite(input.targetRadius, "targetRadius");
   const routeContextPointer = validateOptionalPointer(input.routeContextPointer, "routeContextPointer");
-  const routeValidationPoints = input.routeValidationPoints
-    ? validateRouteValidationPoints(input.routeValidationPoints)
-    : [];
-  if (routeContextPointer !== 0 && routeValidationPoints.length !== points.length) {
+  const routeValidationEvidence = input.routeValidationEvidence
+    ? {
+        graphX: validateRouteValidationGraphX(input.routeValidationEvidence.graphX),
+        points: validateRouteValidationPoints(input.routeValidationEvidence.points),
+      }
+    : undefined;
+  if (
+    routeContextPointer !== 0 &&
+    (routeValidationEvidence === undefined ||
+      routeValidationEvidence.points.length !== points.length ||
+      routeValidationEvidence.graphX.length !== points.length)
+  ) {
     throw new GraphwarWasmAdapterError(
       "invalid-index",
-      "routeValidationPoints must match points when a route context is supplied",
+      "route validation evidence must match points when a route context is supplied",
       "input",
     );
   }
-  if (routeContextPointer === 0 && routeValidationPoints.length !== 0) {
+  if (routeContextPointer === 0 && routeValidationEvidence !== undefined) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
-      "routeValidationPoints require a route context",
+      "route validation evidence requires a route context",
       "input",
     );
   }
+  const trajectoryCommand =
+    input.trajectoryValidation.type === "trajectory"
+      ? packSmartTrajectoryCommand(runtime, input.trajectoryValidation, points, target, targetRadius)
+      : { byteLength: 0, pointer: 0 };
+  const hasGraphValidation = routeContextPointer !== 0 || input.trajectoryValidation.type === "trajectory";
   return {
     flags:
       (input.isDeleteOptimizationEnabled ? smartInputDeleteOptimizationFlag : 0) |
-      (routeContextPointer !== 0 ? smartInputRouteContextValidationFlag : 0),
+      (routeContextPointer !== 0 ? smartInputRouteContextValidationFlag : 0) |
+      (hasGraphValidation ? smartInputGraphValidationFlag : 0) |
+      (input.trajectoryValidation.type === "trajectory" ? smartInputTrajectoryValidationFlag : 0),
     routePointsX:
       routeContextPointer === 0
         ? { pointer: 0, length: 0 }
         : writeGraphwarWasmFloat64Values(
             runtime,
-            new Float64Array(routeValidationPoints.map(({ x }) => x)),
+            new Float64Array(routeValidationEvidence?.points.map(({ x }) => x) ?? []),
             runtime.arenaBase,
           ),
     routePointsY:
@@ -401,7 +467,15 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
         ? { pointer: 0, length: 0 }
         : writeGraphwarWasmFloat64Values(
             runtime,
-            new Float64Array(routeValidationPoints.map(({ y }) => y)),
+            new Float64Array(routeValidationEvidence?.points.map(({ y }) => y) ?? []),
+            runtime.arenaBase,
+          ),
+    routeGraphX:
+      routeContextPointer === 0
+        ? { pointer: 0, length: 0 }
+        : writeGraphwarWasmFloat64Values(
+            runtime,
+            new Float64Array(routeValidationEvidence?.graphX ?? []),
             runtime.arenaBase,
           ),
     pointsX: writeGraphwarWasmFloat64Values(runtime, new Float64Array(points.map(({ x }) => x)), runtime.arenaBase),
@@ -411,7 +485,118 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
     sourcePointCount,
     target,
     targetRadius,
+    trajectoryCommand,
   };
+}
+
+/** Binds the formula path, target stop, and pixel-to-graph mapping before the raw template enters WASM. */
+function packSmartTrajectoryCommand(
+  runtime: GraphwarWasmKernelRuntime,
+  validation: GraphwarWasmSmartTrajectoryValidation,
+  points: readonly GraphwarWasmPoint[],
+  target: GraphwarWasmPoint,
+  targetRadius: number,
+) {
+  if (validation.descriptor.settings.isStepGlitchModeEnabled) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-formula-input",
+      "ordinary smart trajectory validation does not accept Step-glitch formula modes",
+      "input",
+    );
+  }
+  const descriptorPoints = validatePoints(validation.descriptor.points, "trajectoryValidation.descriptor.points");
+  if (descriptorPoints.length !== points.length || descriptorPoints.length < 2) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "smart trajectory descriptor points must match the complete candidate path",
+      "input",
+    );
+  }
+  const bounds = validation.descriptor.bounds;
+  const minX = validateGraphwarWasmFiniteNumber(bounds.minX, "trajectoryValidation.descriptor.bounds.minX", "input");
+  const maxX = validateGraphwarWasmFiniteNumber(bounds.maxX, "trajectoryValidation.descriptor.bounds.maxX", "input");
+  const minY = validateGraphwarWasmFiniteNumber(bounds.minY, "trajectoryValidation.descriptor.bounds.minY", "input");
+  const maxY = validateGraphwarWasmFiniteNumber(bounds.maxY, "trajectoryValidation.descriptor.bounds.maxY", "input");
+  const boundsRect = validation.stop.boundsRect;
+  const rectX = validateGraphwarWasmFiniteNumber(boundsRect.x, "trajectoryValidation.stop.boundsRect.x", "input");
+  const rectY = validateGraphwarWasmFiniteNumber(boundsRect.y, "trajectoryValidation.stop.boundsRect.y", "input");
+  const rectWidth = validateGraphwarWasmFiniteNumber(
+    boundsRect.width,
+    "trajectoryValidation.stop.boundsRect.width",
+    "input",
+  );
+  const rectHeight = validateGraphwarWasmFiniteNumber(
+    boundsRect.height,
+    "trajectoryValidation.stop.boundsRect.height",
+    "input",
+  );
+  if (maxX === minX || maxY === minY || !(rectWidth > 0) || !(rectHeight > 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "smart trajectory coordinate mapping is degenerate",
+      "input",
+    );
+  }
+  for (const [index, point] of points.entries()) {
+    const expectedPoint = {
+      x: minX + ((point.x - rectX) / rectWidth) * (maxX - minX),
+      y: maxY - ((point.y - rectY) / rectHeight) * (maxY - minY),
+    };
+    const descriptorPoint = descriptorPoints[index];
+    if (!descriptorPoint || !pointsEqual(descriptorPoint, expectedPoint)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `smart trajectory descriptor point ${index} does not match its pixel path point`,
+        "input",
+      );
+    }
+  }
+  const firstDescriptorPoint = descriptorPoints[0];
+  if (!firstDescriptorPoint || !pointsEqual(firstDescriptorPoint, validation.descriptor.soldierCenter)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "smart trajectory soldier center must match the first formula point",
+      "input",
+    );
+  }
+  const [orderedTarget] = validation.stop.orderedTargets;
+  if (
+    validation.stop.orderedTargets.length !== 1 ||
+    validation.stop.requiredTargets.length !== 0 ||
+    validation.stop.trackedTargets.length !== 0 ||
+    validation.stop.continueAfterTargetsUntilGraphX.type !== "none" ||
+    validation.stop.shouldCollectVisiblePixels ||
+    !validation.stop.shouldStopOnTargetsComplete ||
+    !orderedTarget ||
+    !pointsEqual(orderedTarget.center, target) ||
+    !Object.is(validateNonNegativeFinite(orderedTarget.radius, "trajectoryValidation.stop.target.radius"), targetRadius)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "smart trajectory stop policy does not match the single requested target",
+      "input",
+    );
+  }
+  const qualityPoints = validatePoints(validation.stop.qualityPoints, "trajectoryValidation.stop.qualityPoints");
+  const expectedQualityPoints = descriptorPoints.slice(1, -1);
+  if (
+    qualityPoints.length !== expectedQualityPoints.length ||
+    qualityPoints.some((point, index) => {
+      const expectedPoint = expectedQualityPoints[index];
+      return expectedPoint === undefined || !pointsEqual(point, expectedPoint);
+    })
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "smart trajectory quality points must be the candidate's internal graph points",
+      "input",
+    );
+  }
+  return packGraphwarWasmTrajectoryCommandTemplate(runtime, {
+    descriptor: validation.descriptor,
+    start: { type: "cold" },
+    stop: validation.stop,
+  });
 }
 
 function writeSmartInput(
@@ -433,14 +618,25 @@ function writeSmartInput(
   view.setUint32(smartInput.routePointsX, packed.routePointsX.pointer, true);
   view.setUint32(smartInput.routePointsY, packed.routePointsY.pointer, true);
   view.setUint32(smartInput.routeContext, packed.routeContextPointer, true);
+  view.setUint32(smartInput.routeGraphX, packed.routeGraphX.pointer, true);
+  view.setUint32(smartInput.trajectoryCommand, packed.trajectoryCommand.pointer, true);
+  view.setUint32(smartInput.trajectoryCommandByteLength, packed.trajectoryCommand.byteLength, true);
 }
 
 export function copySmartResult(
   runtime: GraphwarWasmMemorySource,
   resultPointer: number,
-  originalPointCount: number,
+  input: GraphwarWasmSmartPathfindingInput,
+  outputMinimumPointer: number,
 ): GraphwarWasmSmartPathfindingResult {
-  const view = readRecord(runtime, resultPointer, graphwarWasmCompositionLayout.smartResultByteLength, 8);
+  const view = readRecord(
+    runtime,
+    resultPointer,
+    graphwarWasmCompositionLayout.smartResultByteLength,
+    8,
+    outputMinimumPointer,
+  );
+  const nestedOutputMinimumPointer = resultPointer + graphwarWasmCompositionLayout.smartResultByteLength;
   if (view.getUint32(smartResult.magic, true) !== smartResultMagic) {
     throw new GraphwarWasmAdapterError("invalid-session-pointer", "smart result magic is invalid", "output");
   }
@@ -455,22 +651,21 @@ export function copySmartResult(
     view.getUint32(smartResult.pointsX, true),
     view.getUint32(smartResult.pointsY, true),
     pointCount,
+    nestedOutputMinimumPointer,
   );
   const removedPointCount = validateGraphwarWasmU32(
     view.getUint32(smartResult.removedPointCount, true),
     "smart removed point count",
   );
-  const validatedOriginalPointCount = validateGraphwarWasmU32(
-    originalPointCount,
-    "smart original point count",
-    "input",
-  );
+  const validatedInputPoints = validatePoints(input.points, "points");
+  const validatedSourcePointCount = validateGraphwarWasmU32(input.sourcePointCount, "sourcePointCount", "input");
+  const validatedOriginalPointCount = validatedInputPoints.length;
   if (
     pointCount > validatedOriginalPointCount ||
     removedPointCount > validatedOriginalPointCount ||
     removedPointCount > validatedOriginalPointCount - pointCount ||
     (status === 1 && removedPointCount + pointCount !== validatedOriginalPointCount) ||
-    (status === 1 && pointCount === 0) ||
+    (status === 1 && (pointCount === 0 || pointCount < validatedSourcePointCount)) ||
     (status === 0 && (pointCount !== 0 || removedPointCount !== 0))
   ) {
     throw new GraphwarWasmAdapterError("invalid-index", "smart removed point count is inconsistent", "output");
@@ -490,11 +685,195 @@ export function copySmartResult(
       smartFailureReason.target,
       smartFailureReason.graphRule,
       smartFailureReason.routeObstacle,
+      smartFailureReason.trajectory,
     ] as const,
     "smart failure reason",
   );
   if (status === 1 && failureReason !== smartFailureReason.none) {
     throw new GraphwarWasmAdapterError("invalid-session-state", "smart success contains a failure reason", "output");
+  }
+  const validationRole = validateGraphwarWasmEnumValue(
+    view.getUint32(smartResult.validationRole, true),
+    [smartValidationRole.none, smartValidationRole.routeOnly, smartValidationRole.trajectory] as const,
+    "smart validation role",
+  );
+  const expectedValidationRole =
+    input.trajectoryValidation.type === "trajectory" ? smartValidationRole.trajectory : smartValidationRole.routeOnly;
+  const rawTargetX = view.getFloat64(smartResult.targetX, true);
+  const rawTargetY = view.getFloat64(smartResult.targetY, true);
+  const rawTargetRadius = view.getFloat64(smartResult.targetRadius, true);
+  if (status === 1) {
+    const targetX = validateGraphwarWasmFiniteNumber(rawTargetX, "smart.target.x");
+    const targetY = validateGraphwarWasmFiniteNumber(rawTargetY, "smart.target.y");
+    const targetRadius = validateGraphwarWasmFiniteNumber(rawTargetRadius, "smart.target.radius");
+    if (
+      validationRole !== expectedValidationRole ||
+      targetRadius < 0 ||
+      !Object.is(targetX, input.target.x) ||
+      !Object.is(targetY, input.target.y) ||
+      !Object.is(targetRadius, input.targetRadius)
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "smart success validation role or target identity does not match its request",
+        "output",
+      );
+    }
+  } else if (
+    validationRole !== smartValidationRole.none ||
+    !Object.is(rawTargetX, 0) ||
+    !Object.is(rawTargetY, 0) ||
+    !Object.is(rawTargetRadius, 0)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "smart failure retains success-only validation identity",
+      "output",
+    );
+  }
+  const isFailureReasonAllowed =
+    status === 1
+      ? failureReason === smartFailureReason.none
+      : input.trajectoryValidation.type === "trajectory"
+        ? failureReason === smartFailureReason.graphRule || failureReason === smartFailureReason.trajectory
+        : failureReason !== smartFailureReason.trajectory;
+  if (!isFailureReasonAllowed) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "smart failure reason does not belong to its validation role",
+      "output",
+    );
+  }
+  const detailFlags = validateGraphwarWasmU32(view.getUint32(smartResult.detailFlags, true), "smart detail flags");
+  if ((detailFlags & ~smartResultBlockedPointFlag) !== 0) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "smart result contains unsupported details", "output");
+  }
+  const rawBlockedPointX = view.getFloat64(smartResult.blockedPointX, true);
+  const rawBlockedPointY = view.getFloat64(smartResult.blockedPointY, true);
+  const hasBlockedPoint = (detailFlags & smartResultBlockedPointFlag) !== 0;
+  const blockedPoint = hasBlockedPoint
+    ? {
+        x: validateGraphwarWasmFiniteNumber(rawBlockedPointX, "smart.blockedPoint.x"),
+        y: validateGraphwarWasmFiniteNumber(rawBlockedPointY, "smart.blockedPoint.y"),
+      }
+    : undefined;
+  if (
+    (hasBlockedPoint && (status !== 0 || failureReason !== smartFailureReason.trajectory)) ||
+    (!hasBlockedPoint && (!Object.is(rawBlockedPointX, 0) || !Object.is(rawBlockedPointY, 0)))
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "smart blocked-point evidence does not match its failure",
+      "output",
+    );
+  }
+  const outputInputIndexes: number[] = [];
+  if (status === 1) {
+    const inputLastPoint = validatedInputPoints.at(-1);
+    const outputLastPoint = points.at(-1);
+    if (!inputLastPoint || !outputLastPoint || !pointsEqual(inputLastPoint, outputLastPoint)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "smart result does not preserve the candidate target point",
+        "output",
+      );
+    }
+    if (
+      input.trajectoryValidation.type === "route-only" &&
+      !smartTargetPointMatches(inputLastPoint, input.target, input.targetRadius)
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "smart result target identity does not satisfy the requested target radius",
+        "output",
+      );
+    }
+    for (let index = 0; index < validatedSourcePointCount; index += 1) {
+      const inputPoint = validatedInputPoints[index];
+      const outputPoint = points[index];
+      if (!inputPoint || !outputPoint || !pointsEqual(inputPoint, outputPoint)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "smart result does not preserve the source prefix",
+          "output",
+        );
+      }
+    }
+    let inputIndex = 0;
+    for (const [outputIndex, outputPoint] of points.entries()) {
+      while (inputIndex < validatedOriginalPointCount) {
+        const inputPoint = validatedInputPoints[inputIndex];
+        if (inputPoint && pointsEqual(inputPoint, outputPoint)) {
+          break;
+        }
+        inputIndex += 1;
+      }
+      if (inputIndex >= validatedOriginalPointCount) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          `smart result point ${outputIndex} is not an ordered source point`,
+          "output",
+        );
+      }
+      outputInputIndexes.push(inputIndex);
+      inputIndex += 1;
+    }
+  }
+  const evidenceCount = validateGraphwarWasmU32(
+    view.getUint32(smartResult.evidenceCount, true),
+    "smart evidence count",
+  );
+  const hasGraphEvidence =
+    input.routeValidationEvidence !== undefined || input.trajectoryValidation.type === "trajectory";
+  const expectedEvidenceCount = status === 1 && hasGraphEvidence ? pointCount : 0;
+  if (evidenceCount !== expectedEvidenceCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "smart result evidence count does not match its validation state",
+      "output",
+    );
+  }
+  const outputGraphX = copySessionFloat64Values(
+    runtime,
+    view.getUint32(smartResult.outputGraphX, true),
+    evidenceCount,
+    "smart.outputGraphX",
+    nestedOutputMinimumPointer,
+  );
+  const expectedRouteEvidenceCount = status === 1 && input.routeValidationEvidence ? pointCount : 0;
+  const outputRoutePoints = copySessionPoints(
+    runtime,
+    view.getUint32(smartResult.outputRouteX, true),
+    view.getUint32(smartResult.outputRouteY, true),
+    expectedRouteEvidenceCount,
+    "smart.outputRoutePoints",
+    nestedOutputMinimumPointer,
+  );
+  if (status === 1 && hasGraphEvidence) {
+    for (const [outputIndex, inputIndex] of outputInputIndexes.entries()) {
+      const expectedGraphX =
+        input.trajectoryValidation.type === "trajectory"
+          ? input.trajectoryValidation.descriptor.points[inputIndex]?.x
+          : input.routeValidationEvidence?.graphX[inputIndex];
+      if (expectedGraphX === undefined || !Object.is(outputGraphX[outputIndex], expectedGraphX)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `smart graph evidence ${outputIndex} does not match its source point`,
+          "output",
+        );
+      }
+      if (input.routeValidationEvidence) {
+        const expectedRoutePoint = input.routeValidationEvidence.points[inputIndex];
+        const outputRoutePoint = outputRoutePoints[outputIndex];
+        if (!expectedRoutePoint || !outputRoutePoint || !pointsEqual(outputRoutePoint, expectedRoutePoint)) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `smart route evidence ${outputIndex} does not match its source point`,
+            "output",
+          );
+        }
+      }
+    }
   }
   if (status === 0) {
     const reason =
@@ -504,12 +883,26 @@ export function copySmartResult(
           ? "graph-rule"
           : failureReason === smartFailureReason.routeObstacle
             ? "route-obstacle"
-            : undefined;
-    return reason === undefined
-      ? { points, removedPointCount, status: "failure" }
-      : { failureReason: reason, points, removedPointCount, status: "failure" };
+            : failureReason === smartFailureReason.trajectory
+              ? "trajectory"
+              : undefined;
+    return {
+      ...(blockedPoint ? { blockedPoint } : {}),
+      ...(reason === undefined ? {} : { failureReason: reason }),
+      points,
+      removedPointCount,
+      status: "failure",
+    };
   }
-  return { isValidated: true, points, removedPointCount, status: "success" };
+  return {
+    points,
+    removedPointCount,
+    status: "success",
+    validation: {
+      target: { center: { x: rawTargetX, y: rawTargetY }, radius: rawTargetRadius },
+      type: validationRole === smartValidationRole.trajectory ? "trajectory" : "route-only",
+    },
+  };
 }
 
 function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmOneClickClearInput) {
@@ -1494,9 +1887,15 @@ function copyEdgeJobs(
   });
 }
 
-function copyPointSoA(runtime: GraphwarWasmMemorySource, xPointer: number, yPointer: number, count: number) {
-  const xs = copyGraphwarWasmFloat64Values(runtime, { pointer: xPointer, length: count }, runtime.arenaBase);
-  const ys = copyGraphwarWasmFloat64Values(runtime, { pointer: yPointer, length: count }, runtime.arenaBase);
+function copyPointSoA(
+  runtime: GraphwarWasmMemorySource,
+  xPointer: number,
+  yPointer: number,
+  count: number,
+  minimumPointer = runtime.arenaBase,
+) {
+  const xs = copyGraphwarWasmFloat64Values(runtime, { pointer: xPointer, length: count }, minimumPointer, "output");
+  const ys = copyGraphwarWasmFloat64Values(runtime, { pointer: yPointer, length: count }, minimumPointer, "output");
   return Array.from(xs, (x, index) => ({
     x: validateGraphwarWasmFiniteNumber(x, `point[${index}].x`),
     y: validateGraphwarWasmFiniteNumber(ys[index], `point[${index}].y`),
@@ -1508,6 +1907,7 @@ function copySessionFloat64Values(
   pointer: number,
   count: number,
   fieldName: string,
+  minimumPointer = runtime.arenaBase,
 ) {
   if (count === 0) {
     if (pointer !== 0) {
@@ -1519,7 +1919,7 @@ function copySessionFloat64Values(
     }
     return new Float64Array();
   }
-  const values = copyGraphwarWasmFloat64Values(runtime, { pointer, length: count }, runtime.arenaBase);
+  const values = copyGraphwarWasmFloat64Values(runtime, { pointer, length: count }, minimumPointer, "output");
   return Float64Array.from(values, (value, index) => validateGraphwarWasmFiniteNumber(value, `${fieldName}[${index}]`));
 }
 
@@ -1529,6 +1929,7 @@ function copySessionPoints(
   yPointer: number,
   count: number,
   fieldName: string,
+  minimumPointer = runtime.arenaBase,
 ) {
   if (count === 0) {
     if (xPointer !== 0 || yPointer !== 0) {
@@ -1540,8 +1941,8 @@ function copySessionPoints(
     }
     return [];
   }
-  const xs = copySessionFloat64Values(runtime, xPointer, count, `${fieldName}.x`);
-  const ys = copySessionFloat64Values(runtime, yPointer, count, `${fieldName}.y`);
+  const xs = copySessionFloat64Values(runtime, xPointer, count, `${fieldName}.x`, minimumPointer);
+  const ys = copySessionFloat64Values(runtime, yPointer, count, `${fieldName}.y`, minimumPointer);
   return Array.from(xs, (x, index) => ({ x, y: ys[index] }));
 }
 
@@ -1549,11 +1950,24 @@ function pointsEqual(left: GraphwarWasmPoint, right: GraphwarWasmPoint) {
   return Object.is(left.x, right.x) && Object.is(left.y, right.y);
 }
 
-function readRecord(runtime: GraphwarWasmMemorySource, pointer: number, byteLength: number, alignment: number) {
+function smartTargetPointMatches(point: GraphwarWasmPoint, target: GraphwarWasmPoint, targetRadius: number) {
+  const deltaX = point.x - target.x;
+  const deltaY = point.y - target.y;
+  const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+  return targetRadius === 0 ? distanceSquared === 0 : distanceSquared <= targetRadius * targetRadius;
+}
+
+function readRecord(
+  runtime: GraphwarWasmMemorySource,
+  pointer: number,
+  byteLength: number,
+  alignment: number,
+  minimumPointer = runtime.arenaBase,
+) {
   const range = validateGraphwarWasmMemoryRange(
     runtime,
     { pointer, length: byteLength },
-    { alignment, elementByteLength: 1, minimumPointer: runtime.arenaBase },
+    { alignment, elementByteLength: 1, minimumPointer, sliceFaultDomain: "output" },
   );
   return new DataView(range.buffer, range.byteOffset, range.byteLength);
 }
@@ -1581,6 +1995,12 @@ function validateRouteValidationPoints(points: readonly GraphwarWasmPoint[]) {
     }
     return validated;
   });
+}
+
+function validateRouteValidationGraphX(values: readonly number[]) {
+  return values.map((value, index) =>
+    validateGraphwarWasmFiniteNumber(value, `routeValidationGraphX[${index}]`, "input"),
+  );
 }
 
 function validatePoint(point: GraphwarWasmPoint, fieldName: string) {

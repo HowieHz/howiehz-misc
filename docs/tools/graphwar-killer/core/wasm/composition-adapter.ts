@@ -21,13 +21,14 @@ export const graphwarWasmCompositionLayout = {
   oneClickResultByteLength: 52,
   oneClickResumeByteLength: 16,
   oneClickSessionByteLength: 104,
-  smartInputByteLength: 56,
+  smartInputByteLength: 64,
   smartResultByteLength: 32,
 } as const;
 
 const smartInputMagic = 0x534d_4152;
 const smartInputVersion = 1;
 const smartInputDeleteOptimizationFlag = 1;
+const smartInputRouteContextValidationFlag = 2;
 const smartResultMagic = 0x534d_5253;
 const oneClickInputMagic = 0x4f_434c_52;
 const oneClickInputVersion = 1;
@@ -48,7 +49,9 @@ const smartInput = {
   targetX: 28,
   targetY: 36,
   targetRadius: 44,
-  routeContext: 52,
+  routePointsX: 52,
+  routePointsY: 56,
+  routeContext: 60,
 } as const;
 
 const smartResult = {
@@ -59,6 +62,14 @@ const smartResult = {
   pointCount: 16,
   removedPointCount: 20,
   validated: 24,
+  failureReason: 28,
+} as const;
+
+const smartFailureReason = {
+  none: 0,
+  target: 1,
+  graphRule: 2,
+  routeObstacle: 3,
 } as const;
 
 const oneClickInput = {
@@ -150,6 +161,8 @@ export interface GraphwarWasmSmartPathfindingInput {
   readonly isDeleteOptimizationEnabled: boolean;
   readonly points: readonly GraphwarWasmPoint[];
   readonly routeContextPointer?: number;
+  /** Forward-plane integer points used only by the retained route-context validator. */
+  readonly routeValidationPoints?: readonly GraphwarWasmPoint[];
   readonly sourcePointCount: number;
   readonly target: GraphwarWasmPoint;
   readonly targetRadius: number;
@@ -157,6 +170,7 @@ export interface GraphwarWasmSmartPathfindingInput {
 
 export type GraphwarWasmSmartPathfindingResult =
   | {
+      readonly failureReason?: "graph-rule" | "route-obstacle" | "target";
       readonly points: readonly GraphwarWasmPoint[];
       readonly removedPointCount: number;
       readonly status: "failure";
@@ -325,8 +339,43 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
   const target = validatePoint(input.target, "target");
   const targetRadius = validateNonNegativeFinite(input.targetRadius, "targetRadius");
   const routeContextPointer = validateOptionalPointer(input.routeContextPointer, "routeContextPointer");
+  const routeValidationPoints = input.routeValidationPoints
+    ? validateRouteValidationPoints(input.routeValidationPoints)
+    : [];
+  if (routeContextPointer !== 0 && routeValidationPoints.length !== points.length) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-index",
+      "routeValidationPoints must match points when a route context is supplied",
+      "input",
+    );
+  }
+  if (routeContextPointer === 0 && routeValidationPoints.length !== 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "routeValidationPoints require a route context",
+      "input",
+    );
+  }
   return {
-    flags: input.isDeleteOptimizationEnabled ? smartInputDeleteOptimizationFlag : 0,
+    flags:
+      (input.isDeleteOptimizationEnabled ? smartInputDeleteOptimizationFlag : 0) |
+      (routeContextPointer !== 0 ? smartInputRouteContextValidationFlag : 0),
+    routePointsX:
+      routeContextPointer === 0
+        ? { pointer: 0, length: 0 }
+        : writeGraphwarWasmFloat64Values(
+            runtime,
+            new Float64Array(routeValidationPoints.map(({ x }) => x)),
+            runtime.arenaBase,
+          ),
+    routePointsY:
+      routeContextPointer === 0
+        ? { pointer: 0, length: 0 }
+        : writeGraphwarWasmFloat64Values(
+            runtime,
+            new Float64Array(routeValidationPoints.map(({ y }) => y)),
+            runtime.arenaBase,
+          ),
     pointsX: writeGraphwarWasmFloat64Values(runtime, new Float64Array(points.map(({ x }) => x)), runtime.arenaBase),
     pointsY: writeGraphwarWasmFloat64Values(runtime, new Float64Array(points.map(({ y }) => y)), runtime.arenaBase),
     pointCount: points.length,
@@ -353,6 +402,8 @@ function writeSmartInput(
   view.setFloat64(smartInput.targetX, packed.target.x, true);
   view.setFloat64(smartInput.targetY, packed.target.y, true);
   view.setFloat64(smartInput.targetRadius, packed.targetRadius, true);
+  view.setUint32(smartInput.routePointsX, packed.routePointsX.pointer, true);
+  view.setUint32(smartInput.routePointsY, packed.routePointsY.pointer, true);
   view.setUint32(smartInput.routeContext, packed.routeContextPointer, true);
 }
 
@@ -404,9 +455,33 @@ export function copySmartResult(
       "output",
     );
   }
-  return status === 1
-    ? { isValidated: true, points, removedPointCount, status: "success" }
-    : { points, removedPointCount, status: "failure" };
+  const failureReason = validateGraphwarWasmEnumValue(
+    view.getUint32(smartResult.failureReason, true),
+    [
+      smartFailureReason.none,
+      smartFailureReason.target,
+      smartFailureReason.graphRule,
+      smartFailureReason.routeObstacle,
+    ] as const,
+    "smart failure reason",
+  );
+  if (status === 1 && failureReason !== smartFailureReason.none) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "smart success contains a failure reason", "output");
+  }
+  if (status === 0) {
+    const reason =
+      failureReason === smartFailureReason.target
+        ? "target"
+        : failureReason === smartFailureReason.graphRule
+          ? "graph-rule"
+          : failureReason === smartFailureReason.routeObstacle
+            ? "route-obstacle"
+            : undefined;
+    return reason === undefined
+      ? { points, removedPointCount, status: "failure" }
+      : { failureReason: reason, points, removedPointCount, status: "failure" };
+  }
+  return { isValidated: true, points, removedPointCount, status: "success" };
 }
 
 function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmOneClickClearInput) {
@@ -1080,6 +1155,27 @@ function readRecord(runtime: GraphwarWasmMemorySource, pointer: number, byteLeng
 
 function validatePoints(points: readonly GraphwarWasmPoint[], fieldName: string) {
   return points.map((point, index) => validatePoint(point, `${fieldName}[${index}]`));
+}
+
+function validateRouteValidationPoints(points: readonly GraphwarWasmPoint[]) {
+  return points.map((point, index) => {
+    const validated = validatePoint(point, `routeValidationPoints[${index}]`);
+    if (
+      !Number.isInteger(validated.x) ||
+      !Number.isInteger(validated.y) ||
+      validated.x < -2_147_483_648 ||
+      validated.x > 2_147_483_647 ||
+      validated.y < -2_147_483_648 ||
+      validated.y > 2_147_483_647
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-index",
+        `routeValidationPoints[${index}] must contain signed 32-bit integer coordinates`,
+        "input",
+      );
+    }
+    return validated;
+  });
 }
 
 function validatePoint(point: GraphwarWasmPoint, fieldName: string) {

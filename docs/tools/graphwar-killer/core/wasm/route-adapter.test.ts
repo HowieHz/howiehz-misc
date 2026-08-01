@@ -1745,8 +1745,177 @@ describe("Graphwar WASM route context", () => {
 
     context.dispose();
     expect(() => context.pointHitsObstacle({ x: 69, y: 40 })).toThrow(/disposed/u);
+    expect(() =>
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [{ x: 100, y: 225 }],
+        sourcePointCount: 1,
+        target: { x: 100, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toThrow(/disposed/u);
     expect(() => context.dispose()).toThrow(/disposed/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("validates smart graph order and retained route obstacles inside WASM", async () => {
+    const runtime = await createRuntime();
+    const routeMask = new Uint8Array(planeCellCount);
+    routeMask[225 * GRAPHWAR_PLANE_LENGTH + 385] = 1;
+    routeMask[1 * GRAPHWAR_PLANE_LENGTH + 1] = 1;
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      routeOriginPoint: { x: -25, y: 0 },
+      routeTolerancePlanePixels: 0,
+      sourceMask: routeMask,
+      sourceMaskType: "route",
+    });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: true,
+        points: [
+          { x: 100, y: 225 },
+          { x: 150, y: 225 },
+          { x: 200, y: 225 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 200, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ removedPointCount: 1, status: "success" });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 100, y: 225 },
+          { x: 100, y: 225 },
+          { x: 200, y: 225 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 200, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "graph-rule", status: "failure" });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 100, y: 225 },
+          { x: 200, y: 225 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 600, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "target", status: "failure" });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [{ x: 1, y: 1 }],
+        sourcePointCount: 1,
+        target: { x: 1, y: 1 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [{ x: -1, y: 1 }],
+        sourcePointCount: 1,
+        target: { x: -1, y: 1 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 100, y: 225 },
+          { x: 100, y: 225 },
+          { x: 200, y: 225 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 600, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "graph-rule", status: "failure" });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 100, y: 225 },
+          { x: 600, y: 225 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 600, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
+    context.dispose();
+  });
+
+  it("preserves graph order and route-mask identity for mirrored smart paths", async () => {
+    const runtime = await createRuntime();
+    const mirroredBounds = { ...bounds, maxX: bounds.minX, minX: bounds.maxX };
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds: mirroredBounds,
+      boundsRect,
+      routeOriginPoint: { x: 25, y: 0 },
+      routeTolerancePlanePixels: 0,
+      sourceMask: new Uint8Array(planeCellCount),
+      sourceMaskType: "route",
+    });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 600, y: 225 },
+          { x: 100, y: 225 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 100, y: 225 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ status: "success" });
+    context.dispose();
+  });
+
+  it("quantizes mirrored smart route points directly in the plane domain", async () => {
+    const runtime = await createRuntime();
+    const mirroredBounds = { ...bounds, maxX: bounds.minX, minX: bounds.maxX };
+    const sourceMask = new Uint8Array(planeCellCount);
+    sourceMask[1 * GRAPHWAR_PLANE_LENGTH + 1] = 1;
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds: mirroredBounds,
+      boundsRect,
+      routeOriginPoint: { x: 25, y: 0 },
+      routeTolerancePlanePixels: 0,
+      sourceMask,
+      sourceMaskType: "route",
+    });
+
+    expect(
+      context.runSmartPathfinding({
+        isDeleteOptimizationEnabled: false,
+        points: [{ x: 1, y: 1 }],
+        sourcePointCount: 1,
+        target: { x: 1, y: 1 },
+        targetRadius: 0,
+      }),
+    ).toMatchObject({ failureReason: "route-obstacle", status: "failure" });
+    context.dispose();
   });
 
   it.each([

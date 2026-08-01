@@ -432,6 +432,7 @@ function createWasmRouteContext(
     isMirrored,
     lineHitsObstacle: () => false,
     pointHitsObstacle: () => false,
+    runSmartPathfinding: () => ({ points: [], removedPointCount: 0, status: "failure" as const }),
     routeBoundaryEdgeCount: 0,
     routeComponentCount: 0,
     routeMask: context.routeMask,

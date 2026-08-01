@@ -5986,6 +5986,26 @@ function compositionValidatePointArrays(xPointer: u32, yPointer: u32, count: u32
   }
 }
 
+function compositionValidateRoutePointArrays(xPointer: u32, yPointer: u32, count: u32): void {
+  compositionValidatePointArrays(xPointer, yPointer, count);
+  let index: u32 = 0;
+  while (index < count) {
+    const x = load<f64>(xPointer + index * sizeof<f64>());
+    const y = load<f64>(yPointer + index * sizeof<f64>());
+    if (
+      x != NativeMath.floor(x) ||
+      y != NativeMath.floor(y) ||
+      x < -2147483648.0 ||
+      x > 2147483647.0 ||
+      y < -2147483648.0 ||
+      y > 2147483647.0
+    ) {
+      trap();
+    }
+    index += 1;
+  }
+}
+
 @inline
 function compositionPointIsCollinear(
   previousX: f64,
@@ -6004,6 +6024,74 @@ function compositionPointIsCollinear(
   return cross == 0 && dot >= 0;
 }
 
+@inline
+function writeSmartFailure(resultPointer: u32, reason: u32): void {
+  store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_FAILURE);
+  store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_Y_POINTER_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_FAILURE_REASON_OFFSET, reason);
+}
+
+@inline
+function smartRoutePointOutsideContext(routeX: f64, routeY: f64): bool {
+  return (
+    routeX < 0 ||
+    routeX >= <f64>getPlaneWidth() ||
+    routeY < 0 ||
+    routeY >= <f64>getPlaneHeight()
+  );
+}
+
+@inline
+function smartPathFailureReason(contextPointer: u32, routeXPointer: u32, routeYPointer: u32, pointCount: u32): u32 {
+  if (contextPointer == 0 || pointCount == 0) return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+  let index: u32 = 1;
+  while (index < pointCount) {
+    const previousX = load<f64>(routeXPointer + (index - 1) * sizeof<f64>());
+    const nextX = load<f64>(routeXPointer + index * sizeof<f64>());
+    if (!(nextX > previousX)) return Layout.SMART_RESULT_FAILURE_REASON_GRAPH_RULE;
+    index += 1;
+  }
+  const firstRouteX = load<f64>(routeXPointer);
+  const firstRouteY = load<f64>(routeYPointer);
+  if (
+    smartRoutePointOutsideContext(firstRouteX, firstRouteY) ||
+    pointHitsRouteContext(contextPointer, <i32>firstRouteX, <i32>firstRouteY)
+  ) {
+    return Layout.SMART_RESULT_FAILURE_REASON_ROUTE_OBSTACLE;
+  }
+  index = 1;
+  while (index < pointCount) {
+    const previousRouteX = load<f64>(routeXPointer + (index - 1) * sizeof<f64>());
+    const previousRouteY = load<f64>(routeYPointer + (index - 1) * sizeof<f64>());
+    const nextRouteX = load<f64>(routeXPointer + index * sizeof<f64>());
+    const nextRouteY = load<f64>(routeYPointer + index * sizeof<f64>());
+    if (
+      smartRoutePointOutsideContext(previousRouteX, previousRouteY) ||
+      smartRoutePointOutsideContext(nextRouteX, nextRouteY)
+    ) {
+      return Layout.SMART_RESULT_FAILURE_REASON_ROUTE_OBSTACLE;
+    }
+    if (
+      lineHitsRouteContext(
+        contextPointer,
+        <i32>previousRouteX,
+        <i32>previousRouteY,
+        <i32>nextRouteX,
+        <i32>nextRouteY,
+      )
+    ) {
+      return Layout.SMART_RESULT_FAILURE_REASON_ROUTE_OBSTACLE;
+    }
+    index += 1;
+  }
+  return Layout.SMART_RESULT_FAILURE_REASON_NONE;
+}
+
 /** Runs the complete smart composition over a route candidate in one synchronous WASM command. */
 export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
@@ -6015,9 +6103,15 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
     load<u32>(inputPointer + Layout.SMART_INPUT_VERSION_OFFSET) != Layout.SMART_INPUT_VERSION
   ) trap();
   const flags = load<u32>(inputPointer + Layout.SMART_INPUT_FLAGS_OFFSET);
-  if ((flags & ~Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0) trap();
+  if (
+    (flags &
+      ~(Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION | Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION)) !=
+    0
+  ) trap();
   const pointsXPointer = load<u32>(inputPointer + Layout.SMART_INPUT_POINTS_X_POINTER_OFFSET);
   const pointsYPointer = load<u32>(inputPointer + Layout.SMART_INPUT_POINTS_Y_POINTER_OFFSET);
+  const routePointsXPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_POINTS_X_POINTER_OFFSET);
+  const routePointsYPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_POINTS_Y_POINTER_OFFSET);
   const pointCount = load<u32>(inputPointer + Layout.SMART_INPUT_POINT_COUNT_OFFSET);
   const sourcePointCount = load<u32>(inputPointer + Layout.SMART_INPUT_SOURCE_POINT_COUNT_OFFSET);
   if (sourcePointCount > pointCount) trap();
@@ -6028,18 +6122,29 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   compositionRequireFinite(targetRadius);
   if (targetRadius < 0) trap();
   const routeContextPointer = load<u32>(inputPointer + Layout.SMART_INPUT_ROUTE_CONTEXT_POINTER_OFFSET);
-  if (routeContextPointer != 0) requireArenaRange(routeContextPointer, Layout.ROUTE_CONTEXT_BYTE_LENGTH, sizeof<u64>());
+  const hasRouteContextValidation = (flags & Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION) != 0;
+  if (hasRouteContextValidation != (routeContextPointer != 0)) trap();
+  if (routeContextPointer != 0) requireRouteContext(routeContextPointer);
+  if (hasRouteContextValidation) {
+    compositionValidateRoutePointArrays(routePointsXPointer, routePointsYPointer, pointCount);
+  } else if (routePointsXPointer != 0 || routePointsYPointer != 0) {
+    trap();
+  }
 
   const resultPointer = reserveArena(Layout.SMART_RESULT_BYTE_LENGTH, sizeof<u64>());
   if (pointCount == 0) {
-    store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
-    store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_FAILURE);
-    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_Y_POINTER_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 0);
-    store<u32>(resultPointer + 28, 0);
+    writeSmartFailure(resultPointer, Layout.SMART_RESULT_FAILURE_REASON_NONE);
+    return resultPointer;
+  }
+
+  const initialFailureReason = smartPathFailureReason(
+    routeContextPointer,
+    routePointsXPointer,
+    routePointsYPointer,
+    pointCount,
+  );
+  if (initialFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
+    writeSmartFailure(resultPointer, initialFailureReason);
     return resultPointer;
   }
 
@@ -6051,21 +6156,27 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const targetDeltaY = lastY - targetY;
   const targetRadiusSquared = targetRadius * targetRadius;
   if (targetDeltaX * targetDeltaX + targetDeltaY * targetDeltaY > targetRadiusSquared) {
-    store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
-    store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_FAILURE);
-    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_Y_POINTER_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, 0);
-    store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 0);
-    store<u32>(resultPointer + 28, 0);
+    writeSmartFailure(
+      resultPointer,
+      routeContextPointer == 0 ? Layout.SMART_RESULT_FAILURE_REASON_NONE : Layout.SMART_RESULT_FAILURE_REASON_TARGET,
+    );
     return resultPointer;
   }
 
   const outputXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
   const outputYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
+  const outputRouteXPointer = hasRouteContextValidation
+    ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+    : 0;
+  const outputRouteYPointer = hasRouteContextValidation
+    ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+    : 0;
   memory.copy(outputXPointer, pointsXPointer, pointCount * sizeof<f64>());
   memory.copy(outputYPointer, pointsYPointer, pointCount * sizeof<f64>());
+  if (hasRouteContextValidation) {
+    memory.copy(outputRouteXPointer, routePointsXPointer, pointCount * sizeof<f64>());
+    memory.copy(outputRouteYPointer, routePointsYPointer, pointCount * sizeof<f64>());
+  }
   let outputCount = pointCount;
   let removedCount: u32 = 0;
   if ((flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 && outputCount > sourcePointCount + 1) {
@@ -6082,6 +6193,16 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
         while (shift + 1 < outputCount) {
           store<f64>(outputXPointer + shift * sizeof<f64>(), load<f64>(outputXPointer + (shift + 1) * sizeof<f64>()));
           store<f64>(outputYPointer + shift * sizeof<f64>(), load<f64>(outputYPointer + (shift + 1) * sizeof<f64>()));
+          if (hasRouteContextValidation) {
+            store<f64>(
+              outputRouteXPointer + shift * sizeof<f64>(),
+              load<f64>(outputRouteXPointer + (shift + 1) * sizeof<f64>()),
+            );
+            store<f64>(
+              outputRouteYPointer + shift * sizeof<f64>(),
+              load<f64>(outputRouteYPointer + (shift + 1) * sizeof<f64>()),
+            );
+          }
           shift += 1;
         }
         outputCount -= 1;
@@ -6092,6 +6213,17 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
     }
   }
 
+  const outputFailureReason = smartPathFailureReason(
+    routeContextPointer,
+    outputRouteXPointer,
+    outputRouteYPointer,
+    outputCount,
+  );
+  if (outputFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
+    writeSmartFailure(resultPointer, outputFailureReason);
+    return resultPointer;
+  }
+
   store<u32>(resultPointer + Layout.SMART_RESULT_MAGIC_OFFSET, Layout.SMART_RESULT_MAGIC);
   store<u32>(resultPointer + Layout.SMART_RESULT_STATUS_OFFSET, Layout.SMART_RESULT_STATUS_SUCCESS);
   store<u32>(resultPointer + Layout.SMART_RESULT_POINTS_X_POINTER_OFFSET, outputXPointer);
@@ -6099,7 +6231,7 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   store<u32>(resultPointer + Layout.SMART_RESULT_POINT_COUNT_OFFSET, outputCount);
   store<u32>(resultPointer + Layout.SMART_RESULT_REMOVED_POINT_COUNT_OFFSET, removedCount);
   store<u32>(resultPointer + Layout.SMART_RESULT_VALIDATED_FLAG_OFFSET, 1);
-  store<u32>(resultPointer + 28, 0);
+  store<u32>(resultPointer + Layout.SMART_RESULT_FAILURE_REASON_OFFSET, Layout.SMART_RESULT_FAILURE_REASON_NONE);
   return resultPointer;
 }
 

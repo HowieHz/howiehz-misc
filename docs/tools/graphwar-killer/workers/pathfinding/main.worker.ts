@@ -711,33 +711,61 @@ async function findSmartPathResult(
 
   const normalizedPath = normalizeSmartPathfindingPathFromPlanePath(routeResult.path, input.targetPoint, input);
   if (wasmRuntime) {
-    // The effective WASM path owns point deletion before TS performs the single
-    // result-boundary trajectory check. This avoids running the TS validation /
-    // optimization loop ahead of the composition export.
-    const path = measureSyncStage(timings, "optimize-path", () => {
-      const composed = runGraphwarWasmSmartPathfinding(wasmRuntime, {
-        isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
-        points: normalizedPath,
-        sourcePointCount: input.sourcePath.length,
-        target: input.targetPoint,
-        targetRadius: input.hitTarget.radius,
-      });
-      return composed.status === "failure" ? normalizedPath : composed.points.map(({ x, y }) => createPixelPoint(x, y));
+    const wasmRouteContext = createGraphwarWasmRouteContext(wasmRuntime, {
+      boundaryExpansion: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      routeOriginPoint: imageToGraphPoint(routeOriginPoint, input.bounds, input.boundsRect),
+      routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+      sourceMask: routeMaskLookup.mask,
+      sourceMaskType: "route",
+      ...(runtimePolicy.type === "step-stateful"
+        ? {
+            stepRouteModel: {
+              ...runtimePolicy.runtime.model,
+              qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+            },
+          }
+        : {}),
     });
-    const validation = measureSyncStage(timings, "validate-trajectory", () =>
-      validateSmartPathfindingTrajectory(input, path, formulaMode, runtimePolicy, debugMetrics, wasmRuntime),
-    );
-    if (!validation.followsGraphRule) {
-      return { failureReason: "graph-rule", timings };
+    try {
+      // The retained route context owns graph-rule and route-mask validation
+      // for the effective WASM composition command. Numeric trajectory checks
+      // remain the single TypeScript result boundary until the smart core ABI
+      // carries formula/trajectory evidence.
+      const composed = measureSyncStage(timings, "optimize-path", () =>
+        wasmRouteContext.runSmartPathfinding({
+          isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
+          points: normalizedPath,
+          sourcePointCount: input.sourcePath.length,
+          target: input.targetPoint,
+          targetRadius: input.hitTarget.radius,
+        }),
+      );
+      if (composed.status === "failure") {
+        return {
+          failureReason: composed.failureReason === "graph-rule" ? "graph-rule" : "route",
+          timings,
+        };
+      }
+      const path = composed.points.map(({ x, y }) => createPixelPoint(x, y));
+      const validation = measureSyncStage(timings, "validate-trajectory", () =>
+        validateSmartPathfindingTrajectory(input, path, formulaMode, runtimePolicy, debugMetrics, wasmRuntime),
+      );
+      if (!validation.followsGraphRule) {
+        return { failureReason: "graph-rule", timings };
+      }
+      if (!validation.reachesTargetBeforeObstacle) {
+        return {
+          ...(validation.blockedPoint ? { blockedPoint: validation.blockedPoint } : {}),
+          failureReason: "trajectory",
+          timings,
+        };
+      }
+      return { path, timings };
+    } finally {
+      wasmRouteContext.dispose();
     }
-    if (!validation.reachesTargetBeforeObstacle) {
-      return {
-        ...(validation.blockedPoint ? { blockedPoint: validation.blockedPoint } : {}),
-        failureReason: "trajectory",
-        timings,
-      };
-    }
-    return { path, timings };
   }
 
   const validation = measureSyncStage(timings, "validate-trajectory", () =>

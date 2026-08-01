@@ -28,6 +28,11 @@ import {
   validateGraphwarWasmU32,
   writeGraphwarWasmUint32Values,
 } from "./abi";
+import {
+  runGraphwarWasmSmartPathfinding,
+  type GraphwarWasmSmartPathfindingInput,
+  type GraphwarWasmSmartPathfindingResult,
+} from "./composition-adapter";
 import type { GraphwarWasmKernelRuntime } from "./runtime";
 import {
   copyGraphwarWasmPathfindingPreviewEvent,
@@ -76,6 +81,27 @@ const routeBoundaryEdgeRecordU32Length = 5;
 const planeCellCount = 770 * 450;
 const summedAreaValueCount = 771 * 451;
 
+/** Quantizes image coordinates once, preserving the shared plane-grid edge semantics. */
+function quantizeSmartRouteCoordinate(value: number, origin: number, span: number, length: number) {
+  const raw = Math.floor(((value - origin) / span) * length);
+  if (value < origin || value > origin + span) {
+    return raw;
+  }
+  return Math.max(0, Math.min(length - 1, raw));
+}
+
+function imagePointToSmartRouteValidationPoint(
+  point: GraphwarWasmPoint,
+  boundsRect: { readonly height: number; readonly width: number; readonly x: number; readonly y: number },
+  isMirrored: boolean,
+): GraphwarWasmPoint {
+  const planeX = quantizeSmartRouteCoordinate(point.x, boundsRect.x, boundsRect.width, GRAPHWAR_PLANE_LENGTH);
+  return {
+    x: isMirrored ? GRAPHWAR_PLANE_LENGTH - 1 - planeX : planeX,
+    y: quantizeSmartRouteCoordinate(point.y, boundsRect.y, boundsRect.height, GRAPHWAR_PLANE_HEIGHT),
+  };
+}
+
 /** Owned route-context result and collision surface; no WASM memory view escapes this object. */
 export interface GraphwarWasmRouteContext {
   readonly isMirrored: boolean;
@@ -101,6 +127,10 @@ export interface GraphwarWasmRouteContext {
   graphRegionHitsObstacle: (region: GraphClosedRegion) => boolean;
   lineHitsObstacle: (start: PlaneGridPoint, end: PlaneGridPoint) => boolean;
   pointHitsObstacle: (point: PlaneGridPoint) => boolean;
+  /** Runs smart composition while this retained context remains the validator owner. */
+  runSmartPathfinding: (
+    input: Omit<GraphwarWasmSmartPathfindingInput, "routeContextPointer" | "routeValidationPoints">,
+  ) => GraphwarWasmSmartPathfindingResult;
 }
 
 /** Canonical Step state is always transported with both its finite runtime height and exact integer identity. */
@@ -705,6 +735,16 @@ export function createGraphwarWasmRouteContext(
     return {
       countPlaneRegionObstacles(region) {
         return runRegionQuery(routeCommand.planeRegionCount, region);
+      },
+      runSmartPathfinding(smartInput) {
+        assertActive();
+        return runGraphwarWasmSmartPathfinding(runtime, {
+          ...smartInput,
+          routeContextPointer: contextPointer,
+          routeValidationPoints: smartInput.points.map((point) =>
+            imagePointToSmartRouteValidationPoint(point, input.boundsRect, isMirrored),
+          ),
+        });
       },
       dispose() {
         assertActive();

@@ -1440,6 +1440,7 @@ async function buildOneClickClearStatelessDag(
       isTargetOrderDescending: !xPlusGoesRight(options.bounds),
       path: options.pathPoints,
       requestNonce: options.wasmRequestNonce ?? 1,
+      verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
     });
     if (composition.status === "waiting-edge-batch" && graphwarWasmJobsMatch(typescriptJobs, composition)) {
       compositionSession = composition.handle;
@@ -1775,6 +1776,7 @@ async function applyWasmPreferredStepDagPath(
     isTargetOrderDescending: !xPlusGoesRight(options.bounds),
     path: options.pathPoints,
     requestNonce: options.wasmRequestNonce ?? 1,
+    verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
   });
   if (composition.status !== "waiting-edge-batch") {
     return dag;
@@ -1798,6 +1800,7 @@ async function applyWasmPreferredStepDagPath(
 
   const session = composition.handle;
   const routesByTargetPair = new Map<string, OneClickClearDagEdge>();
+  let hasDuplicateTargetPair = false;
   for (const edge of dag.edges) {
     if (!edge.active) {
       continue;
@@ -1808,9 +1811,15 @@ async function applyWasmPreferredStepDagPath(
       continue;
     }
     const key = `${fromTarget}:${toTarget}`;
-    if (!routesByTargetPair.has(key)) {
+    if (routesByTargetPair.has(key)) {
+      hasDuplicateTargetPair = true;
+    } else {
       routesByTargetPair.set(key, edge);
     }
+  }
+  if (hasDuplicateTargetPair) {
+    session.cancel();
+    return dag;
   }
   const edgesForJobs = composition.edgeJobs.map((job) => {
     const fromTarget = job.from === START_NODE_INDEX ? START_NODE_INDEX : composition.targetOrder[job.from];
@@ -2056,12 +2065,19 @@ function calculateOneClickClearRouteVerticalVariation(
   options: Pick<GraphwarOneClickClearOptions, "bounds" | "boundsRect">,
   route: readonly PixelPoint[],
 ) {
-  const graphYPerImagePixel = Math.abs((options.bounds.maxY - options.bounds.minY) / options.boundsRect.height);
+  const graphYPerImagePixel = calculateOneClickClearVerticalVariationScale(options);
   let variation = 0;
   for (let index = 1; index < route.length; index += 1) {
     variation += Math.abs(route[index].y - route[index - 1].y) * graphYPerImagePixel;
   }
   return variation;
+}
+
+/** Keeps the composition core's per-segment variation in the same Graphwar units as the TS DP. */
+function calculateOneClickClearVerticalVariationScale(
+  options: Pick<GraphwarOneClickClearOptions, "bounds" | "boundsRect">,
+) {
+  return Math.abs((options.bounds.maxY - options.bounds.minY) / options.boundsRect.height);
 }
 
 /** 在具体状态节点 DAG 上做最长路 DP；同分时依次选点更少、纵向变化更小的稳定路线。 */

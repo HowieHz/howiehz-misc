@@ -32,7 +32,7 @@ type GraphwarWasmRequiredFunctionExport = (typeof graphwarWasmRequiredFunctionEx
 const graphwarWasmRuntimeConstructionToken = Symbol("GraphwarWasmRuntimeConstructionToken");
 const SMART_PATHFINDING_INPUT_BYTE_LENGTH = 56;
 const SMART_PATHFINDING_RESULT_BYTE_LENGTH = 32;
-const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 56;
+const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 64;
 const ONE_CLICK_CLEAR_RESULT_BYTE_LENGTH = 52;
 const ONE_CLICK_CLEAR_RESUME_INPUT_BYTE_LENGTH = 16;
 

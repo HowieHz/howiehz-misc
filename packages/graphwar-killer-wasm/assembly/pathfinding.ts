@@ -6116,8 +6116,8 @@ function compareOneClickTargetOrder(
   if (leftX > rightX) return isDescending ? -1 : 1;
   const leftY = load<f64>(yPointer + leftIndex * sizeof<f64>());
   const rightY = load<f64>(yPointer + rightIndex * sizeof<f64>());
-  if (leftY < rightY) return isDescending ? 1 : -1;
-  if (leftY > rightY) return isDescending ? -1 : 1;
+  if (leftY < rightY) return 1;
+  if (leftY > rightY) return -1;
   return leftIndex < rightIndex ? -1 : leftIndex > rightIndex ? 1 : 0;
 }
 
@@ -6203,6 +6203,9 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   const routeContextPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_ROUTE_CONTEXT_POINTER_OFFSET);
   if (routeContextPointer != 0) requireArenaRange(routeContextPointer, Layout.ROUTE_CONTEXT_BYTE_LENGTH, sizeof<u64>());
   const requestedNonce = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_REQUEST_NONCE_OFFSET);
+  const verticalVariationScale = load<f64>(inputPointer + Layout.ONE_CLICK_INPUT_VERTICAL_VARIATION_SCALE_OFFSET);
+  compositionRequireFinite(verticalVariationScale);
+  if (verticalVariationScale < 0) trap();
   if (requestedNonce == 0 || nextOneClickSessionNonce == 0) trap();
   const nonce = nextOneClickSessionNonce;
   nextOneClickSessionNonce += 1;
@@ -6333,6 +6336,7 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CAPACITY_OFFSET, 0);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET, targetOrderPointer);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET, requestedNonce);
+  store<f64>(sessionPointer + Layout.ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET, verticalVariationScale);
   if (jobCount == 0) {
     store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
     activeOneClickSessionPointer = 0;
@@ -6411,6 +6415,9 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   ) trap();
   const requestNonce = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET);
   if (requestNonce == 0) trap();
+  const verticalVariationScale = load<f64>(sessionPointer + Layout.ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET);
+  compositionRequireFinite(verticalVariationScale);
+  if (verticalVariationScale < 0) trap();
   const jobCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_COUNT_OFFSET);
   if (workCount != jobCount) trap();
   if (workCount == 0) {
@@ -6422,11 +6429,13 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   const routeXPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
   const routeYPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
   const routeCountPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  const routeVariationPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<f64>(), sizeof<f64>());
   if (jobCount != 0) {
     memory.fill(completedPointer, 0, jobCount);
     memory.fill(routeXPointer, 0, jobCount * sizeof<u32>());
     memory.fill(routeYPointer, 0, jobCount * sizeof<u32>());
     memory.fill(routeCountPointer, 0, jobCount * sizeof<u32>());
+    memory.fill(routeVariationPointer, 0, jobCount * sizeof<f64>());
   }
   let workIndex: u32 = 0;
   while (workIndex < workCount) {
@@ -6442,29 +6451,44 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
     const xPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_X_POINTER_OFFSET);
     const yPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_Y_POINTER_OFFSET);
     const routeCount = load<u32>(result + ONE_CLICK_EDGE_RESULT_COUNT_OFFSET);
+    let routeVariation: f64 = 0;
     if (reachable == 0) {
       if (xPointer != 0 || yPointer != 0 || routeCount != 0) trap();
     } else {
       compositionValidatePointArrays(xPointer, yPointer, routeCount);
       if (routeCount < 2) trap();
+      let routeIndex: u32 = 1;
+      while (routeIndex < routeCount) {
+        const previousY = load<f64>(yPointer + (routeIndex - 1) * sizeof<f64>());
+        const currentY = load<f64>(yPointer + routeIndex * sizeof<f64>());
+        routeVariation += NativeMath.abs(currentY - previousY) * verticalVariationScale;
+        routeIndex += 1;
+      }
     }
     store<u8>(completedPointer + jobId, 1);
     store<u32>(routeXPointer + jobId * sizeof<u32>(), xPointer);
     store<u32>(routeYPointer + jobId * sizeof<u32>(), yPointer);
     store<u32>(routeCountPointer + jobId * sizeof<u32>(), routeCount);
+    store<f64>(routeVariationPointer + jobId * sizeof<f64>(), routeVariation);
     workIndex += 1;
   }
 
   const targetCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_COUNT_OFFSET);
   const bestScorePointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
+  const bestRoutePointCountPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
+  const bestVariationPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<f64>(), sizeof<f64>());
   const bestJobPointer = targetCount == 0 ? 0 : reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
   if (targetCount != 0) {
     memory.fill(bestScorePointer, 0, targetCount * sizeof<u32>());
+    memory.fill(bestRoutePointCountPointer, 0xff, targetCount * sizeof<u32>());
+    memory.fill(bestVariationPointer, 0, targetCount * sizeof<f64>());
     memory.fill(bestJobPointer, 0xff, targetCount * sizeof<u32>());
   }
   let jobIndex: u32 = 0;
   let bestTarget: u32 = u32.MAX_VALUE;
   let bestTargetScore: u32 = 0;
+  let bestTargetRoutePointCount: u32 = u32.MAX_VALUE;
+  let bestTargetVariation: f64 = 0;
   const jobsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_POINTER_OFFSET);
   while (jobIndex < jobCount) {
     if (load<u8>(completedPointer + jobIndex) != 0 && load<u32>(routeCountPointer + jobIndex * sizeof<u32>()) > 1) {
@@ -6478,13 +6502,44 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
         continue;
       }
       const score: u32 = previousScore + 1;
-      if (score > load<u32>(bestScorePointer + to * sizeof<u32>())) {
+      const previousRoutePointCount = from == u32.MAX_VALUE
+        ? 0
+        : load<u32>(bestRoutePointCountPointer + from * sizeof<u32>());
+      const routePointCount: u32 =
+        previousRoutePointCount + load<u32>(routeCountPointer + jobIndex * sizeof<u32>()) - 1;
+      const previousVariation = from == u32.MAX_VALUE
+        ? 0
+        : load<f64>(bestVariationPointer + from * sizeof<f64>());
+      const variation = previousVariation + load<f64>(routeVariationPointer + jobIndex * sizeof<f64>());
+      const existingScore = load<u32>(bestScorePointer + to * sizeof<u32>());
+      const existingRoutePointCount = load<u32>(bestRoutePointCountPointer + to * sizeof<u32>());
+      const existingVariation = load<f64>(bestVariationPointer + to * sizeof<f64>());
+      const existingJob = load<u32>(bestJobPointer + to * sizeof<u32>());
+      const isBetterForTarget =
+        score > existingScore ||
+        (score == existingScore &&
+          (routePointCount < existingRoutePointCount ||
+            (routePointCount == existingRoutePointCount &&
+              (variation < existingVariation ||
+                (variation == existingVariation && jobIndex < existingJob)))));
+      if (isBetterForTarget) {
         store<u32>(bestScorePointer + to * sizeof<u32>(), score);
+        store<u32>(bestRoutePointCountPointer + to * sizeof<u32>(), routePointCount);
+        store<f64>(bestVariationPointer + to * sizeof<f64>(), variation);
         store<u32>(bestJobPointer + to * sizeof<u32>(), jobIndex);
       }
-      if (score > bestTargetScore || (score == bestTargetScore && to < bestTarget)) {
+      const isBetterTarget =
+        score > bestTargetScore ||
+        (score == bestTargetScore &&
+          (routePointCount < bestTargetRoutePointCount ||
+            (routePointCount == bestTargetRoutePointCount &&
+              (variation < bestTargetVariation ||
+                (variation == bestTargetVariation && to < bestTarget)))));
+      if (isBetterTarget) {
         bestTarget = to;
         bestTargetScore = score;
+        bestTargetRoutePointCount = routePointCount;
+        bestTargetVariation = variation;
       }
     }
     jobIndex += 1;

@@ -102,6 +102,7 @@ describe("Graphwar WASM composition adapter", () => {
         reachable: true,
         route: [
           { x: 0, y: 0 },
+          { x: 10, y: 0 },
           { x: 20, y: 0 },
         ],
         sessionNonce: started.handle.nonce,
@@ -135,6 +136,78 @@ describe("Graphwar WASM composition adapter", () => {
       expect(started.targetOrder).toEqual([0, 1]);
       started.handle.cancel();
     }
+  });
+
+  it("matches TS longest-path point-count and vertical-variation tie-breaks", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      verticalVariationScale: 1 / 15,
+      candidates: [
+        { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const result = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 5, y: 8 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: false,
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+
+    expect(result).toEqual({
+      path: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ],
+      selectedEdgeCount: 1,
+      status: "complete",
+      targetOrder: [0, 1],
+    });
+  });
+
+  it("keeps normal target ordering stable for equal x columns", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 10, y: 2 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 10, y: 8 }, hitRadius: 1, isEnemy: true },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    expect(started.targetOrder).toEqual([1, 0]);
+    started.handle.cancel();
   });
 
   it("rejects duplicate edge ids and invalidates the retained session", async () => {

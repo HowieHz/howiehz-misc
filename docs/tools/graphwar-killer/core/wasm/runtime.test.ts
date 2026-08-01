@@ -138,9 +138,9 @@ describe("Graphwar WASM runtime boundary", () => {
       instantiate: async () => arena.instance,
     });
 
-    const inputPointer = runtime.reserveArena(56, 4);
+    const inputPointer = runtime.reserveArena(64, 4);
     expect(runtime.runSmartPathfinding(inputPointer, 56) % 8).toBe(0);
-    expect(runtime.beginOneClickClear(inputPointer, 56) % 8).toBe(0);
+    expect(runtime.beginOneClickClear(inputPointer, 64) % 8).toBe(0);
 
     const resumePointer = runtime.reserveArena(16, 4);
     expect(runtime.resumeOneClickClear(resumePointer, 16) % 8).toBe(0);

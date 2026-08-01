@@ -17,10 +17,10 @@ import type { GraphwarWasmPoint } from "./task-adapter";
 export const graphwarWasmCompositionLayout = {
   oneClickEdgeJobByteLength: 48,
   oneClickEdgeResultByteLength: 28,
-  oneClickInputByteLength: 56,
+  oneClickInputByteLength: 64,
   oneClickResultByteLength: 52,
   oneClickResumeByteLength: 16,
-  oneClickSessionByteLength: 92,
+  oneClickSessionByteLength: 104,
   smartInputByteLength: 56,
   smartResultByteLength: 32,
 } as const;
@@ -73,6 +73,7 @@ const oneClickInput = {
   pathCount: 40,
   routeContext: 44,
   requestNonce: 48,
+  verticalVariationScale: 56,
 } as const;
 
 const oneClickResult = {
@@ -135,6 +136,7 @@ const oneClickSession = {
   routeCapacity: 80,
   targetOrder: 84,
   requestNonce: 88,
+  verticalVariationScale: 96,
 } as const;
 
 const oneClickResume = {
@@ -181,6 +183,8 @@ export interface GraphwarWasmOneClickClearInput {
   readonly path: readonly GraphwarWasmPoint[];
   readonly requestNonce: number;
   readonly routeContextPointer?: number;
+  /** Graphwar-unit vertical variation per image-pixel y unit. */
+  readonly verticalVariationScale?: number;
 }
 
 export interface GraphwarWasmOneClickEdgeJob {
@@ -286,12 +290,12 @@ export function beginGraphwarWasmOneClickClear(
       commandPointer,
       graphwarWasmCompositionLayout.oneClickInputByteLength,
     );
-    const decoded = copyOneClickResult(runtime, resultPointer, input.requestNonce);
+    const decoded = copyOneClickResult(runtime, resultPointer, packed.requestNonce, packed.verticalVariationScale);
     if (decoded.status !== "waiting-edge-batch") {
       runtime.resetArena(mark);
       return decoded;
     }
-    const session = createOneClickSession(runtime, mark, decoded);
+    const session = createOneClickSession(runtime, mark, decoded, packed.verticalVariationScale);
     keepsMark = true;
     return { ...decoded, handle: session };
   } catch (error) {
@@ -416,6 +420,7 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
   if (requestNonce === 0) {
     throw new GraphwarWasmAdapterError("invalid-session-identity", "requestNonce must be non-zero", "input");
   }
+  const verticalVariationScale = validateNonNegativeFinite(input.verticalVariationScale ?? 1, "verticalVariationScale");
   return {
     candidateFlags: writeGraphwarWasmUint32Values(
       runtime,
@@ -446,6 +451,7 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     pathCount: path.length,
     requestNonce,
     routeContextPointer: validateOptionalPointer(input.routeContextPointer, "routeContextPointer"),
+    verticalVariationScale,
   };
 }
 
@@ -468,12 +474,14 @@ function writeOneClickInput(
   view.setUint32(oneClickInput.pathCount, packed.pathCount, true);
   view.setUint32(oneClickInput.routeContext, packed.routeContextPointer, true);
   view.setUint32(oneClickInput.requestNonce, packed.requestNonce, true);
+  view.setFloat64(oneClickInput.verticalVariationScale, packed.verticalVariationScale, true);
 }
 
 function copyOneClickResult(
   runtime: GraphwarWasmMemorySource,
   resultPointer: number,
   expectedRequestNonce?: number,
+  expectedVerticalVariationScale?: number,
 ): DecodedOneClickResult {
   const view = readRecord(runtime, resultPointer, graphwarWasmCompositionLayout.oneClickResultByteLength, 8);
   if (view.getUint32(oneClickResult.magic, true) !== oneClickResultMagic) {
@@ -542,6 +550,7 @@ function copyOneClickResult(
       targetCount,
       view.getUint32(oneClickResult.targetOrder, true),
       resultRequestNonce,
+      expectedVerticalVariationScale,
     );
     if (session.nonce !== resultNonce) {
       throw new GraphwarWasmAdapterError("invalid-session-identity", "one-click result nonce is stale", "output");
@@ -586,6 +595,7 @@ function createOneClickSession(
   runtime: GraphwarWasmKernelRuntime,
   mark: number,
   decoded: DecodedWaitingOneClickResult,
+  verticalVariationScale: number,
 ): GraphwarWasmOneClickSession {
   let isActive = true;
   const sessionPointer = decoded.__session.pointer;
@@ -637,7 +647,7 @@ function createOneClickSession(
           envelopePointer,
           graphwarWasmCompositionLayout.oneClickResumeByteLength,
         );
-        const decodedResult = copyOneClickResult(runtime, resultPointer, requestNonce);
+        const decodedResult = copyOneClickResult(runtime, resultPointer, requestNonce, verticalVariationScale);
         if (decodedResult.status === "waiting-edge-batch") {
           const nextSession = decodedResult.__session;
           if (nextSession.pointer !== sessionPointer || nextSession.nonce !== nonce) {
@@ -773,6 +783,7 @@ function readOneClickSession(
   targetCount: number,
   targetOrderPointer: number,
   expectedRequestNonce?: number,
+  expectedVerticalVariationScale?: number,
 ) {
   const view = readRecord(runtime, pointer, graphwarWasmCompositionLayout.oneClickSessionByteLength, 8);
   if (view.getUint32(oneClickSession.magic, true) !== oneClickSessionMagic) {
@@ -800,6 +811,28 @@ function readOneClickSession(
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
       "one-click session request nonce is stale",
+      "output",
+    );
+  }
+  const verticalVariationScale = validateGraphwarWasmFiniteNumber(
+    view.getFloat64(oneClickSession.verticalVariationScale, true),
+    "session vertical variation scale",
+    "output",
+  );
+  if (verticalVariationScale < 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-finite-number",
+      "session vertical variation scale is negative",
+      "output",
+    );
+  }
+  if (
+    expectedVerticalVariationScale !== undefined &&
+    !Object.is(verticalVariationScale, expectedVerticalVariationScale)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click session vertical variation scale changed",
       "output",
     );
   }

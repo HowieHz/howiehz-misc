@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@giscus/vue": "^3.1.1",
-    "@lucide/vue": "^1.27.0",
+    "@lucide/vue": "^1.28.0",
     "compat-finder": "workspace:*",
     "graphwar-killer-wasm": "workspace:*",
     "lunar-javascript": "^1.7.7",

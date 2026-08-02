@@ -35,6 +35,29 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("matches the TS scale-aware half-column projection in both directions", async () => {
+    const runtime = await createRuntime();
+    const forward = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+      boundaryExpansion: 0,
+      boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+      candidates: [{ center: { x: 1.4999999995, y: 225 }, hitRadius: 0.8, sourceIndex: 1 }],
+      isMirrored: false,
+      pathTail: { x: 0, y: 225 },
+      usableRect: { height: 450, width: 770, x: 0, y: 0 },
+    });
+    const mirrored = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+      boundaryExpansion: 0,
+      boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+      candidates: [{ center: { x: 767.5000000005, y: 225 }, hitRadius: 0.8, sourceIndex: 2 }],
+      isMirrored: true,
+      pathTail: { x: 769, y: 225 },
+      usableRect: { height: 450, width: 770, x: 0, y: 0 },
+    });
+
+    expect(forward).toEqual([{ routePoint: { x: 1, y: 225 }, sourceIndex: 1 }]);
+    expect(mirrored).toEqual([{ routePoint: { x: 768, y: 225 }, sourceIndex: 2 }]);
+  });
+
   it("validates an ordinary one-click route with ordered multi-target stop state", async () => {
     const runtime = await createRuntime();
     const graphPoints = [

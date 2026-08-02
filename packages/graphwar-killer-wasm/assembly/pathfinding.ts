@@ -6910,9 +6910,22 @@ export function assignOneClickTargets(inputPointer: u32, inputByteLength: u32): 
     ) {
       const planeX = ((centerX - boundsRectX) * getGraphwarPlaneLength()) / boundsRectWidth;
       const forwardPlaneX = isMirrored ? getGraphwarPlaneLength() - 1 - planeX : planeX;
-      // Add a tiny scale-independent guard for the exact integer produced by
-      // the browser's image-to-plane projection (e.g. 200 * 770 / 770).
-      let preferredForwardColumn: i32 = <i32>NativeMath.floor(forwardPlaneX + 0.5 + 1e-9);
+      const nearestHalfColumn = NativeMath.round(forwardPlaneX * 2) / 2;
+      const projectionTolerance =
+        f64.EPSILON *
+        NativeMath.max(
+          1,
+          NativeMath.max(
+            NativeMath.abs(centerX),
+            NativeMath.max(NativeMath.abs(boundsRectX), NativeMath.abs(boundsRectWidth)),
+          ),
+        ) *
+        getGraphwarPlaneLength() *
+        2 /
+        boundsRectWidth;
+      const quantizedForwardPlaneX =
+        NativeMath.abs(forwardPlaneX - nearestHalfColumn) <= projectionTolerance ? nearestHalfColumn : forwardPlaneX;
+      let preferredForwardColumn: i32 = <i32>NativeMath.floor(quantizedForwardPlaneX + 0.5);
       if (preferredForwardColumn < 0) preferredForwardColumn = 0;
       if (preferredForwardColumn >= <i32>getPlaneWidth()) preferredForwardColumn = <i32>getPlaneWidth() - 1;
 

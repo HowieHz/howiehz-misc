@@ -9,6 +9,7 @@ import type {
   GraphwarOneClickClearBuildOptions,
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildRequest,
+  GraphwarOneClickClearDagEdgeRoute,
 } from "./search";
 import { buildGraphwarOneClickClearPath } from "./search";
 
@@ -66,10 +67,65 @@ describe("one-click-clear mirrored WASM guard", () => {
     expect(jobs.filter(({ from }) => from === -1).map(({ targetPoint }) => targetPoint.x)).toEqual([650, 550]);
     expect(jobs.every(isStatelessJob)).toBe(true);
   });
+
+  it("keeps a selected WASM job identity when an earlier job is unreachable", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const start = createPixelPoint(100, 225);
+    const candidates = [
+      { id: "unreachable", isEnemy: true, hitCenter: createPixelPoint(250, 300), hitRadius: 2 },
+      { id: "selected", isEnemy: true, hitCenter: createPixelPoint(400, 225), hitRadius: 30 },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs
+          .filter(isStatelessJob)
+          .flatMap((job) => (job.targetPoint.x === 400 ? [createSuccessfulEdgeRoute(job)] : [])),
+        timings: [],
+      }),
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "y",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+        steepness: 67,
+      }),
+      hitCandidates: candidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      simulationBoundaryExpansion: 0,
+      simulationMask: emptyMask,
+      simulationMaskCacheId: 1,
+      wasmRequestNonce: 18,
+      wasmRuntime: runtime,
+    } satisfies GraphwarOneClickClearBuildOptions);
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(result.targetIds).toEqual(["selected"]);
+      expect(result.pathPoints.at(-1)).toEqual(createPixelPoint(400, 225));
+    }
+  });
 });
 
 function isStatelessJob(
   job: GraphwarOneClickClearDagEdgeBuildJob,
 ): job is Extract<GraphwarOneClickClearDagEdgeBuildJob, { type: "stateless" }> {
   return job.type === "stateless";
+}
+
+function createSuccessfulEdgeRoute(job: Extract<GraphwarOneClickClearDagEdgeBuildJob, { type: "stateless" }>) {
+  return {
+    jobId: job.id,
+    route: [job.startPoint, job.targetPoint],
+    type: "stateless",
+  } satisfies GraphwarOneClickClearDagEdgeRoute;
 }

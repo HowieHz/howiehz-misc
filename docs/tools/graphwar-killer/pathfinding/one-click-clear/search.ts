@@ -11,6 +11,7 @@ import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   beginGraphwarWasmOneClickClear,
   type GraphwarWasmOneClickClearResult,
+  type GraphwarWasmOneClickDagJob,
   type GraphwarWasmOneClickEdgeResult,
   type GraphwarWasmOneClickSession,
 } from "../../core/wasm/composition-adapter";
@@ -1487,12 +1488,10 @@ async function buildOneClickClearStatelessDag(
         throw new GraphwarWasmFault("abi", "one-click WASM session returned an unexpected second edge batch");
       }
       if (compositionResult.status === "complete") {
-        preferredEdgeIds = deriveOneClickClearPreferredEdgeIds(
-          jobs,
-          compositionResult.path,
-          options.pathPoints.length,
-          targets,
-        );
+        // The adapter validates these IDs against the retained session. Keep
+        // the stable job identity through the DAG merge; path coordinates are
+        // output evidence, not an identity source.
+        preferredEdgeIds = compositionResult.selectedEdgeIds;
       }
       compositionSession = undefined;
     }
@@ -1502,12 +1501,21 @@ async function buildOneClickClearStatelessDag(
   emitOneClickClearDebugTimings(options, result.timings);
 
   const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
+  const edgesByJobId = new Map<number, OneClickClearDagEdge>();
   for (const job of jobs) {
     const route = routesByJobId.get(job.id);
     const targetNode = nodes[job.to];
     if (route?.type === "stateless" && targetNode) {
       addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, route.route);
+      const edge = edges.at(-1);
+      if (!edge || edgesByJobId.has(job.id)) {
+        throw new GraphwarWasmFault("abi", "one-click stateless edge identity is duplicated or missing");
+      }
+      edgesByJobId.set(job.id, edge);
     }
+  }
+  if (preferredEdgeIds !== undefined) {
+    preferredEdgeIds = mapOneClickClearSelectedJobIdsToEdgeIds(preferredEdgeIds, edgesByJobId);
   }
 
   return {
@@ -1546,43 +1554,31 @@ function graphwarWasmJobsMatch(
   });
 }
 
-/** Converts the WASM-selected target chain back to stable DAG edge ids without re-solving the DAG in TS. */
-function deriveOneClickClearPreferredEdgeIds(
-  jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[],
-  path: readonly { readonly x: number; readonly y: number }[],
-  sourcePointCount: number,
-  targets: readonly OneClickClearTarget[],
+/** Maps validated WASM job identities to compact IDs of reachable DAG edges. */
+function mapOneClickClearSelectedJobIdsToEdgeIds(
+  selectedJobIds: readonly number[],
+  edgesByJobId: ReadonlyMap<number, OneClickClearDagEdge>,
 ) {
-  let pathIndex = Math.max(0, sourcePointCount);
-  let previousTargetIndex = -1;
-  const selectedTargetIndexes: number[] = [];
-  while (pathIndex < path.length) {
-    const point = path[pathIndex];
-    if (!point) {
-      break;
-    }
-    const targetIndex = targets.findIndex(
-      (target, index) =>
-        index > previousTargetIndex && target.routePoint.x === point.x && target.routePoint.y === point.y,
-    );
-    if (targetIndex >= 0) {
-      selectedTargetIndexes.push(targetIndex);
-      previousTargetIndex = targetIndex;
-    }
-    pathIndex += 1;
-  }
-  if (selectedTargetIndexes.length === 0) {
-    return [];
+  if (selectedJobIds.length === 0) {
+    throw new GraphwarWasmFault("abi", "one-click stateless composition selected no edge");
   }
   const selectedEdgeIds: number[] = [];
-  let from = START_NODE_INDEX;
-  for (const to of selectedTargetIndexes) {
-    const job = jobs.find((candidate) => candidate.from === from && candidate.to === to);
-    if (!job) {
-      return [];
+  const seenJobIds = new Set<number>();
+  let previousNode = START_NODE_INDEX;
+  for (const jobId of selectedJobIds) {
+    if (seenJobIds.has(jobId)) {
+      throw new GraphwarWasmFault("abi", "one-click stateless composition selected a duplicate edge");
     }
-    selectedEdgeIds.push(job.id);
-    from = to;
+    seenJobIds.add(jobId);
+    const edge = edgesByJobId.get(jobId);
+    if (!edge || !edge.active) {
+      throw new GraphwarWasmFault("abi", "one-click stateless composition selected an unreachable edge");
+    }
+    if (edge.from !== previousNode) {
+      throw new GraphwarWasmFault("abi", "one-click stateless composition selected a discontinuous chain");
+    }
+    selectedEdgeIds.push(edge.id);
+    previousNode = edge.to;
   }
   return selectedEdgeIds;
 }
@@ -1767,6 +1763,38 @@ async function applyWasmPreferredStepDagPath(
   if (!options.wasmRuntime || dag.edges.length === 0) {
     return dag;
   }
+  const dagJobs = dag.edges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
+    const fromNode = edge.from === START_NODE_INDEX ? undefined : dag.nodes[edge.from];
+    const toNode = dag.nodes[edge.to];
+    const startPoint = edge.route[0];
+    const targetPoint = edge.route.at(-1);
+    if (!toNode || !startPoint || !targetPoint || (edge.from !== START_NODE_INDEX && !fromNode)) {
+      throw new GraphwarWasmFault("abi", "stateful one-click DAG edge lost its node or endpoint identity");
+    }
+    if (edge.from === START_NODE_INDEX) {
+      return {
+        from: START_NODE_INDEX,
+        fromNodeId: 0xffff_ffff,
+        id,
+        startPoint,
+        targetPoint,
+        to: toNode.targetIndex,
+        toNodeId: toNode.id,
+      };
+    }
+    if (!fromNode) {
+      throw new GraphwarWasmFault("abi", "stateful one-click DAG edge lost its source node identity");
+    }
+    return {
+      from: fromNode.targetIndex,
+      fromNodeId: fromNode.id,
+      id,
+      startPoint,
+      targetPoint,
+      to: toNode.targetIndex,
+      toNodeId: toNode.id,
+    };
+  });
   const composition = beginGraphwarWasmOneClickClear(options.wasmRuntime, {
     candidates: dag.targets.map((target) => ({
       hitCenter: target.routePoint,
@@ -1780,56 +1808,39 @@ async function applyWasmPreferredStepDagPath(
     requestNonce: options.wasmRequestNonce ?? 1,
     targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
     verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
+    dagJobs,
+    dagNodeCount: dag.nodes.length,
   });
   if (composition.status !== "waiting-edge-batch") {
     return dag;
   }
 
-  // The state-labelled Step DAG may contain several edges for one target pair.
-  // Only let the composition core participate when its target identity and every
-  // geometry job are represented by an existing TS edge; otherwise keep the
-  // complete TS stateful search as the correctness path.
+  // Explicit state-node identities keep duplicate target pairs distinct. The
+  // adapter has already checked the descriptor, but the target order remains a
+  // caller-owned identity that must match the retained DAG before publication.
   if (
     composition.targetOrder.some((targetIndex, index) => targetIndex !== index) ||
-    composition.edgeJobs.some(
-      (job) =>
-        job.to >= composition.targetOrder.length ||
-        (job.from !== START_NODE_INDEX && job.from >= composition.targetOrder.length),
-    )
+    composition.edgeJobs.length !== dagJobs.length ||
+    composition.edgeJobs.some((job, index) => {
+      const expected = dagJobs[index];
+      return (
+        !expected ||
+        job.id !== expected.id ||
+        job.from !== expected.from ||
+        job.to !== expected.to ||
+        job.fromNodeId !== expected.fromNodeId ||
+        job.toNodeId !== expected.toNodeId
+      );
+    })
   ) {
     composition.handle.cancel();
     return dag;
   }
 
   const session = composition.handle;
-  const routesByTargetPair = new Map<string, OneClickClearDagEdge>();
-  let hasDuplicateTargetPair = false;
-  for (const edge of dag.edges) {
-    if (!edge.active) {
-      continue;
-    }
-    const fromTarget = edge.from === START_NODE_INDEX ? START_NODE_INDEX : dag.nodes[edge.from]?.targetIndex;
-    const toTarget = dag.nodes[edge.to]?.targetIndex;
-    if (fromTarget === undefined || toTarget === undefined) {
-      continue;
-    }
-    const key = `${fromTarget}:${toTarget}`;
-    if (routesByTargetPair.has(key)) {
-      hasDuplicateTargetPair = true;
-    } else {
-      routesByTargetPair.set(key, edge);
-    }
-  }
-  if (hasDuplicateTargetPair) {
-    session.cancel();
-    return dag;
-  }
+  const edgesByJobId = new Map(dag.edges.map((edge, id) => [id, edge]));
   const edgesForJobs = composition.edgeJobs.map((job) => {
-    const fromTarget = job.from === START_NODE_INDEX ? START_NODE_INDEX : composition.targetOrder[job.from];
-    const toTarget = composition.targetOrder[job.to];
-    return fromTarget === undefined || toTarget === undefined
-      ? undefined
-      : routesByTargetPair.get(`${fromTarget}:${toTarget}`);
+    return edgesByJobId.get(job.id);
   });
   if (edgesForJobs.some((edge) => edge === undefined)) {
     session.cancel();
@@ -1858,12 +1869,7 @@ async function applyWasmPreferredStepDagPath(
       throw new GraphwarWasmFault("abi", "stateful one-click WASM session returned an unexpected edge batch");
     }
     if (result.status === "complete") {
-      const targetIndexes = deriveOneClickClearPreferredTargetIndexes(
-        result.path,
-        options.pathPoints.length,
-        dag.targets,
-      );
-      const preferredEdgeIds = selectStepDagEdgesForTargetChain(dag, targetIndexes);
+      const preferredEdgeIds = mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId);
       if (preferredEdgeIds.length > 0) {
         return { ...dag, preferredEdgeIds };
       }
@@ -1886,43 +1892,6 @@ function createOneClickClearWasmTargetOrderKeys(
       isMirrored,
     ),
   );
-}
-
-function deriveOneClickClearPreferredTargetIndexes(
-  path: readonly { readonly x: number; readonly y: number }[],
-  sourcePointCount: number,
-  targets: readonly OneClickClearTarget[],
-) {
-  const selected: number[] = [];
-  let previousTargetIndex = -1;
-  for (const point of path.slice(Math.max(0, sourcePointCount))) {
-    const targetIndex = targets.findIndex(
-      (target, index) =>
-        index > previousTargetIndex && target.routePoint.x === point.x && target.routePoint.y === point.y,
-    );
-    if (targetIndex >= 0) {
-      selected.push(targetIndex);
-      previousTargetIndex = targetIndex;
-    }
-  }
-  return selected;
-}
-
-function selectStepDagEdgesForTargetChain(dag: OneClickClearDag, targetIndexes: readonly number[]) {
-  const preferredEdgeIds: number[] = [];
-  let from = START_NODE_INDEX;
-  for (const targetIndex of targetIndexes) {
-    const edge = dag.edges.find(
-      (candidate) =>
-        candidate.active && candidate.from === from && dag.nodes[candidate.to]?.targetIndex === targetIndex,
-    );
-    if (!edge) {
-      return [];
-    }
-    preferredEdgeIds.push(edge.id);
-    from = edge.to;
-  }
-  return preferredEdgeIds;
 }
 
 /** 从第一条用户路径点开始逐段结算，得到 START 续接新边时的 canonical Step 状态。 */

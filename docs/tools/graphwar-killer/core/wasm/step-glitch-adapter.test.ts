@@ -275,6 +275,26 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
       ),
     ).toEqual({ status: "invalid-input" });
 
+    const composition = {
+      controlX: -6,
+      finalValidation: { type: "none" as const },
+      isDeleteOptimizationEnabled: true,
+      path: [...fixture.sourcePath, createPixelPoint(600, 180)],
+      sourcePointCount: fixture.sourcePath.length,
+      targetSequence: [{ center: createPixelPoint(600, 180), radius: 12 }],
+      type: "compose" as const,
+    };
+    const packedComposition = packGraphwarWasmStepGlitchCommandInput(arena, fixture.context, composition, 8);
+    expect(packedComposition.status).toBe("ready");
+    if (packedComposition.status === "ready") {
+      expect(packedComposition.input.type).toBe("compose");
+      if (packedComposition.input.type === "compose") {
+        expect(packedComposition.input.flags).toBe(1);
+        expect(packedComposition.input.sourcePointCount).toBe(fixture.sourcePath.length);
+        expect(packedComposition.input.targetSequenceRecords.length).toBe(3);
+      }
+    }
+
     expect(
       packGraphwarWasmStepGlitchCommandInput(
         arena,

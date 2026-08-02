@@ -22,6 +22,7 @@ import type {
   GraphwarTrajectoryFormulaSettings,
   GraphwarTrajectoryTargetCircle,
 } from "../../formula/trajectory/sampling";
+import { graphwarTrajectoryFormulaSettingsAreEquivalent } from "../../formula/trajectory/settings-identity";
 import {
   graphwarStepGlitchPrefixEvidenceHasValidIdentity,
   graphwarStepGlitchPrefixEvidenceMatchesContext,
@@ -73,6 +74,7 @@ const STEP_GLITCH_COMMAND_REPLAY_CANDIDATE_FOR_TEST = 16;
 const STEP_GLITCH_COMMAND_TRACE_REAL_DFS_FOR_TEST = 17;
 const STEP_GLITCH_COMMAND_SCAN = 18;
 const STEP_GLITCH_COMMAND_REPLAY = 19;
+const STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH = 20;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
@@ -106,6 +108,8 @@ const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD = 1;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE = 2;
 const STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH = 24;
 const STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH = 64;
+const STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH = 56;
+const STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION = 1;
 const STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH = 32;
 const STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH = 72;
 const STEP_GLITCH_PRODUCTION_RESULT_MAGIC = 0x5347_5052;
@@ -215,7 +219,7 @@ export type GraphwarWasmStepGlitchFinalValidationInput =
       type: "validate";
     };
 
-/** 同一 retained context 支持 scan 与 deletion replay，两者不共享不合法的可选字段。 */
+/** 同一 retained context 支持 scan、replay 与 smart composition。 */
 export type GraphwarWasmStepGlitchCommandInput =
   | {
       finalValidation: GraphwarWasmStepGlitchFinalValidationInput;
@@ -232,6 +236,15 @@ export type GraphwarWasmStepGlitchCommandInput =
         | { type: "automatic" }
         | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
       type: "replay";
+    }
+  | {
+      controlX: number;
+      finalValidation: GraphwarWasmStepGlitchFinalValidationInput;
+      isDeleteOptimizationEnabled: boolean;
+      path: readonly PixelPoint[];
+      sourcePointCount: number;
+      targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+      type: "compose";
     };
 
 /** Formula settings 的 raw 数值记录和可选 mask 是一个原子范围集合。 */
@@ -324,6 +337,15 @@ export type GraphwarWasmPackedStepGlitchCommandInput =
       targetSequenceRecords: GraphwarWasmMemorySlice;
       windows: { count: number; mode: number; pointer: number };
       type: "replay";
+    }
+  | {
+      controlX: number;
+      finalValidation: GraphwarWasmPackedStepGlitchFinalValidation;
+      flags: number;
+      path: GraphwarWasmPackedPointSoA;
+      sourcePointCount: number;
+      targetSequenceRecords: GraphwarWasmMemorySlice;
+      type: "compose";
     };
 
 /** Descriptor preflight can produce only normal scanner outcomes or a fully packed context. */
@@ -353,6 +375,9 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   replayRaw: (
     input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "replay" }>,
   ) => GraphwarWasmStepGlitchRawReplayOutput;
+  composeRaw: (
+    input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "compose" }>,
+  ) => GraphwarWasmStepGlitchRawResultBase;
   scanRaw: (
     input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "scan" }>,
   ) => GraphwarWasmStepGlitchRawScanOutput;
@@ -708,6 +733,8 @@ export interface GraphwarWasmStepGlitchOwnedEvidence {
   readonly path: readonly PixelPoint[];
   readonly pointerEncoding: "relative-to-evidence";
   readonly protection: readonly number[];
+  /** Scan-only target identity retained for smart composition provenance checks. */
+  readonly scanTarget?: GraphwarTrajectoryTargetCircle;
   readonly trackedTargetHitIndexes: readonly number[];
   readonly trajectory: GraphwarWasmStepGlitchOwnedTrajectory;
 }
@@ -732,6 +759,99 @@ export interface GraphwarWasmStepGlitchRawResultBase {
 
 export type GraphwarWasmStepGlitchRawScanOutput = GraphwarWasmStepGlitchRawResultBase;
 export type GraphwarWasmStepGlitchRawReplayOutput = GraphwarWasmStepGlitchRawResultBase;
+
+/**
+ * Smart Step-glitch composition keeps candidate deletion and replay evidence in one retained scanner boundary. The
+ * Worker may still own graph-rule checks, but it cannot accept a shortened path without this WASM replay proving it.
+ */
+export interface GraphwarWasmStepGlitchSmartCompositionInput {
+  readonly controlX: number;
+  readonly formulaSettings: GraphwarTrajectoryFormulaSettings;
+  readonly initialEvidence: GraphwarWasmStepGlitchOwnedEvidence;
+  readonly initialPath: readonly PixelPoint[];
+  readonly isDeleteOptimizationEnabled: boolean;
+  readonly scanner: GraphwarWasmStepGlitchGeometryTestContext;
+  readonly simulationMask: Uint8Array;
+  readonly sourcePointCount: number;
+  readonly targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+}
+
+export type GraphwarWasmStepGlitchSmartCompositionResult =
+  | {
+      readonly evidence: GraphwarWasmStepGlitchOwnedEvidence;
+      readonly path: readonly PixelPoint[];
+      readonly replayCount: number;
+      readonly status: "success";
+    }
+  | {
+      readonly blockedPoint?: GraphPoint;
+      readonly failureReason: "route" | "trajectory";
+      readonly replayCount: number;
+      readonly status: "failure";
+    };
+
+/** Keeps scan evidence and its path identity together, then delegates deletion/replay ordering to command 20. */
+export function composeGraphwarWasmStepGlitchSmartPath(
+  input: GraphwarWasmStepGlitchSmartCompositionInput,
+): GraphwarWasmStepGlitchSmartCompositionResult {
+  if (
+    !Number.isFinite(input.controlX) ||
+    !Number.isInteger(input.sourcePointCount) ||
+    input.sourcePointCount < 1 ||
+    input.sourcePointCount > input.initialPath.length ||
+    input.targetSequence.length === 0 ||
+    !input.initialEvidence.scanTarget ||
+    input.targetSequence.length !== 1 ||
+    !productionEvidenceTargetSequencesEqual([input.initialEvidence.scanTarget], input.targetSequence) ||
+    !graphwarByteArraysEqual(input.initialEvidence.formulaInput.mask, input.simulationMask) ||
+    !graphwarTrajectoryFormulaSettingsAreEquivalent(
+      input.initialEvidence.formulaInput.settings,
+      input.formulaSettings,
+    ) ||
+    input.initialEvidence.path.length !== input.initialPath.length ||
+    input.initialEvidence.path.some((point, index) => {
+      const expectedPoint = input.initialPath[index];
+      return expectedPoint === undefined || !pixelPointsEqual(point, expectedPoint);
+    })
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch smart composition source identity is invalid",
+      "input",
+    );
+  }
+
+  const optimizedPath = input.initialPath.map(({ x, y }) => createPixelPoint(x, y));
+  if (!input.isDeleteOptimizationEnabled) {
+    return { evidence: input.initialEvidence, path: optimizedPath, replayCount: 0, status: "success" };
+  }
+  const composed = input.scanner.composeRaw({
+    controlX: input.controlX,
+    finalValidation: { type: "none" },
+    isDeleteOptimizationEnabled: true,
+    path: optimizedPath,
+    sourcePointCount: input.sourcePointCount,
+    targetSequence: input.targetSequence,
+    type: "compose",
+  });
+  if (composed.status !== "hit") {
+    return {
+      ...(composed.blockedPoint ? { blockedPoint: composed.blockedPoint } : {}),
+      failureReason: composed.status === "invalid-input" || composed.status === "unsupported" ? "route" : "trajectory",
+      replayCount: composed.expandedStates,
+      status: "failure",
+    };
+  }
+  const evidence = composed.evidence?.owned;
+  if (!evidence) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch smart composition returned no evidence",
+      "output",
+    );
+  }
+  return { evidence, path: evidence.path, replayCount: composed.expandedStates, status: "success" };
+}
 
 /** Maps the existing scanner options once; debug metrics and the TS-only mask index stay in the Worker shell. */
 export function createGraphwarWasmStepGlitchContextInput(
@@ -970,6 +1090,17 @@ function decodeGraphwarWasmStepGlitchProductionRawResult(
   if (hasBlockedPoint && (!Number.isFinite(blockedX) || !Number.isFinite(blockedY))) {
     throw new GraphwarWasmAdapterError("invalid-session-state", "Step-glitch blocked point is non-finite", "output");
   }
+  const reachedTargetCount = validateGraphwarWasmU32(
+    view.getUint32(20, true),
+    "stepGlitch.production.reachedTargetCount",
+  );
+  const orderedTargetCount =
+    command.type === "scan"
+      ? orderedTargetSequence(context.requiredTargets, command.hitTarget).length
+      : command.targetSequence.length;
+  if (reachedTargetCount > context.requiredTargets.length + orderedTargetCount) {
+    productionEvidenceFault("Step-glitch result target count exceeds its command identity");
+  }
   if (status === "hit" && evidence) {
     const evidenceView = new DataView(evidence.bytes.buffer, evidence.bytes.byteOffset, evidence.bytes.byteLength);
     const evidenceAcceptedX = productionEvidenceFinite(
@@ -1003,7 +1134,7 @@ function decodeGraphwarWasmStepGlitchProductionRawResult(
     }
     const expectedReachedTargetCount =
       evidence.owned.trajectory.reachedTargetCount + evidence.owned.trajectory.reachedRequiredTargetCount;
-    if (view.getUint32(20, true) !== expectedReachedTargetCount) {
+    if (reachedTargetCount !== expectedReachedTargetCount) {
       productionEvidenceFault("Step-glitch result target count differs from its evidence");
     }
   }
@@ -1012,7 +1143,7 @@ function decodeGraphwarWasmStepGlitchProductionRawResult(
     ...(hasBlockedPoint ? { blockedPoint: createGraphPoint(blockedX, blockedY) } : {}),
     expandedStates: validateGraphwarWasmU32(view.getUint32(16, true), "stepGlitch.production.expandedStates"),
     ...(evidence ? { evidence } : {}),
-    reachedTargetCount: validateGraphwarWasmU32(view.getUint32(20, true), "stepGlitch.production.reachedTargetCount"),
+    reachedTargetCount,
     status,
   };
 }
@@ -1245,8 +1376,9 @@ function validateOwnedProductionWindowIdentity(
   segmentCount: number,
   flags: number,
 ) {
-  if (command.type !== "replay") return;
-  const commandWindows = command.windows ?? { type: "automatic" as const };
+  if (command.type !== "replay" && command.type !== "compose") return;
+  const commandWindows =
+    command.type === "compose" ? { type: "automatic" as const } : (command.windows ?? { type: "automatic" as const });
   const hasFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) !== 0;
   if (commandWindows.type === "automatic") {
     if (hasFixedWindows || windows.some((window) => window !== undefined)) {
@@ -1799,9 +1931,37 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     context,
     command,
   );
-  if (command.type === "replay") {
-    if (!productionEvidencePixelsEqual(path, command.path))
-      productionEvidenceFault("Replay evidence path differs from the command path");
+  if (command.type === "replay" || command.type === "compose") {
+    if (command.type === "replay") {
+      if (!productionEvidencePixelsEqual(path, command.path))
+        productionEvidenceFault("Replay evidence path differs from the command path");
+    } else {
+      const finalPathPoint = path.at(-1);
+      const commandFinalPathPoint = command.path.at(-1);
+      if (
+        path.length > command.path.length ||
+        !productionEvidencePixelsEqual(path.slice(0, context.sourcePath.length), context.sourcePath) ||
+        !finalPathPoint ||
+        !commandFinalPathPoint ||
+        !pixelPointsEqual(finalPathPoint, commandFinalPathPoint)
+      ) {
+        productionEvidenceFault("Composition evidence does not retain its source prefix and final point");
+      }
+      let commandIndex = 0;
+      for (const point of path) {
+        while (commandIndex < command.path.length) {
+          const commandPoint = command.path[commandIndex];
+          if (commandPoint && pixelPointsEqual(commandPoint, point)) {
+            break;
+          }
+          commandIndex += 1;
+        }
+        if (commandIndex >= command.path.length) {
+          productionEvidenceFault("Composition evidence path is not a stable candidate subsequence");
+        }
+        commandIndex += 1;
+      }
+    }
   } else if (!productionEvidencePixelsEqual(path.slice(0, context.sourcePath.length), context.sourcePath)) {
     productionEvidenceFault("Scan evidence path does not retain its source path prefix");
   }
@@ -1898,6 +2058,14 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     pointerEncoding: "relative-to-evidence",
     protection,
     ...(continuation ? { continuation } : {}),
+    ...(command.type === "scan"
+      ? {
+          scanTarget: {
+            center: createPixelPoint(command.hitTarget.center.x, command.hitTarget.center.y),
+            radius: command.hitTarget.radius,
+          },
+        }
+      : {}),
     trackedTargetHitIndexes,
     trajectory,
   };
@@ -2124,7 +2292,11 @@ function decodeOwnedProductionTrajectory(
       }
     }
   }
-  if (stopReason === TRAJECTORY_STOP_REASON_STOP_X && command.type === "replay" && currentPoint.x < command.controlX) {
+  if (
+    stopReason === TRAJECTORY_STOP_REASON_STOP_X &&
+    (command.type === "replay" || command.type === "compose") &&
+    currentPoint.x < command.controlX
+  ) {
     productionEvidenceFault("Step-glitch evidence stopped before its requested frontier");
   }
   if (stopReason === TRAJECTORY_STOP_REASON_MAX_STEPS && sampleIndex !== GRAPHWAR_FUNC_MAX_STEPS - 1) {
@@ -2172,7 +2344,7 @@ function decodeOwnedProductionTrajectory(
   }
   const pathError = hasExpectedPathError ? validateGraphwarWasmPathError(rawPathError) : undefined;
   const orderedTargets =
-    command.type === "replay"
+    command.type === "replay" || command.type === "compose"
       ? command.targetSequence
       : orderedTargetSequence(context.requiredTargets, command.hitTarget);
   if (
@@ -2235,7 +2407,7 @@ function validateOwnedProductionTargetIdentity(
 ) {
   const requiredTargets = context.requiredTargets;
   const orderedTargets =
-    command.type === "replay"
+    command.type === "replay" || command.type === "compose"
       ? command.targetSequence
       : orderedTargetSequence(context.requiredTargets, command.hitTarget);
   let reachedRequiredTargetCount = 0;
@@ -2504,7 +2676,9 @@ function runGraphwarWasmStepGlitchProductionRaw(
     const inputPointer = runtime.reserveArena(
       packed.input.type === "scan"
         ? STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH
-        : STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH,
+        : packed.input.type === "replay"
+          ? STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH
+          : STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH,
       8,
     );
     const inputView = new DataView(
@@ -2512,7 +2686,9 @@ function runGraphwarWasmStepGlitchProductionRaw(
       inputPointer,
       packed.input.type === "scan"
         ? STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH
-        : STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH,
+        : packed.input.type === "replay"
+          ? STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH
+          : STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH,
     );
     inputView.setUint32(0, contextPointer, true);
     let commandId: number;
@@ -2536,7 +2712,7 @@ function runGraphwarWasmStepGlitchProductionRaw(
       inputView.setUint32(20, 0, true);
       commandId = STEP_GLITCH_COMMAND_SCAN;
       inputByteLength = STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH;
-    } else {
+    } else if (command.type === "replay") {
       if (packed.input.type !== "replay") {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
@@ -2564,6 +2740,32 @@ function runGraphwarWasmStepGlitchProductionRaw(
       inputView.setUint32(60, 0, true);
       commandId = STEP_GLITCH_COMMAND_REPLAY;
       inputByteLength = STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH;
+    } else {
+      if (packed.input.type !== "compose") {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Step-glitch command pack changed the composition input variant",
+          "output",
+        );
+      }
+      const finalValidation = packGraphwarWasmStepGlitchFinalValidationDescriptor(
+        runtime,
+        packed.input.finalValidation,
+      );
+      inputView.setUint32(4, packed.input.path.x.pointer, true);
+      inputView.setUint32(8, packed.input.path.y.pointer, true);
+      inputView.setUint32(12, packed.input.path.length, true);
+      inputView.setUint32(16, packed.input.targetSequenceRecords.pointer, true);
+      inputView.setUint32(20, packed.input.targetSequenceRecords.length / 3, true);
+      inputView.setUint32(24, packed.input.sourcePointCount, true);
+      inputView.setUint32(28, packed.input.flags, true);
+      inputView.setFloat64(32, packed.input.controlX, true);
+      inputView.setUint32(40, finalValidation.pointer, true);
+      inputView.setUint32(44, finalValidation.length, true);
+      inputView.setUint32(48, 0, true);
+      inputView.setUint32(52, 0, true);
+      commandId = STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH;
+      inputByteLength = STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH;
     }
     const outputMinimumPointer = runtime.arenaCursor;
     const resultPointer = runtime.runRouteTask(commandId, inputPointer, inputByteLength);
@@ -2758,6 +2960,10 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
         replayRaw(replayInput) {
           assertActive();
           return runGraphwarWasmStepGlitchProductionRaw(runtime, contextPointer, contextSnapshot, replayInput);
+        },
+        composeRaw(composeInput) {
+          assertActive();
+          return runGraphwarWasmStepGlitchProductionRaw(runtime, contextPointer, contextSnapshot, composeInput);
         },
         scanRaw(scanInput) {
           assertActive();
@@ -4716,6 +4922,35 @@ export function packGraphwarWasmStepGlitchCommandInput(
   if (!packedFinalValidation) {
     return { status: "invalid-input" };
   }
+  if (command.type === "compose") {
+    if (
+      !Number.isFinite(command.controlX) ||
+      !Number.isInteger(command.sourcePointCount) ||
+      command.sourcePointCount < 0 ||
+      command.sourcePointCount !== context.sourcePath.length ||
+      command.path.length < 2 ||
+      command.path.length < command.sourcePointCount ||
+      !command.path.every(isGraphwarTrajectoryPoint) ||
+      !context.sourcePath.every((point, index) => pixelPointsEqual(point, command.path[index])) ||
+      command.targetSequence.length === 0 ||
+      !targetsAreValid(command.targetSequence)
+    ) {
+      return { status: "invalid-input" };
+    }
+    return {
+      input: {
+        controlX: command.controlX,
+        finalValidation: packedFinalValidation,
+        flags: command.isDeleteOptimizationEnabled ? STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION : 0,
+        path: packGraphwarWasmPointSoA(arena, command.path, minimumPointer),
+        sourcePointCount: command.sourcePointCount,
+        targetSequenceRecords: packTargets(arena, command.targetSequence, minimumPointer),
+        type: "compose",
+      },
+      status: "ready",
+    };
+  }
+
   if (command.type === "replay") {
     if (
       !Number.isFinite(command.controlX) ||

@@ -2,7 +2,7 @@ import { floorFormulaDecimal, roundFormulaDecimal } from "./decimal";
 import * as FormulaLayout from "./formula-layout";
 import { runPrepareLaunch } from "./formula-launch";
 import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants";
-import { markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
+import { commitArena, markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
 import * as Layout from "./step-glitch-layout";
 import { runTrajectoryRequest, runTrajectoryRequestWithMetadata } from "./trajectory";
 import * as TrajectoryLayout from "./trajectory-layout";
@@ -1132,6 +1132,282 @@ export function replayStepGlitch(inputPointer: u32, inputByteLength: u32): u32 {
   }
   const evidencePointer = copyProductionReplayEvidence(metadataPointer, replayResultPointer, pathXPointer, pathYPointer, pathCount, finalValidationPointer);
   return createProductionResult(Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT, evidencePointer, load<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET), 0, reachedTargetCount, hasAcceptedPoint, load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET), load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET), hasBlockedPoint, load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET), load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET));
+}
+
+/** Production smart composition owns candidate deletion and numerical replay in one WASM command. */
+export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
+  const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_CONTEXT_POINTER_OFFSET);
+  requireStepGlitchContext(contextPointer);
+  const flags = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAGS_OFFSET);
+  if (
+    (flags & ~Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION) != 0 ||
+    load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_RESERVED_OFFSET) != 0 ||
+    load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_RESERVED_TAIL_OFFSET) != 0
+  ) trap();
+
+  const pathXPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_PATH_X_POINTER_OFFSET);
+  const pathYPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_PATH_Y_POINTER_OFFSET);
+  const pathCount = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_PATH_COUNT_OFFSET);
+  const sourceCount = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET);
+  if (
+    pathCount < 2 ||
+    pathCount < sourceCount ||
+    load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_SOURCE_COUNT_OFFSET) != sourceCount
+  ) {
+    return createProductionResult(Layout.STEP_GLITCH_PRODUCTION_STATUS_INVALID_INPUT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  }
+  requireElementRange(pathXPointer, pathCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(pathYPointer, pathCount, sizeof<f64>(), sizeof<f64>());
+  const sourceXPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET);
+  const sourceYPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_Y_POINTER_OFFSET);
+  let pathIndex: u32 = 0;
+  while (pathIndex < pathCount) {
+    const pathX = load<f64>(pathXPointer + pathIndex * sizeof<f64>());
+    const pathY = load<f64>(pathYPointer + pathIndex * sizeof<f64>());
+    if (!isFiniteValue(pathX) || !isFiniteValue(pathY)) trap();
+    if (
+      pathIndex < sourceCount &&
+      (pathX != load<f64>(sourceXPointer + pathIndex * sizeof<f64>()) ||
+        pathY != load<f64>(sourceYPointer + pathIndex * sizeof<f64>()))
+    ) {
+      return createProductionResult(Layout.STEP_GLITCH_PRODUCTION_STATUS_INVALID_INPUT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+    pathIndex += 1;
+  }
+  if (!stepGlitchPathFollowsGraphRule(contextPointer, pathXPointer, pathCount)) {
+    return createProductionResult(Layout.STEP_GLITCH_PRODUCTION_STATUS_INVALID_INPUT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  }
+
+  const targetPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_TARGET_POINTER_OFFSET);
+  const targetCount = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_TARGET_COUNT_OFFSET);
+  validateStepGlitchTargetRecords(targetPointer, targetCount);
+  const controlX = load<f64>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_CONTROL_X_OFFSET);
+  if (!isFiniteValue(controlX)) trap();
+  const finalValidationPointer = validateProductionFinalValidation(
+    load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FINAL_VALIDATION_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FINAL_VALIDATION_BYTE_LENGTH_OFFSET),
+  );
+
+  const pathByteLength = checkedProductionEvidenceBytes(pathCount, sizeof<f64>());
+  const currentXPointer = reserveArena(pathByteLength, sizeof<f64>());
+  const currentYPointer = reserveArena(pathByteLength, sizeof<f64>());
+  const candidateXPointer = reserveArena(pathByteLength, sizeof<f64>());
+  const candidateYPointer = reserveArena(pathByteLength, sizeof<f64>());
+  memory.copy(currentXPointer, pathXPointer, pathByteLength);
+  memory.copy(currentYPointer, pathYPointer, pathByteLength);
+
+  let currentCount = pathCount;
+  let replayCount: u32 = 0;
+  let acceptedX: f64 = 0;
+  let acceptedY: f64 = 0;
+
+  // Candidate replay allocates formula and trajectory state. Discard each
+  // transaction after copying only the accepted path so long routes do not
+  // retain one full replay allocation set per deletion attempt.
+  const initialMark = markArena();
+  const initialMetadataPointer = reserveArena(TrajectoryLayout.TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH, sizeof<u32>());
+  const initialReplayResultPointer = replayStepGlitchCandidateWithMetadata(
+    contextPointer,
+    currentXPointer,
+    currentYPointer,
+    currentCount,
+    0,
+    0,
+    Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+    targetPointer,
+    targetCount,
+    controlX,
+    initialMetadataPointer,
+    finalValidationPointer,
+  );
+  replayCount += 1;
+  const initialLaunchStatus = load<i32>(
+    initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_LAUNCH_STATUS_OFFSET,
+  );
+  const initialAcceptedFlag = load<u32>(
+    initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_FLAG_OFFSET,
+  );
+  const initialReachedTargetCount =
+    load<u32>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
+    load<u32>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
+  const initialBlockedFlag = load<u32>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET);
+  const initialBlockedX = load<f64>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
+  const initialBlockedY = load<f64>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET);
+  const initialAcceptedX = load<f64>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET);
+  const initialAcceptedY = load<f64>(initialReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET);
+  resetArena(initialMark);
+  if (
+    initialLaunchStatus == TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_INVALID ||
+    initialAcceptedFlag == 0
+  ) {
+    return createProductionResult(
+      Layout.STEP_GLITCH_PRODUCTION_STATUS_MISS,
+      0,
+      0,
+      replayCount,
+      initialReachedTargetCount,
+      0,
+      0,
+      0,
+      initialBlockedFlag,
+      initialBlockedX,
+      initialBlockedY,
+    );
+  }
+  acceptedX = initialAcceptedX;
+  acceptedY = initialAcceptedY;
+
+  if ((flags & Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION) != 0) {
+    let index: u32 = sourceCount < 1 ? 1 : sourceCount;
+    while (index < currentCount - 1 && currentCount > 2) {
+      const candidateCount = currentCount - 1;
+      let readIndex: u32 = 0;
+      let writeIndex: u32 = 0;
+      while (readIndex < currentCount) {
+        if (readIndex != index) {
+          store<f64>(
+            candidateXPointer + writeIndex * sizeof<f64>(),
+            load<f64>(currentXPointer + readIndex * sizeof<f64>()),
+          );
+          store<f64>(
+            candidateYPointer + writeIndex * sizeof<f64>(),
+            load<f64>(currentYPointer + readIndex * sizeof<f64>()),
+          );
+          writeIndex += 1;
+        }
+        readIndex += 1;
+      }
+      if (!stepGlitchPathFollowsGraphRule(contextPointer, candidateXPointer, candidateCount)) {
+        index += 1;
+        continue;
+      }
+
+      const candidateMark = markArena();
+      const candidateMetadataPointer = reserveArena(
+        TrajectoryLayout.TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH,
+        sizeof<u32>(),
+      );
+      const candidateReplayResultPointer = replayStepGlitchCandidateWithMetadata(
+        contextPointer,
+        candidateXPointer,
+        candidateYPointer,
+        candidateCount,
+        0,
+        0,
+        Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+        targetPointer,
+        targetCount,
+        controlX,
+        candidateMetadataPointer,
+        finalValidationPointer,
+      );
+      replayCount += 1;
+      const candidateLaunchStatus = load<i32>(
+        candidateReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_LAUNCH_STATUS_OFFSET,
+      );
+      const candidateAcceptedFlag = load<u32>(
+        candidateReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_FLAG_OFFSET,
+      );
+      if (
+        candidateLaunchStatus != TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_INVALID &&
+        candidateAcceptedFlag != 0
+      ) {
+        memory.copy(currentXPointer, candidateXPointer, checkedProductionEvidenceBytes(candidateCount, sizeof<f64>()));
+        memory.copy(currentYPointer, candidateYPointer, checkedProductionEvidenceBytes(candidateCount, sizeof<f64>()));
+        currentCount = candidateCount;
+        acceptedX = load<f64>(candidateReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET);
+        acceptedY = load<f64>(candidateReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET);
+      }
+      resetArena(candidateMark);
+    }
+  }
+
+  const finalMark = markArena();
+  const finalMetadataPointer = reserveArena(TrajectoryLayout.TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH, sizeof<u32>());
+  const finalReplayResultPointer = replayStepGlitchCandidateWithMetadata(
+    contextPointer,
+    currentXPointer,
+    currentYPointer,
+    currentCount,
+    0,
+    0,
+    Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+    targetPointer,
+    targetCount,
+    controlX,
+    finalMetadataPointer,
+    finalValidationPointer,
+  );
+  replayCount += 1;
+  if (
+    load<i32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_LAUNCH_STATUS_OFFSET) ==
+      TrajectoryLayout.TRAJECTORY_RESULT_LAUNCH_STATUS_INVALID ||
+    load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_FLAG_OFFSET) == 0
+  ) {
+    const finalReachedTargetCount =
+      load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
+      load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
+    const finalBlockedFlag = load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET);
+    const finalBlockedX = load<f64>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET);
+    const finalBlockedY = load<f64>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET);
+    resetArena(finalMark);
+    return createProductionResult(
+      Layout.STEP_GLITCH_PRODUCTION_STATUS_MISS,
+      0,
+      0,
+      replayCount,
+      finalReachedTargetCount,
+      0,
+      0,
+      0,
+      finalBlockedFlag,
+      finalBlockedX,
+      finalBlockedY,
+    );
+  }
+  const evidencePointer = copyProductionReplayEvidence(
+    finalMetadataPointer,
+    finalReplayResultPointer,
+    currentXPointer,
+    currentYPointer,
+    currentCount,
+    finalValidationPointer,
+  );
+  const finalReachedTargetCount =
+    load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
+    load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_REQUIRED_COUNT_OFFSET);
+  acceptedX = load<f64>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET);
+  acceptedY = load<f64>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET);
+  commitArena(finalMark);
+
+  return createProductionResult(
+    Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT,
+    evidencePointer,
+    load<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET),
+    replayCount,
+    finalReachedTargetCount,
+    1,
+    acceptedX,
+    acceptedY,
+    0,
+    0,
+    0,
+  );
+}
+
+/** Candidate deletion must preserve the same strict image-space x+ rule as the Worker path validator. */
+function stepGlitchPathFollowsGraphRule(contextPointer: u32, pathXPointer: u32, pathCount: u32): bool {
+  const isMirrored = (load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FLAGS_OFFSET) & Layout.STEP_GLITCH_CONTEXT_FLAG_MIRRORED) != 0;
+  let index: u32 = 1;
+  while (index < pathCount) {
+    const previousX = load<f64>(pathXPointer + (index - 1) * sizeof<f64>());
+    const nextX = load<f64>(pathXPointer + index * sizeof<f64>());
+    if ((!isMirrored && !(nextX > previousX)) || (isMirrored && !(nextX < previousX))) return false;
+    index += 1;
+  }
+  return true;
 }
 
 @inline

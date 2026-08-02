@@ -22,12 +22,12 @@ import {
 } from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
-import { createGraphPoint, createPixelPoint } from "../../core/types";
+import { createPixelPoint } from "../../core/types";
 import type { GraphBounds, PixelPoint } from "../../core/types";
-import { runGraphwarWasmSmartPathfinding } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext, type GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
+  composeGraphwarWasmStepGlitchSmartPath,
   createGraphwarWasmStepGlitchContext,
   createGraphwarWasmStepGlitchContextInput,
   createGraphwarWasmStepGlitchScanCommandInput,
@@ -857,7 +857,15 @@ function findStepGlitchSmartPath(
           stepGlitchObstacleMask: simulationMask,
         });
   if (wasmRuntime) {
-    return findStepGlitchSmartPathWithWasm(input, scannerFormulaMode, timings, pathSearchPolicy, wasmRuntime);
+    return findStepGlitchSmartPathWithWasm(
+      input,
+      scannerFormulaMode,
+      timings,
+      pathSearchPolicy,
+      wasmRuntime,
+      formulaMode,
+      debugMetrics,
+    );
   }
   const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const scanResult = scanGraphwarStepGlitchPath({
@@ -949,8 +957,11 @@ export function findStepGlitchSmartPathWithWasm(
   timings: GraphwarSmartPathfindingWorkerTiming[],
   pathSearchPolicy: Extract<SmartPathSearchRuntimePolicy, { type: "step-glitch" }>,
   wasmRuntime: GraphwarWasmKernelRuntime,
+  validationFormulaMode: GraphwarTrajectoryFormulaMode = scannerFormulaMode,
+  debugMetrics?: GraphwarPathfindingDebugMetrics,
 ): GraphwarSmartPathfindingPathResult {
   const simulationMask = pathSearchPolicy.runtime.simulationMask;
+  const hasSharedFormulaMask = validationFormulaMode.settings.stepGlitchObstacleMask === simulationMask;
   const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const contextResult = createGraphwarWasmStepGlitchContext(
     wasmRuntime,
@@ -998,40 +1009,57 @@ export function findStepGlitchSmartPathWithWasm(
     if (!pathFollowsGraphRule(path, input.bounds, input.boundsRect)) {
       return { failureReason: "graph-rule", timings };
     }
-    const composed = runGraphwarWasmSmartPathfinding(wasmRuntime, {
-      isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
-      points: path,
+    const composeStartedAt = nowMs();
+    const composed = composeGraphwarWasmStepGlitchSmartPath({
+      controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
+      formulaSettings: scannerFormulaMode.settings,
+      initialEvidence: evidence,
+      initialPath: path,
+      // When the requested Formula Mode carries a different mask, command 20
+      // may only provide the scanner candidate. Deletion must be reproved by
+      // the requested mode below, matching the TypeScript cold path.
+      isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled && hasSharedFormulaMask,
+      scanner,
+      simulationMask,
       sourcePointCount: input.sourcePath.length,
-      target: input.targetPoint,
-      targetRadius: input.hitTarget.radius,
-      trajectoryValidation: { type: "route-only" },
+      targetSequence: [input.hitTarget],
     });
-    if (composed.status !== "success") {
+    if (hasSharedFormulaMask) {
+      timings.push({
+        elapsedMs: Math.max(0, nowMs() - composeStartedAt),
+        stage: input.isDeleteOptimizationEnabled ? "optimize-path" : "validate-trajectory",
+      });
+    }
+    if (composed.status === "failure") {
+      const blockedPoint = composed.blockedPoint
+        ? graphToImagePoint(composed.blockedPoint, input.bounds, input.boundsRect)
+        : undefined;
       return {
-        ...(composed.blockedPoint
-          ? {
-              blockedPoint: graphToImagePoint(
-                createGraphPoint(composed.blockedPoint.x, composed.blockedPoint.y),
-                input.bounds,
-                input.boundsRect,
-              ),
-            }
-          : {}),
-        failureReason: mapWasmSmartFailureReason(composed.failureReason),
+        ...(blockedPoint ? { blockedPoint } : {}),
+        failureReason: composed.failureReason,
         timings,
       };
     }
-    const composedPath = composed.points.map(({ x, y }) => createPixelPoint(x, y));
-    const replay = scanner.replayRaw({
-      controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
-      finalValidation: { type: "none" },
-      path: composedPath,
-      targetSequence: [input.hitTarget],
-      type: "replay",
-      windows: { type: "automatic" },
-    });
-    if (replay.status === "hit") {
-      path = composedPath;
+    path = composed.path.map(({ x, y }) => createPixelPoint(x, y));
+    if (!hasSharedFormulaMask) {
+      const validation = measureSyncStage(timings, "validate-trajectory", () =>
+        validateSmartPathfindingTrajectory(input, path, validationFormulaMode, pathSearchPolicy, debugMetrics),
+      );
+      if (!validation.followsGraphRule) {
+        return { failureReason: "graph-rule", timings };
+      }
+      if (!validation.reachesTargetBeforeObstacle) {
+        return {
+          ...(validation.blockedPoint ? { blockedPoint: validation.blockedPoint } : {}),
+          failureReason: "trajectory",
+          timings,
+        };
+      }
+      if (input.isDeleteOptimizationEnabled) {
+        path = measureSyncStage(timings, "optimize-path", () =>
+          optimizeSmartPathfindingPath(input, path, validationFormulaMode, pathSearchPolicy, debugMetrics),
+        );
+      }
     }
     // 当前生产 evidence ABI 不携带完整 prefix evidence，不能据此合成一份可复用证据。
     return { path, timings };

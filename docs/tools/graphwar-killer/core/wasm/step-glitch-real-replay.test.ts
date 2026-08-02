@@ -20,6 +20,7 @@ import type { BoundsRect, EquationMode, GraphBounds } from "../types";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
 import {
+  composeGraphwarWasmStepGlitchSmartPath,
   createGraphwarWasmStepGlitchContextInput,
   createGraphwarWasmStepGlitchGeometryTestContext,
   createGraphwarWasmStepGlitchScanCommandInput,
@@ -111,6 +112,72 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it("runs smart composition through command 20 and rejects a stale source count", async () => {
+    const fixture = createFixture("dy");
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint: fixture.pixelPath[2] }),
+    );
+    expect(scan.status).toBe("hit");
+    const evidence = scan.evidence?.owned;
+    if (!evidence) throw new Error("expected scan evidence");
+    expect(evidence.scanTarget).not.toBe(target);
+    expect(evidence.scanTarget).toEqual(target);
+    target.center = createPixelPoint(target.center.x + 1, target.center.y);
+    target.radius = 9;
+    const targetForComposition = {
+      center: createPixelPoint(fixture.pixelPath[2].x, fixture.pixelPath[2].y),
+      radius: 2,
+    };
+    expect(evidence.scanTarget).toEqual(targetForComposition);
+
+    const composed = composeGraphwarWasmStepGlitchSmartPath({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      formulaSettings: fixture.formulaMode.settings,
+      initialEvidence: evidence,
+      initialPath: fixture.pixelPath,
+      isDeleteOptimizationEnabled: true,
+      scanner: context,
+      simulationMask: fixture.mask,
+      sourcePointCount: 2,
+      targetSequence: [targetForComposition],
+    });
+    expect(composed.status).toBe("success");
+    if (composed.status === "success") {
+      expect(composed.path).toEqual(fixture.pixelPath);
+      expect(composed.evidence.path).toEqual(fixture.pixelPath);
+      expect(composed.replayCount).toBeGreaterThan(0);
+    }
+    const mismatchedMask = new Uint8Array(fixture.mask.length);
+    mismatchedMask[0] = 1;
+    expect(() =>
+      composeGraphwarWasmStepGlitchSmartPath({
+        controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+        formulaSettings: fixture.formulaMode.settings,
+        initialEvidence: evidence,
+        initialPath: fixture.pixelPath,
+        isDeleteOptimizationEnabled: true,
+        scanner: context,
+        simulationMask: mismatchedMask,
+        sourcePointCount: 2,
+        targetSequence: [targetForComposition],
+      }),
+    ).toThrow("source identity");
+
+    const stale = context.composeRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: { type: "none" },
+      isDeleteOptimizationEnabled: true,
+      path: fixture.pixelPath,
+      sourcePointCount: 1,
+      targetSequence: [targetForComposition],
+      type: "compose",
+    });
+    expect(stale.status).toBe("invalid-input");
+    context.dispose();
+  });
+
   it("runs command 19 final validation with tracked targets and owned hit indexes", async () => {
     const fixture = createFixture("dy");
     const { context } = await createContext(fixture);
@@ -141,6 +208,84 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     expect(replay.evidence?.owned.trajectory.trackedTargetHitIndexes[0]).toBeGreaterThanOrEqual(0);
     expect(replay.evidence?.owned.trajectory.pathError).toBeTypeOf("number");
     expect(replay.evidence?.owned.trajectory.pathError).toBeGreaterThanOrEqual(0);
+    context.dispose();
+  });
+
+  it("runs smart deletion composition through command 20 and returns owned path evidence", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const runRouteTask = vi.spyOn(runtime, "runRouteTask");
+
+    const composed = context.composeRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: { type: "none" },
+      isDeleteOptimizationEnabled: true,
+      path: fixture.pixelPath,
+      sourcePointCount: 2,
+      targetSequence: [target],
+      type: "compose",
+    });
+
+    expect(composed.status).toBe("hit");
+    expect(runRouteTask.mock.calls.at(-1)?.[0]).toBe(20);
+    expect(composed.evidence?.owned.path).toEqual(fixture.pixelPath);
+    expect(composed.evidence?.owned.trajectory.reachedTargetCount).toBe(1);
+    context.dispose();
+  });
+
+  it("rejects a malformed command-20 miss target count", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 20) {
+        const result = new DataView(runtime.buffer, resultPointer, 72);
+        result.setUint32(4, 2, true);
+        result.setUint32(8, 0, true);
+        result.setUint32(12, 0, true);
+        result.setUint32(20, 99, true);
+        result.setUint32(24, 0, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.composeRaw({
+        controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+        finalValidation: { type: "none" },
+        isDeleteOptimizationEnabled: true,
+        path: fixture.pixelPath,
+        sourcePointCount: 2,
+        targetSequence: [{ center: fixture.pixelPath[2], radius: 2 }],
+        type: "compose",
+      }),
+    ).toThrow("target count");
+    spy.mockRestore();
+    context.dispose();
+  });
+
+  it("keeps command 20 deletion order stable when a candidate replay is accepted", async () => {
+    const fixture = createFixture("dy");
+    const tailPoint = graphToImagePoint(createGraphPoint(-22.83714285714286, 1.7532467532467528), bounds, boundsRect);
+    const path = [...fixture.pixelPath, tailPoint];
+    const { context } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+
+    const composed = context.composeRaw({
+      controlX: imageToGraphPoint(fixture.pixelPath[2], bounds, boundsRect).x,
+      finalValidation: { type: "none" },
+      isDeleteOptimizationEnabled: true,
+      path,
+      sourcePointCount: 2,
+      targetSequence: [target],
+      type: "compose",
+    });
+
+    expect(composed.status).toBe("hit");
+    expect(composed.evidence?.owned.path.length).toBeLessThan(path.length);
+    expect(composed.evidence?.owned.path.slice(0, 2)).toEqual(path.slice(0, 2));
     context.dispose();
   });
 

@@ -172,6 +172,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       path: fixture.pixelPath,
       sourcePointCount: 1,
       targetSequence: [targetForComposition],
+      windows: { type: "automatic" },
       type: "compose",
     });
     expect(stale.status).toBe("invalid-input");
@@ -224,6 +225,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       path: fixture.pixelPath,
       sourcePointCount: 2,
       targetSequence: [target],
+      windows: { type: "automatic" },
       type: "compose",
     });
 
@@ -259,6 +261,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         path: fixture.pixelPath,
         sourcePointCount: 2,
         targetSequence: [{ center: fixture.pixelPath[2], radius: 2 }],
+        windows: { type: "automatic" },
         type: "compose",
       }),
     ).toThrow("target count");
@@ -280,6 +283,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       path,
       sourcePointCount: 2,
       targetSequence: [target],
+      windows: { type: "automatic" },
       type: "compose",
     });
 
@@ -924,6 +928,27 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     );
     expect(gateHitIndex).toBeGreaterThanOrEqual(0);
     expect(trace.candidates.slice(gateHitIndex + 1).some((candidate) => candidate.kind === "target")).toBe(true);
+    const productionScan = context.scanRaw(createGraphwarWasmStepGlitchScanCommandInput({ hitTarget, targetPoint }));
+    expect(productionScan.status).toBe("hit");
+    if (productionScan.status !== "hit" || !productionScan.evidence) {
+      throw new Error("expected explicit-window production scan evidence");
+    }
+    const composed = composeGraphwarWasmStepGlitchSmartPath({
+      controlX: directControlX,
+      formulaSettings: fixture.formulaMode.settings,
+      initialEvidence: productionScan.evidence.owned,
+      initialPath: productionScan.evidence.owned.path,
+      isDeleteOptimizationEnabled: true,
+      scanner: context,
+      simulationMask: fixture.mask,
+      sourcePointCount: emptyFixture.pixelPath.slice(0, 2).length,
+      targetSequence: [hitTarget],
+    });
+    expect(composed.status).toBe("success");
+    if (composed.status !== "success") {
+      throw new Error("expected explicit-window smart composition success");
+    }
+    expect(composed.path).toEqual(productionScan.evidence.owned.path);
     const firstBlockedCandidate = trace.candidates.find(
       (candidate) => candidate.replay.launchStatus === "success" && candidate.replay.blockedPoint,
     );

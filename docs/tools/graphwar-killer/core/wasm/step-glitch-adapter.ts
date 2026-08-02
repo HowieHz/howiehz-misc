@@ -108,7 +108,7 @@ const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD = 1;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE = 2;
 const STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH = 24;
 const STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH = 64;
-const STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH = 56;
+const STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH = 64;
 const STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION = 1;
 const STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH = 32;
 const STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH = 72;
@@ -219,6 +219,10 @@ export type GraphwarWasmStepGlitchFinalValidationInput =
       type: "validate";
     };
 
+export type GraphwarWasmStepGlitchWindows =
+  | { type: "automatic" }
+  | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
+
 /** 同一 retained context 支持 scan、replay 与 smart composition。 */
 export type GraphwarWasmStepGlitchCommandInput =
   | {
@@ -232,9 +236,7 @@ export type GraphwarWasmStepGlitchCommandInput =
       finalValidation: GraphwarWasmStepGlitchFinalValidationInput;
       path: readonly PixelPoint[];
       targetSequence: readonly GraphwarTrajectoryTargetCircle[];
-      windows?:
-        | { type: "automatic" }
-        | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
+      windows?: GraphwarWasmStepGlitchWindows;
       type: "replay";
     }
   | {
@@ -244,6 +246,7 @@ export type GraphwarWasmStepGlitchCommandInput =
       path: readonly PixelPoint[];
       sourcePointCount: number;
       targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+      windows: GraphwarWasmStepGlitchWindows;
       type: "compose";
     };
 
@@ -345,6 +348,7 @@ export type GraphwarWasmPackedStepGlitchCommandInput =
       path: GraphwarWasmPackedPointSoA;
       sourcePointCount: number;
       targetSequenceRecords: GraphwarWasmMemorySlice;
+      windows: { count: number; mode: number; pointer: number };
       type: "compose";
     };
 
@@ -832,6 +836,7 @@ export function composeGraphwarWasmStepGlitchSmartPath(
     path: optimizedPath,
     sourcePointCount: input.sourcePointCount,
     targetSequence: input.targetSequence,
+    windows: createGraphwarWasmStepGlitchWindowsFromEvidence(input.initialEvidence),
     type: "compose",
   });
   if (composed.status !== "hit") {
@@ -851,6 +856,20 @@ export function composeGraphwarWasmStepGlitchSmartPath(
     );
   }
   return { evidence, path: evidence.path, replayCount: composed.expandedStates, status: "success" };
+}
+
+function createGraphwarWasmStepGlitchWindowsFromEvidence(
+  evidence: GraphwarWasmStepGlitchOwnedEvidence,
+): GraphwarWasmStepGlitchWindows {
+  if ((evidence.formulaInput.flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) === 0) {
+    return { type: "automatic" };
+  }
+  return {
+    segments: evidence.formulaInput.stepGlitchWindows.map((window) =>
+      window?.isPresent ? { endX: window.endX, startX: window.startX } : undefined,
+    ),
+    type: "explicit",
+  };
 }
 
 /** Maps the existing scanner options once; debug metrics and the TS-only mask index stay in the Worker shell. */
@@ -1372,13 +1391,18 @@ function productionEvidenceUint32ArraysEqual(left: readonly number[], right: rea
 
 function validateOwnedProductionWindowIdentity(
   command: GraphwarWasmStepGlitchCommandInput,
+  path: readonly PixelPoint[],
   windows: readonly ({ endX: number; isPresent: boolean; startX: number } | undefined)[],
   segmentCount: number,
   flags: number,
 ) {
   if (command.type !== "replay" && command.type !== "compose") return;
   const commandWindows =
-    command.type === "compose" ? { type: "automatic" as const } : (command.windows ?? { type: "automatic" as const });
+    command.type === "compose"
+      ? productionEvidencePixelsEqual(path, command.path)
+        ? command.windows
+        : { type: "automatic" as const }
+      : (command.windows ?? { type: "automatic" as const });
   const hasFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) !== 0;
   if (commandWindows.type === "automatic") {
     if (hasFixedWindows || windows.some((window) => window !== undefined)) {
@@ -1789,7 +1813,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     }
     return { endX, isPresent, startX };
   });
-  validateOwnedProductionWindowIdentity(command, stepGlitchWindows, segmentCount, flags);
+  validateOwnedProductionWindowIdentity(command, path, stepGlitchWindows, segmentCount, flags);
 
   const formulaPointCount = validateGraphwarWasmU32(
     header.getUint32(264, true),
@@ -2762,8 +2786,10 @@ function runGraphwarWasmStepGlitchProductionRaw(
       inputView.setFloat64(32, packed.input.controlX, true);
       inputView.setUint32(40, finalValidation.pointer, true);
       inputView.setUint32(44, finalValidation.length, true);
-      inputView.setUint32(48, 0, true);
-      inputView.setUint32(52, 0, true);
+      inputView.setUint32(48, packed.input.windows.pointer, true);
+      inputView.setUint32(52, packed.input.windows.count, true);
+      inputView.setUint32(56, packed.input.windows.mode, true);
+      inputView.setUint32(60, 0, true);
       commandId = STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH;
       inputByteLength = STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH;
     }
@@ -4937,6 +4963,9 @@ export function packGraphwarWasmStepGlitchCommandInput(
     ) {
       return { status: "invalid-input" };
     }
+    if (command.windows.type === "explicit" && command.windows.segments.length !== command.path.length - 1) {
+      return { status: "invalid-input" };
+    }
     return {
       input: {
         controlX: command.controlX,
@@ -4945,6 +4974,7 @@ export function packGraphwarWasmStepGlitchCommandInput(
         path: packGraphwarWasmPointSoA(arena, command.path, minimumPointer),
         sourcePointCount: command.sourcePointCount,
         targetSequenceRecords: packTargets(arena, command.targetSequence, minimumPointer),
+        windows: packGraphwarWasmStepGlitchCandidateWindows(arena, command.path.length - 1, command.windows),
         type: "compose",
       },
       status: "ready",

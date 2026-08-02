@@ -1143,7 +1143,6 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
   const flags = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAGS_OFFSET);
   if (
     (flags & ~Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION) != 0 ||
-    load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_RESERVED_OFFSET) != 0 ||
     load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_RESERVED_TAIL_OFFSET) != 0
   ) trap();
 
@@ -1189,6 +1188,20 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
     load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FINAL_VALIDATION_POINTER_OFFSET),
     load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FINAL_VALIDATION_BYTE_LENGTH_OFFSET),
   );
+  let currentWindowPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_WINDOW_POINTER_OFFSET);
+  let currentWindowCount = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_WINDOW_COUNT_OFFSET);
+  let currentWindowMode = load<u32>(inputPointer + Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_WINDOW_MODE_OFFSET);
+  if (currentWindowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC) {
+    if (currentWindowPointer != 0 || currentWindowCount != 0) trap();
+  } else if (currentWindowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_EXPLICIT) {
+    if (currentWindowCount != pathCount - 1) trap();
+    requireElementRange(
+      currentWindowPointer,
+      currentWindowCount,
+      FormulaLayout.STEP_GLITCH_FIXED_WINDOW_BYTE_LENGTH,
+      sizeof<f64>(),
+    );
+  } else trap();
 
   const pathByteLength = checkedProductionEvidenceBytes(pathCount, sizeof<f64>());
   const currentXPointer = reserveArena(pathByteLength, sizeof<f64>());
@@ -1213,9 +1226,9 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
     currentXPointer,
     currentYPointer,
     currentCount,
-    0,
-    0,
-    Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+    currentWindowPointer,
+    currentWindowCount,
+    currentWindowMode,
     targetPointer,
     targetCount,
     controlX,
@@ -1259,7 +1272,13 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
   acceptedX = initialAcceptedX;
   acceptedY = initialAcceptedY;
 
-  if ((flags & Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION) != 0) {
+  // Scan-selected fixed windows are part of the successful gate proof. Replaying
+  // deletion candidates with automatic windows can lose that bounded search
+  // frontier, so retain the proven path when the initial candidate is explicit.
+  if (
+    (flags & Layout.STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION) != 0 &&
+    currentWindowMode == Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC
+  ) {
     let index: u32 = sourceCount < 1 ? 1 : sourceCount;
     while (index < currentCount - 1 && currentCount > 2) {
       const candidateCount = currentCount - 1;
@@ -1317,6 +1336,9 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
         memory.copy(currentXPointer, candidateXPointer, checkedProductionEvidenceBytes(candidateCount, sizeof<f64>()));
         memory.copy(currentYPointer, candidateYPointer, checkedProductionEvidenceBytes(candidateCount, sizeof<f64>()));
         currentCount = candidateCount;
+        currentWindowPointer = 0;
+        currentWindowCount = 0;
+        currentWindowMode = Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC;
         acceptedX = load<f64>(candidateReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET);
         acceptedY = load<f64>(candidateReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET);
       }
@@ -1331,9 +1353,9 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
     currentXPointer,
     currentYPointer,
     currentCount,
-    0,
-    0,
-    Layout.STEP_GLITCH_FORMULA_WINDOW_MODE_AUTOMATIC,
+    currentWindowPointer,
+    currentWindowCount,
+    currentWindowMode,
     targetPointer,
     targetCount,
     controlX,

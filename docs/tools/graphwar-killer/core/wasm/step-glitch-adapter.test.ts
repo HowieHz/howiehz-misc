@@ -282,6 +282,7 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
       path: [...fixture.sourcePath, createPixelPoint(600, 180)],
       sourcePointCount: fixture.sourcePath.length,
       targetSequence: [{ center: createPixelPoint(600, 180), radius: 12 }],
+      windows: { type: "automatic" as const },
       type: "compose" as const,
     };
     const packedComposition = packGraphwarWasmStepGlitchCommandInput(arena, fixture.context, composition, 8);

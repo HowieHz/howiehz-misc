@@ -32,11 +32,13 @@ import {
   TRAJECTORY_INPUT_BOUNDS_RECT_Y_OFFSET,
   TRAJECTORY_INPUT_BOUNDS_RECT_WIDTH_OFFSET,
   TRAJECTORY_INPUT_BOUNDS_RECT_HEIGHT_OFFSET,
+  TRAJECTORY_INPUT_REQUIRED_TARGET_COUNT_OFFSET,
   TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET,
   TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET,
   TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET,
   TRAJECTORY_RESULT_FLAGS_OFFSET,
   TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET,
+  TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
   TRAJECTORY_RESULT_STOP_REASON_OFFSET,
   TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET,
   TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET,
@@ -6268,13 +6270,20 @@ function smartCandidateFailureReason(
 }
 
 @inline
-function smartTrajectoryCandidateIsValid(resultPointer: u32): bool {
+function smartTrajectoryCandidateIsValid(resultPointer: u32, requiredTargetCount: u32): bool {
   if (load<i32>(resultPointer + TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET) != TRAJECTORY_RESULT_LAUNCH_STATUS_SUCCESS) {
     return false;
   }
   const targetHitIndex = load<i32>(resultPointer + TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET);
+  const reachedRequiredTargetCount = load<u32>(
+    resultPointer + TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+  );
   const obstacleHitIndex = load<i32>(resultPointer + TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET);
-  return targetHitIndex >= 0 && (obstacleHitIndex < 0 || targetHitIndex <= obstacleHitIndex);
+  return (
+    targetHitIndex >= 0 &&
+    reachedRequiredTargetCount >= requiredTargetCount &&
+    (obstacleHitIndex < 0 || targetHitIndex <= obstacleHitIndex)
+  );
 }
 
 @inline
@@ -6367,6 +6376,18 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   } else if (trajectoryCommandPointer != 0 || trajectoryCommandByteLength != 0) {
     trap();
   }
+  const trajectoryRequiredTargetCount = hasTrajectoryValidation
+    ? load<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_REQUIRED_TARGET_COUNT_OFFSET)
+    : 0;
+  const trajectoryQualityXPointer = hasTrajectoryValidation
+    ? load<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET)
+    : 0;
+  const trajectoryQualityYPointer = hasTrajectoryValidation
+    ? load<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET)
+    : 0;
+  const trajectoryQualityPointCount = hasTrajectoryValidation
+    ? load<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET)
+    : 0;
 
   const resultPointer = reserveArena(Layout.SMART_RESULT_BYTE_LENGTH, sizeof<u64>());
   if (pointCount == 0) {
@@ -6390,6 +6411,7 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const outputGraphYPointer = hasTrajectoryValidation
     ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
     : 0;
+  const outputQualityFlagsPointer = hasTrajectoryValidation ? reserveArena(pointCount, 1) : 0;
   memory.copy(outputXPointer, pointsXPointer, pointCount * sizeof<f64>());
   memory.copy(outputYPointer, pointsYPointer, pointCount * sizeof<f64>());
   if (hasRouteContextValidation) {
@@ -6436,6 +6458,23 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   } else if (hasRouteContextValidation) {
     memory.copy(outputGraphXPointer, routeGraphXPointer, pointCount * sizeof<f64>());
   }
+  if (hasTrajectoryValidation) {
+    memory.fill(outputQualityFlagsPointer, 0, pointCount);
+    let graphIndex: u32 = 1;
+    let qualityIndex: u32 = 0;
+    while (graphIndex + 1 < pointCount && qualityIndex < trajectoryQualityPointCount) {
+      const graphX = load<f64>(outputGraphXPointer + graphIndex * sizeof<f64>());
+      const graphY = load<f64>(outputGraphYPointer + graphIndex * sizeof<f64>());
+      const qualityX = load<f64>(trajectoryQualityXPointer + qualityIndex * sizeof<f64>());
+      const qualityY = load<f64>(trajectoryQualityYPointer + qualityIndex * sizeof<f64>());
+      if (graphX == qualityX && graphY == qualityY) {
+        store<u8>(outputQualityFlagsPointer + graphIndex, 1);
+        qualityIndex += 1;
+      }
+      graphIndex += 1;
+    }
+    if (qualityIndex != trajectoryQualityPointCount) trap();
+  }
   let initialFailureReason = smartPathGraphRuleFailureReason(outputGraphXPointer, pointCount);
   if (initialFailureReason == Layout.SMART_RESULT_FAILURE_REASON_NONE && !hasTrajectoryValidation) {
     const initialLastX = load<f64>(outputXPointer + (pointCount - 1) * sizeof<f64>());
@@ -6468,23 +6507,19 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
       store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_COUNT_OFFSET, pointCount);
       store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, outputGraphXPointer);
       store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, outputGraphYPointer);
-      const qualityPointCount = pointCount > 2 ? pointCount - 2 : 0;
+      store<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET, trajectoryQualityXPointer);
+      store<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET, trajectoryQualityYPointer);
       store<u32>(
-        trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET,
-        qualityPointCount == 0 ? 0 : outputGraphXPointer + sizeof<f64>(),
+        trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET,
+        trajectoryQualityPointCount,
       );
-      store<u32>(
-        trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET,
-        qualityPointCount == 0 ? 0 : outputGraphYPointer + sizeof<f64>(),
-      );
-      store<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET, qualityPointCount);
       const trajectoryResultPointer = runTrajectoryRequest(
         trajectoryCommandPointer,
         trajectoryCommandByteLength,
         0,
       );
       smartTrajectoryPathError(trajectoryResultPointer);
-      if (!smartTrajectoryCandidateIsValid(trajectoryResultPointer)) {
+      if (!smartTrajectoryCandidateIsValid(trajectoryResultPointer, trajectoryRequiredTargetCount)) {
         initialFailureReason = Layout.SMART_RESULT_FAILURE_REASON_TRAJECTORY;
         const obstacleHitIndex = load<i32>(trajectoryResultPointer + TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET);
         if (obstacleHitIndex >= 0) {
@@ -6591,6 +6626,13 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
     const candidateGraphYPointer = hasTrajectoryValidation
       ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
       : 0;
+    const candidateQualityXPointer = hasTrajectoryValidation
+      ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+      : 0;
+    const candidateQualityYPointer = hasTrajectoryValidation
+      ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
+      : 0;
+    const candidateQualityFlagsPointer = hasTrajectoryValidation ? reserveArena(pointCount, 1) : 0;
     const firstOptimizableIndex = sourcePointCount < 1 ? 1 : sourcePointCount;
     const minimumOutputCount: u32 = canDeleteTerminalPoint
       ? sourcePointCount > 2
@@ -6637,12 +6679,34 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
                 candidateGraphYPointer + candidateIndex * sizeof<f64>(),
                 load<f64>(outputGraphYPointer + sourceIndex * sizeof<f64>()),
               );
+              store<u8>(
+                candidateQualityFlagsPointer + candidateIndex,
+                load<u8>(outputQualityFlagsPointer + sourceIndex),
+              );
             }
             candidateIndex += 1;
           }
           sourceIndex += 1;
         }
         const candidatePointCount = outputCount - 1;
+        let candidateQualityPointCount: u32 = 0;
+        if (hasTrajectoryValidation) {
+          let candidateQualityIndex: u32 = 0;
+          while (candidateQualityIndex < candidatePointCount) {
+            if (load<u8>(candidateQualityFlagsPointer + candidateQualityIndex) != 0) {
+              store<f64>(
+                candidateQualityXPointer + candidateQualityPointCount * sizeof<f64>(),
+                load<f64>(candidateGraphXPointer + candidateQualityIndex * sizeof<f64>()),
+              );
+              store<f64>(
+                candidateQualityYPointer + candidateQualityPointCount * sizeof<f64>(),
+                load<f64>(candidateGraphYPointer + candidateQualityIndex * sizeof<f64>()),
+              );
+              candidateQualityPointCount += 1;
+            }
+            candidateQualityIndex += 1;
+          }
+        }
         let isCandidateValid =
           smartPathGraphRuleFailureReason(candidateGraphXPointer, candidatePointCount) ==
           Layout.SMART_RESULT_FAILURE_REASON_NONE;
@@ -6663,16 +6727,18 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
             store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_COUNT_OFFSET, candidatePointCount);
             store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_X_POINTER_OFFSET, candidateGraphXPointer);
             store<u32>(trajectoryCommandPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET, candidateGraphYPointer);
-            const qualityPointCount = candidatePointCount > 2 ? candidatePointCount - 2 : 0;
             store<u32>(
               trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_X_POINTER_OFFSET,
-              qualityPointCount == 0 ? 0 : candidateGraphXPointer + sizeof<f64>(),
+              candidateQualityPointCount == 0 ? 0 : candidateQualityXPointer,
             );
             store<u32>(
               trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_Y_POINTER_OFFSET,
-              qualityPointCount == 0 ? 0 : candidateGraphYPointer + sizeof<f64>(),
+              candidateQualityPointCount == 0 ? 0 : candidateQualityYPointer,
             );
-            store<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET, qualityPointCount);
+            store<u32>(
+              trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET,
+              candidateQualityPointCount,
+            );
             const trajectoryResultPointer = runTrajectoryRequest(
               trajectoryCommandPointer,
               trajectoryCommandByteLength,
@@ -6683,7 +6749,7 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
                 TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) !=
               0;
             candidatePathError = smartTrajectoryPathError(trajectoryResultPointer);
-            isCandidateValid = smartTrajectoryCandidateIsValid(trajectoryResultPointer);
+            isCandidateValid = smartTrajectoryCandidateIsValid(trajectoryResultPointer, trajectoryRequiredTargetCount);
           }
           resetArena(candidateMark);
         }
@@ -6735,6 +6801,10 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
           store<f64>(
             outputGraphYPointer + shiftIndex * sizeof<f64>(),
             load<f64>(outputGraphYPointer + (shiftIndex + 1) * sizeof<f64>()),
+          );
+          store<u8>(
+            outputQualityFlagsPointer + shiftIndex,
+            load<u8>(outputQualityFlagsPointer + shiftIndex + 1),
           );
         }
         shiftIndex += 1;

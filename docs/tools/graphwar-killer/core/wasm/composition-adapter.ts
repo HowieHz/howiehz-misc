@@ -1,6 +1,8 @@
+import type { BoundsRect } from "../types";
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmFloat64Values,
+  copyGraphwarWasmUint32Values,
   validateGraphwarWasmEnumValue,
   validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
@@ -27,6 +29,8 @@ export const graphwarWasmCompositionLayout = {
   oneClickResultByteLength: 56,
   oneClickResumeByteLength: 16,
   oneClickSessionByteLength: 112,
+  oneClickTargetAssignmentInputByteLength: 120,
+  oneClickTargetAssignmentResultByteLength: 24,
   smartInputByteLength: 80,
   smartResultByteLength: 96,
 } as const;
@@ -49,6 +53,10 @@ const oneClickResultMagic = 0x4f_4352_53;
 const oneClickSessionMagic = 0x4f_4353_53;
 const oneClickSessionWaitingPhase = 1;
 const oneClickEdgeStartSentinel = 0xffff_ffff;
+const oneClickTargetAssignmentInputMagic = 0x4f_4341_53;
+const oneClickTargetAssignmentInputVersion = 1;
+const oneClickTargetAssignmentMirroredFlag = 1;
+const oneClickTargetAssignmentResultMagic = 0x4f_4341_52;
 
 const smartInput = {
   flags: 8,
@@ -201,6 +209,35 @@ const oneClickResume = {
   workCount: 12,
 } as const;
 
+const oneClickTargetAssignmentInput = {
+  flags: 8,
+  candidateX: 12,
+  candidateY: 16,
+  candidateRadius: 20,
+  candidateSourceIndex: 24,
+  candidateCount: 28,
+  pathTailX: 32,
+  pathTailY: 40,
+  boundsRectX: 48,
+  boundsRectY: 56,
+  boundsRectWidth: 64,
+  boundsRectHeight: 72,
+  usableRectX: 80,
+  usableRectY: 88,
+  usableRectWidth: 96,
+  usableRectHeight: 104,
+  boundaryExpansion: 112,
+} as const;
+
+const oneClickTargetAssignmentResult = {
+  magic: 0,
+  status: 4,
+  sourceIndex: 8,
+  routeX: 12,
+  routeY: 16,
+  count: 20,
+} as const;
+
 interface GraphwarWasmSmartPathfindingInputBase {
   /** One-click routes may stop on a target before their terminal control point. */
   readonly allowTerminalPointDeletion?: boolean;
@@ -271,6 +308,29 @@ export interface GraphwarWasmOneClickCandidate {
   readonly hitCenter: GraphwarWasmPoint;
   readonly hitRadius: number;
   readonly isEnemy: boolean;
+}
+
+/** Raw candidate identity and hit circle consumed by the WASM assignment command. */
+export interface GraphwarWasmOneClickTargetAssignmentCandidate {
+  readonly center: GraphwarWasmPoint;
+  readonly hitRadius: number;
+  readonly sourceIndex: number;
+}
+
+/** Versioned target-assignment input; all geometry is screenshot-pixel based. */
+export interface GraphwarWasmOneClickTargetAssignmentInput {
+  readonly boundaryExpansion: number;
+  readonly boundsRect: BoundsRect;
+  readonly candidates: readonly GraphwarWasmOneClickTargetAssignmentCandidate[];
+  readonly isMirrored: boolean;
+  readonly pathTail: GraphwarWasmPoint;
+  readonly usableRect: BoundsRect;
+}
+
+/** Ordered assignment result; sourceIndex is the caller-owned candidate identity. */
+export interface GraphwarWasmOneClickTargetAssignmentResult {
+  readonly routePoint: GraphwarWasmPoint;
+  readonly sourceIndex: number;
 }
 
 export interface GraphwarWasmOneClickClearInput {
@@ -1033,6 +1093,33 @@ export function runGraphwarWasmSmartPathfinding(
   }
 }
 
+/** Runs the WASM-owned one-click target assignment and returns ordered owned points. */
+export function assignGraphwarWasmOneClickTargetRoutePoints(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmOneClickTargetAssignmentInput,
+): GraphwarWasmOneClickTargetAssignmentResult[] {
+  const mark = runtime.markArena();
+  try {
+    const packed = packOneClickTargetAssignmentInput(runtime, input);
+    const commandPointer = runtime.reserveArena(
+      graphwarWasmCompositionLayout.oneClickTargetAssignmentInputByteLength,
+      8,
+    );
+    writeOneClickTargetAssignmentInput(runtime, commandPointer, packed);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.assignOneClickTargets(
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickTargetAssignmentInputByteLength,
+    );
+    const result = copyOneClickTargetAssignmentResult(runtime, resultPointer, packed, outputMinimumPointer);
+    runtime.resetArena(mark);
+    return result;
+  } catch (error) {
+    runtime.resetArenaAfterFault(mark);
+    throw error;
+  }
+}
+
 /**
  * Validates one complete one-click route in one WASM-owned formula/trajectory attempt. The launch result is copied
  * separately so callers can format the already-selected canonical materials without resolving the formula in TS.
@@ -1723,6 +1810,201 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
   };
+}
+
+function packOneClickTargetAssignmentInput(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmOneClickTargetAssignmentInput,
+) {
+  const boundsRect = validateTargetAssignmentRect(input.boundsRect, "boundsRect");
+  const usableRect = validateTargetAssignmentRect(input.usableRect, "usableRect");
+  const pathTail = validatePoint(input.pathTail, "pathTail");
+  const boundaryExpansion = validateNonNegativeFinite(input.boundaryExpansion, "boundaryExpansion");
+  const sourceIndexes = new Set<number>();
+  const candidates = input.candidates.flatMap((candidate, index) => {
+    const sourceIndex = validateGraphwarWasmU32(candidate.sourceIndex, `candidates[${index}].sourceIndex`, "input");
+    if (sourceIndexes.has(sourceIndex)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `candidates[${index}].sourceIndex is duplicated`,
+        "input",
+      );
+    }
+    sourceIndexes.add(sourceIndex);
+    const radius = candidate.hitRadius;
+    if (typeof radius !== "number" || !Number.isFinite(radius) || radius <= 0) {
+      return [];
+    }
+    if (
+      typeof candidate.center.x !== "number" ||
+      !Number.isFinite(candidate.center.x) ||
+      typeof candidate.center.y !== "number" ||
+      !Number.isFinite(candidate.center.y)
+    ) {
+      return [];
+    }
+    return [{ point: validatePoint(candidate.center, `candidates[${index}].center`), radius, sourceIndex }];
+  });
+  return {
+    boundaryExpansion,
+    boundsRect,
+    candidateSourceIndex: writeGraphwarWasmUint32Values(
+      runtime,
+      Uint32Array.from(candidates, ({ sourceIndex }) => sourceIndex),
+      runtime.arenaBase,
+    ),
+    candidateX: writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(candidates.map(({ point }) => point.x)),
+      runtime.arenaBase,
+    ),
+    candidateY: writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(candidates.map(({ point }) => point.y)),
+      runtime.arenaBase,
+    ),
+    candidateRadius: writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(candidates.map(({ radius }) => radius)),
+      runtime.arenaBase,
+    ),
+    flags: input.isMirrored ? oneClickTargetAssignmentMirroredFlag : 0,
+    pathTail,
+    usableRect,
+  };
+}
+
+function validateTargetAssignmentRect(rect: BoundsRect, fieldName: string): BoundsRect {
+  const x = validateGraphwarWasmFiniteNumber(rect.x, `${fieldName}.x`, "input");
+  const y = validateGraphwarWasmFiniteNumber(rect.y, `${fieldName}.y`, "input");
+  const width = validateGraphwarWasmFiniteNumber(rect.width, `${fieldName}.width`, "input");
+  const height = validateGraphwarWasmFiniteNumber(rect.height, `${fieldName}.height`, "input");
+  if (width <= 0 || height <= 0) {
+    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} dimensions must be positive`, "input");
+  }
+  return { height, width, x, y };
+}
+
+function writeOneClickTargetAssignmentInput(
+  runtime: GraphwarWasmKernelRuntime,
+  pointer: number,
+  packed: ReturnType<typeof packOneClickTargetAssignmentInput>,
+) {
+  const view = new DataView(
+    runtime.buffer,
+    pointer,
+    graphwarWasmCompositionLayout.oneClickTargetAssignmentInputByteLength,
+  );
+  view.setUint32(0, oneClickTargetAssignmentInputMagic, true);
+  view.setUint32(4, oneClickTargetAssignmentInputVersion, true);
+  view.setUint32(oneClickTargetAssignmentInput.flags, packed.flags, true);
+  view.setUint32(oneClickTargetAssignmentInput.candidateX, packed.candidateX.pointer, true);
+  view.setUint32(oneClickTargetAssignmentInput.candidateY, packed.candidateY.pointer, true);
+  view.setUint32(oneClickTargetAssignmentInput.candidateRadius, packed.candidateRadius.pointer, true);
+  view.setUint32(oneClickTargetAssignmentInput.candidateSourceIndex, packed.candidateSourceIndex.pointer, true);
+  view.setUint32(oneClickTargetAssignmentInput.candidateCount, packed.candidateX.length, true);
+  view.setFloat64(oneClickTargetAssignmentInput.pathTailX, packed.pathTail.x, true);
+  view.setFloat64(oneClickTargetAssignmentInput.pathTailY, packed.pathTail.y, true);
+  view.setFloat64(oneClickTargetAssignmentInput.boundsRectX, packed.boundsRect.x, true);
+  view.setFloat64(oneClickTargetAssignmentInput.boundsRectY, packed.boundsRect.y, true);
+  view.setFloat64(oneClickTargetAssignmentInput.boundsRectWidth, packed.boundsRect.width, true);
+  view.setFloat64(oneClickTargetAssignmentInput.boundsRectHeight, packed.boundsRect.height, true);
+  view.setFloat64(oneClickTargetAssignmentInput.usableRectX, packed.usableRect.x, true);
+  view.setFloat64(oneClickTargetAssignmentInput.usableRectY, packed.usableRect.y, true);
+  view.setFloat64(oneClickTargetAssignmentInput.usableRectWidth, packed.usableRect.width, true);
+  view.setFloat64(oneClickTargetAssignmentInput.usableRectHeight, packed.usableRect.height, true);
+  view.setFloat64(oneClickTargetAssignmentInput.boundaryExpansion, packed.boundaryExpansion, true);
+}
+
+function copyOneClickTargetAssignmentResult(
+  runtime: GraphwarWasmMemorySource,
+  resultPointer: number,
+  packed: ReturnType<typeof packOneClickTargetAssignmentInput>,
+  outputMinimumPointer: number,
+): GraphwarWasmOneClickTargetAssignmentResult[] {
+  const resultRange = validateGraphwarWasmMemoryRange(
+    runtime,
+    {
+      length: graphwarWasmCompositionLayout.oneClickTargetAssignmentResultByteLength,
+      pointer: resultPointer,
+    },
+    {
+      alignment: 8,
+      elementByteLength: 1,
+      minimumPointer: outputMinimumPointer,
+      sliceFaultDomain: "output",
+    },
+  );
+  const view = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+  if (view.getUint32(oneClickTargetAssignmentResult.magic, true) !== oneClickTargetAssignmentResultMagic) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-pointer",
+      "target-assignment result magic is invalid",
+      "output",
+    );
+  }
+  if (view.getUint32(oneClickTargetAssignmentResult.status, true) !== 0) {
+    throw new GraphwarWasmAdapterError("invalid-enum", "target-assignment result status is invalid", "output");
+  }
+  const count = validateGraphwarWasmU32(view.getUint32(oneClickTargetAssignmentResult.count, true), "assignment count");
+  if (count > packed.candidateX.length) {
+    throw new GraphwarWasmAdapterError("invalid-index", "target-assignment count exceeds candidate count", "output");
+  }
+  const sourceIndexPointer = validateGraphwarWasmU32(
+    view.getUint32(oneClickTargetAssignmentResult.sourceIndex, true),
+    "assignment source-index pointer",
+  );
+  const routeXPointer = validateGraphwarWasmU32(
+    view.getUint32(oneClickTargetAssignmentResult.routeX, true),
+    "assignment route-x pointer",
+  );
+  const routeYPointer = validateGraphwarWasmU32(
+    view.getUint32(oneClickTargetAssignmentResult.routeY, true),
+    "assignment route-y pointer",
+  );
+  const boundary = createOneClickOutputBoundary(outputMinimumPointer);
+  const sourceIndexes = copyOneClickUint32Values(
+    runtime,
+    sourceIndexPointer,
+    count,
+    boundary,
+    "assignment source indexes",
+    "fresh",
+  );
+  const routeXs = copyOneClickFloat64Values(runtime, routeXPointer, count, boundary, "assignment route x", "fresh");
+  const routeYs = copyOneClickFloat64Values(runtime, routeYPointer, count, boundary, "assignment route y", "fresh");
+  const inputSourceIndexSet = new Set(
+    copyGraphwarWasmUint32Values(runtime, packed.candidateSourceIndex, runtime.arenaBase),
+  );
+  const sourceIndexSet = new Set<number>();
+  for (const [index, sourceIndex] of sourceIndexes.entries()) {
+    if (sourceIndexSet.has(sourceIndex) || !inputSourceIndexSet.has(sourceIndex)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `assignment source index ${sourceIndex} is duplicated or unknown`,
+        "output",
+      );
+    }
+    sourceIndexSet.add(sourceIndex);
+    const routeX = validateGraphwarWasmFiniteNumber(routeXs[index], `assignment[${index}].routePoint.x`, "output");
+    const routeY = validateGraphwarWasmFiniteNumber(routeYs[index], `assignment[${index}].routePoint.y`, "output");
+    if (
+      routeX < packed.usableRect.x ||
+      routeX >= packed.usableRect.x + packed.usableRect.width ||
+      routeY < packed.usableRect.y ||
+      routeY >= packed.usableRect.y + packed.usableRect.height
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-point-data",
+        `assignment[${index}].routePoint is outside usableRect`,
+        "output",
+      );
+    }
+  }
+  return sourceIndexes.map((sourceIndex, index) => ({
+    routePoint: { x: routeXs[index] ?? 0, y: routeYs[index] ?? 0 },
+    sourceIndex,
+  }));
 }
 
 function validateDagJob(job: GraphwarWasmOneClickDagJob, index: number, targetCount: number) {

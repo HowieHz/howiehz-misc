@@ -10,6 +10,7 @@ import { clonePixelPoint, createGraphPoint, createPixelPoint } from "../../core/
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
+  assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
   runGraphwarWasmSmartPathfinding,
   runGraphwarWasmOneClickTrajectoryValidation,
@@ -1910,37 +1911,65 @@ function collectOneClickClearTargets(options: GraphwarOneClickClearSearchOptions
     return [];
   }
 
-  const horizontalBoundaryInsetPixels =
-    (Math.max(0, Math.floor(options.simulationBoundaryExpansion)) / GRAPHWAR_PLANE_LENGTH) * options.boundsRect.width;
-  const verticalBoundaryInsetPixels =
-    (Math.max(0, Math.floor(options.simulationBoundaryExpansion)) / GRAPHWAR_PLANE_HEIGHT) * options.boundsRect.height;
-  const assignedTargets = assignGraphwarOneClickClearTargetRoutePoints({
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    candidates: options.candidates.map((candidate, sourceIndex) => ({
-      center: candidate.hitCenter,
-      hitCircle: candidate,
-      hitRadius: candidate.hitRadius,
-      sourceIndex,
-    })),
-    pathTail,
-    // 单个半开矩形直接表达地图边界；目标分配只离散化 x，y 仍保留真实士兵中心。
-    usableRect: {
-      height: options.boundsRect.height - verticalBoundaryInsetPixels * 2,
-      width: options.boundsRect.width - horizontalBoundaryInsetPixels * 2,
-      x: options.boundsRect.x + horizontalBoundaryInsetPixels,
-      y: options.boundsRect.y + verticalBoundaryInsetPixels,
-    },
-  });
-  return assignedTargets.map((assigned) => ({
-    ...assigned.hitCircle,
-    hitCircle: {
-      center: assigned.hitCircle.hitCenter,
-      radius: assigned.hitCircle.hitRadius,
-    },
-    routePoint: assigned.routePoint,
-    sortGraphX: imageToGraphPoint(assigned.routePoint, options.bounds, options.boundsRect).x,
+  const boundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion));
+  const horizontalBoundaryInsetPixels = (boundaryExpansion / GRAPHWAR_PLANE_LENGTH) * options.boundsRect.width;
+  const verticalBoundaryInsetPixels = (boundaryExpansion / GRAPHWAR_PLANE_HEIGHT) * options.boundsRect.height;
+  // 单个半开矩形直接表达地图边界；目标分配只离散化 x，y 仍保留真实士兵中心。
+  const usableRect = {
+    height: options.boundsRect.height - verticalBoundaryInsetPixels * 2,
+    width: options.boundsRect.width - horizontalBoundaryInsetPixels * 2,
+    x: options.boundsRect.x + horizontalBoundaryInsetPixels,
+    y: options.boundsRect.y + verticalBoundaryInsetPixels,
+  };
+  if (usableRect.width <= 0 || usableRect.height <= 0) {
+    return [];
+  }
+  const assignmentCandidates = options.candidates.map((candidate, sourceIndex) => ({
+    center: candidate.hitCenter,
+    hitRadius: candidate.hitRadius,
+    sourceIndex,
   }));
+  const targetAssignmentRuntime = options.wasmRuntime;
+  const assignedTargets =
+    targetAssignmentRuntime && typeof targetAssignmentRuntime.assignOneClickTargets === "function"
+      ? assignGraphwarWasmOneClickTargetRoutePoints(targetAssignmentRuntime, {
+          boundaryExpansion,
+          boundsRect: options.boundsRect,
+          candidates: assignmentCandidates,
+          isMirrored: !xPlusGoesRight(options.bounds),
+          pathTail,
+          usableRect,
+        })
+      : assignGraphwarOneClickClearTargetRoutePoints({
+          bounds: options.bounds,
+          boundsRect: options.boundsRect,
+          candidates: options.candidates.map((candidate, sourceIndex) => ({
+            center: candidate.hitCenter,
+            hitCircle: candidate,
+            hitRadius: candidate.hitRadius,
+            sourceIndex,
+          })),
+          pathTail,
+          usableRect,
+        }).map((assigned) => ({ sourceIndex: assigned.sourceIndex, routePoint: assigned.routePoint }));
+  return assignedTargets.flatMap((assigned) => {
+    const candidate = options.candidates[assigned.sourceIndex];
+    if (!candidate) {
+      throw new GraphwarWasmFault("abi", "one-click target assignment returned an unknown source index");
+    }
+    const routePoint = createPixelPoint(assigned.routePoint.x, assigned.routePoint.y);
+    return [
+      {
+        ...candidate,
+        hitCircle: {
+          center: candidate.hitCenter,
+          radius: candidate.hitRadius,
+        },
+        routePoint,
+        sortGraphX: imageToGraphPoint(routePoint, options.bounds, options.boundsRect).x,
+      },
+    ];
+  });
 }
 
 /** Reuses the composition ABI's stable target ordering for non-stateless paths. */

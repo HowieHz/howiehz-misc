@@ -6815,6 +6815,200 @@ function compareOneClickTargetOrder(
   return leftIndex < rightIndex ? -1 : leftIndex > rightIndex ? 1 : 0;
 }
 
+/**
+ * Assigns one-click-clear control columns in the same stable order as the TS
+ * target-assignment oracle. The command owns only immutable flat arrays; its
+ * result is an ordered source-index list paired with generated route points.
+ */
+export function assignOneClickTargets(inputPointer: u32, inputByteLength: u32): u32 {
+  requireArenaInitialized();
+  requireGraphwarGameConstantsInitialized();
+  if (inputByteLength != Layout.ONE_CLICK_ASSIGN_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u64>());
+  if (
+    load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_MAGIC_OFFSET) != Layout.ONE_CLICK_ASSIGN_INPUT_MAGIC ||
+    load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_VERSION_OFFSET) != Layout.ONE_CLICK_ASSIGN_INPUT_VERSION
+  )
+    trap();
+  const flags = load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_FLAGS_OFFSET);
+  if ((flags & ~Layout.ONE_CLICK_ASSIGN_INPUT_FLAG_MIRRORED) != 0) trap();
+  const isMirrored = (flags & Layout.ONE_CLICK_ASSIGN_INPUT_FLAG_MIRRORED) != 0;
+  const candidateXPointer = load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_CANDIDATE_X_POINTER_OFFSET);
+  const candidateYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_CANDIDATE_Y_POINTER_OFFSET);
+  const candidateRadiusPointer = load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_CANDIDATE_RADIUS_POINTER_OFFSET);
+  const candidateSourceIndexPointer = load<u32>(
+    inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_CANDIDATE_SOURCE_INDEX_POINTER_OFFSET,
+  );
+  const candidateCount = load<u32>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_CANDIDATE_COUNT_OFFSET);
+  if (candidateCount > u32.MAX_VALUE / sizeof<f64>()) trap();
+  if (candidateCount > 0) {
+    requireArenaRange(candidateXPointer, candidateCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(candidateYPointer, candidateCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(candidateRadiusPointer, candidateCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(candidateSourceIndexPointer, candidateCount * sizeof<u32>(), sizeof<u32>());
+  } else if (
+    candidateXPointer != 0 ||
+    candidateYPointer != 0 ||
+    candidateRadiusPointer != 0 ||
+    candidateSourceIndexPointer != 0
+  ) {
+    trap();
+  }
+
+  const pathTailX = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_PATH_TAIL_X_OFFSET);
+  const pathTailY = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_PATH_TAIL_Y_OFFSET);
+  const boundsRectX = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_BOUNDS_RECT_X_OFFSET);
+  const boundsRectY = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_BOUNDS_RECT_Y_OFFSET);
+  const boundsRectWidth = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_BOUNDS_RECT_WIDTH_OFFSET);
+  const boundsRectHeight = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_BOUNDS_RECT_HEIGHT_OFFSET);
+  const usableRectX = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_USABLE_RECT_X_OFFSET);
+  const usableRectY = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_USABLE_RECT_Y_OFFSET);
+  const usableRectWidth = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_USABLE_RECT_WIDTH_OFFSET);
+  const usableRectHeight = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_USABLE_RECT_HEIGHT_OFFSET);
+  const boundaryExpansion = load<f64>(inputPointer + Layout.ONE_CLICK_ASSIGN_INPUT_BOUNDARY_EXPANSION_OFFSET);
+  if (
+    !isFiniteValue(pathTailX) ||
+    !isFiniteValue(pathTailY) ||
+    !isFiniteValue(boundsRectX) ||
+    !isFiniteValue(boundsRectY) ||
+    !isFiniteValue(boundsRectWidth) ||
+    !isFiniteValue(boundsRectHeight) ||
+    !isFiniteValue(usableRectX) ||
+    !isFiniteValue(usableRectY) ||
+    !isFiniteValue(usableRectWidth) ||
+    !isFiniteValue(usableRectHeight) ||
+    !isFiniteValue(boundaryExpansion) ||
+    !(boundsRectWidth > 0) ||
+    !(boundsRectHeight > 0) ||
+    !(usableRectWidth > 0) ||
+    !(usableRectHeight > 0) ||
+    boundaryExpansion < 0
+  )
+    trap();
+
+  const preparedOrderPointer = candidateCount == 0 ? 0 : reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  const preferredColumnPointer = candidateCount == 0 ? 0 : reserveArena(candidateCount * sizeof<u32>(), sizeof<u32>());
+  let preparedCount: u32 = 0;
+  let candidateIndex: u32 = 0;
+  while (candidateIndex < candidateCount) {
+    const sourceIndex = load<u32>(candidateSourceIndexPointer + candidateIndex * sizeof<u32>());
+    let duplicateIndex: u32 = 0;
+    while (duplicateIndex < candidateIndex) {
+      if (load<u32>(candidateSourceIndexPointer + duplicateIndex * sizeof<u32>()) == sourceIndex) trap();
+      duplicateIndex += 1;
+    }
+    const centerX = load<f64>(candidateXPointer + candidateIndex * sizeof<f64>());
+    const centerY = load<f64>(candidateYPointer + candidateIndex * sizeof<f64>());
+    const radius = load<f64>(candidateRadiusPointer + candidateIndex * sizeof<f64>());
+    if (
+      isFiniteValue(centerX) &&
+      isFiniteValue(centerY) &&
+      isFiniteValue(radius) &&
+      radius > 0 &&
+      centerY >= usableRectY &&
+      centerY < usableRectY + usableRectHeight
+    ) {
+      const planeX = ((centerX - boundsRectX) * getGraphwarPlaneLength()) / boundsRectWidth;
+      const forwardPlaneX = isMirrored ? getGraphwarPlaneLength() - 1 - planeX : planeX;
+      // Add a tiny scale-independent guard for the exact integer produced by
+      // the browser's image-to-plane projection (e.g. 200 * 770 / 770).
+      let preferredForwardColumn: i32 = <i32>NativeMath.floor(forwardPlaneX + 0.5 + 1e-9);
+      if (preferredForwardColumn < 0) preferredForwardColumn = 0;
+      if (preferredForwardColumn >= <i32>getPlaneWidth()) preferredForwardColumn = <i32>getPlaneWidth() - 1;
+
+      let insertion = preparedCount;
+      while (insertion > 0) {
+        const previousIndex = load<u32>(preparedOrderPointer + (insertion - 1) * sizeof<u32>());
+        const previousColumn = load<u32>(preferredColumnPointer + (insertion - 1) * sizeof<u32>());
+        const previousY = load<f64>(candidateYPointer + previousIndex * sizeof<f64>());
+        const previousSourceIndex = load<u32>(candidateSourceIndexPointer + previousIndex * sizeof<u32>());
+        if (
+          previousColumn < <u32>preferredForwardColumn ||
+          (previousColumn == preferredForwardColumn &&
+            (previousY > centerY || (previousY == centerY && previousSourceIndex < sourceIndex)))
+        )
+          break;
+        store<u32>(preparedOrderPointer + insertion * sizeof<u32>(), previousIndex);
+        store<u32>(preferredColumnPointer + insertion * sizeof<u32>(), previousColumn);
+        insertion -= 1;
+      }
+      store<u32>(preparedOrderPointer + insertion * sizeof<u32>(), candidateIndex);
+      store<u32>(preferredColumnPointer + insertion * sizeof<u32>(), <u32>preferredForwardColumn);
+      preparedCount += 1;
+    }
+    candidateIndex += 1;
+  }
+
+  const outputSourceIndexPointer = preparedCount == 0 ? 0 : reserveArena(preparedCount * sizeof<u32>(), sizeof<u32>());
+  const outputRouteXPointer = preparedCount == 0 ? 0 : reserveArena(preparedCount * sizeof<f64>(), sizeof<f64>());
+  const outputRouteYPointer = preparedCount == 0 ? 0 : reserveArena(preparedCount * sizeof<f64>(), sizeof<f64>());
+  let outputCount: u32 = 0;
+  let previousForwardX = isMirrored
+    ? getGraphwarPlaneLength() - 1 - ((pathTailX - boundsRectX) * getGraphwarPlaneLength()) / boundsRectWidth
+    : ((pathTailX - boundsRectX) * getGraphwarPlaneLength()) / boundsRectWidth;
+  let groupStart: u32 = 0;
+  while (groupStart < preparedCount) {
+    const firstColumn = load<u32>(preferredColumnPointer + groupStart * sizeof<u32>());
+    let groupEnd = groupStart + 1;
+    while (groupEnd < preparedCount && load<u32>(preferredColumnPointer + groupEnd * sizeof<u32>()) == firstColumn)
+      groupEnd += 1;
+    const preferCenterColumn = groupEnd - groupStart == 1;
+    let targetPosition = groupStart;
+    while (targetPosition < groupEnd) {
+      const targetIndex = load<u32>(preparedOrderPointer + targetPosition * sizeof<u32>());
+      const targetColumn = load<u32>(preferredColumnPointer + targetPosition * sizeof<u32>());
+      const targetX = load<f64>(candidateXPointer + targetIndex * sizeof<f64>());
+      const targetY = load<f64>(candidateYPointer + targetIndex * sizeof<f64>());
+      const targetRadius = load<f64>(candidateRadiusPointer + targetIndex * sizeof<f64>());
+      let minimumForwardColumn = <i32>NativeMath.ceil(previousForwardX + 1);
+      if (minimumForwardColumn < 0) minimumForwardColumn = 0;
+      if (minimumForwardColumn < <i32>getPlaneWidth()) {
+        let forwardColumn = preferCenterColumn && <i32>targetColumn >= minimumForwardColumn
+          ? <i32>targetColumn
+          : minimumForwardColumn;
+        let enumeratingFromMinimum = forwardColumn == minimumForwardColumn;
+        let checkedColumnCount: u32 = 0;
+        while (forwardColumn < <i32>getPlaneWidth() && checkedColumnCount < getPlaneWidth()) {
+          const planeColumn: i32 = isMirrored ? <i32>getPlaneWidth() - 1 - forwardColumn : forwardColumn;
+          const imageX = boundsRectX + (<f64>planeColumn * boundsRectWidth) / getGraphwarPlaneLength();
+          checkedColumnCount += 1;
+          if (
+            imageX >= usableRectX &&
+            imageX < usableRectX + usableRectWidth &&
+            <f64>forwardColumn - previousForwardX >= 1 &&
+            (imageX - targetX) * (imageX - targetX) < targetRadius * targetRadius
+          ) {
+            store<u32>(outputSourceIndexPointer + outputCount * sizeof<u32>(), load<u32>(candidateSourceIndexPointer + targetIndex * sizeof<u32>()));
+            store<f64>(outputRouteXPointer + outputCount * sizeof<f64>(), imageX);
+            store<f64>(outputRouteYPointer + outputCount * sizeof<f64>(), targetY);
+            outputCount += 1;
+            previousForwardX = forwardColumn;
+            break;
+          }
+          if (!enumeratingFromMinimum) {
+            forwardColumn = minimumForwardColumn;
+            enumeratingFromMinimum = true;
+          } else {
+            forwardColumn += 1;
+            if (preferCenterColumn && forwardColumn == <i32>targetColumn) forwardColumn += 1;
+          }
+        }
+      }
+      targetPosition += 1;
+    }
+    groupStart = groupEnd;
+  }
+
+  const resultPointer = reserveArena(Layout.ONE_CLICK_ASSIGN_RESULT_BYTE_LENGTH, sizeof<u64>());
+  store<u32>(resultPointer + Layout.ONE_CLICK_ASSIGN_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_ASSIGN_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.ONE_CLICK_ASSIGN_RESULT_STATUS_OFFSET, Layout.ONE_CLICK_ASSIGN_RESULT_STATUS_SUCCESS);
+  store<u32>(resultPointer + Layout.ONE_CLICK_ASSIGN_RESULT_SOURCE_INDEX_POINTER_OFFSET, outputSourceIndexPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_ASSIGN_RESULT_ROUTE_X_POINTER_OFFSET, outputRouteXPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_ASSIGN_RESULT_ROUTE_Y_POINTER_OFFSET, outputRouteYPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_ASSIGN_RESULT_COUNT_OFFSET, outputCount);
+  return resultPointer;
+}
+
 function writeOneClickResult(
   status: u32,
   nonce: u32,

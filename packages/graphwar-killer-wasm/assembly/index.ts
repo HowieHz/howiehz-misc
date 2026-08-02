@@ -14,5 +14,12 @@ export {
   resetArena,
   resetArenaAfterFault,
 } from "./memory";
-export { beginOneClickClear, cancelOneClickClear, resumeOneClickClear, runRouteTask, runSmartPathfinding } from "./pathfinding";
+export {
+  assignOneClickTargets,
+  beginOneClickClear,
+  cancelOneClickClear,
+  resumeOneClickClear,
+  runRouteTask,
+  runSmartPathfinding,
+} from "./pathfinding";
 export { runTrajectory } from "./trajectory";

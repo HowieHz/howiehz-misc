@@ -10,6 +10,7 @@ export const graphwarWasmRequiredFunctionExports = [
   "runFormula",
   "runTrajectory",
   "runRouteTask",
+  "assignOneClickTargets",
   "runSmartPathfinding",
   "beginOneClickClear",
   "cancelOneClickClear",
@@ -32,6 +33,8 @@ type GraphwarWasmRequiredFunctionExport = (typeof graphwarWasmRequiredFunctionEx
 const graphwarWasmRuntimeConstructionToken = Symbol("GraphwarWasmRuntimeConstructionToken");
 const SMART_PATHFINDING_INPUT_BYTE_LENGTH = 80;
 const SMART_PATHFINDING_RESULT_BYTE_LENGTH = 96;
+const ONE_CLICK_TARGET_ASSIGNMENT_INPUT_BYTE_LENGTH = 120;
+const ONE_CLICK_TARGET_ASSIGNMENT_RESULT_BYTE_LENGTH = 24;
 const ONE_CLICK_CLEAR_INPUT_BYTE_LENGTH = 72;
 const ONE_CLICK_CLEAR_LEGACY_INPUT_BYTE_LENGTH = 64;
 const ONE_CLICK_CLEAR_DAG_INPUT_BYTE_LENGTH = 96;
@@ -59,6 +62,7 @@ interface GraphwarWasmAlgorithmExports {
   runDetectionTemplateShard: (inputPointer: number, inputByteLength: number) => number;
   runFormula: (command: number, inputPointer: number, inputByteLength: number) => number;
   runRouteTask: (command: number, inputPointer: number, inputByteLength: number) => number;
+  assignOneClickTargets: (inputPointer: number, inputByteLength: number) => number;
   runSmartPathfinding: (inputPointer: number, inputByteLength: number) => number;
   beginOneClickClear: (inputPointer: number, inputByteLength: number) => number;
   cancelOneClickClear: (requestNonce: number) => void;
@@ -382,6 +386,30 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
     ) {
       throw new GraphwarWasmFault("output", "Graphwar WASM route command returned an invalid result pointer");
     }
+    return resultPointer;
+  }
+
+  /** Executes the versioned one-click target-assignment composition command. */
+  assignOneClickTargets(inputPointer: number, inputByteLength: number) {
+    validateFixedCommandInput(
+      this,
+      inputPointer,
+      inputByteLength,
+      ONE_CLICK_TARGET_ASSIGNMENT_INPUT_BYTE_LENGTH,
+      "one-click target assignment",
+    );
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.assignOneClickTargets(inputPointer, inputByteLength);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM one-click target assignment failed", "trap");
+    }
+    validateResultRecordPointer(
+      this,
+      resultPointer,
+      ONE_CLICK_TARGET_ASSIGNMENT_RESULT_BYTE_LENGTH,
+      "one-click target assignment",
+    );
     return resultPointer;
   }
 

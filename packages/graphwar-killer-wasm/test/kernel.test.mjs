@@ -18,6 +18,7 @@ const roleExports = [
   "runFormula",
   "runTrajectory",
   "runRouteTask",
+  "assignOneClickTargets",
   "runSmartPathfinding",
   "beginOneClickClear",
   "cancelOneClickClear",
@@ -258,6 +259,7 @@ test("keeps allocator count, canary, cursor, and high-water stable across long-l
       name !== "resumeDetectionTask" &&
       name !== "runDetectionTemplateShard" &&
       name !== "runRouteTask" &&
+      name !== "assignOneClickTargets" &&
       name !== "runSmartPathfinding" &&
       name !== "beginOneClickClear" &&
       name !== "cancelOneClickClear" &&

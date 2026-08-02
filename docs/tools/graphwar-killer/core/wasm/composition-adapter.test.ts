@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
   runGraphwarWasmOneClickTrajectoryValidation,
   runGraphwarWasmSmartPathfinding,
@@ -12,6 +13,28 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
 
 describe("Graphwar WASM composition adapter", () => {
+  it("assigns stable source identities and route columns in the versioned WASM ABI", async () => {
+    const runtime = await createRuntime();
+    const result = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+      boundaryExpansion: 0,
+      boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+      candidates: [
+        { center: { x: 200, y: 225 }, hitRadius: 2, sourceIndex: 10 },
+        { center: { x: 200, y: 300 }, hitRadius: 2, sourceIndex: 20 },
+        { center: { x: 300, y: 225 }, hitRadius: 0, sourceIndex: 99 },
+      ],
+      isMirrored: false,
+      pathTail: { x: 0, y: 225 },
+      usableRect: { height: 450, width: 770, x: 0, y: 0 },
+    });
+
+    expect(result).toEqual([
+      { routePoint: { x: 199, y: 300 }, sourceIndex: 20 },
+      { routePoint: { x: 200, y: 225 }, sourceIndex: 10 },
+    ]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("validates an ordinary one-click route with ordered multi-target stop state", async () => {
     const runtime = await createRuntime();
     const graphPoints = [

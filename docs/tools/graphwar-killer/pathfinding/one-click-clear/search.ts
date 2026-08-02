@@ -686,11 +686,10 @@ export async function buildGraphwarOneClickClearPath(
     return createOneClickClearFailure("no-candidate", startedAt, 0);
   }
 
-  // Step-glitch still builds its scan layers outside the ordinary DAG. All
-  // effective WASM paths nevertheless use the retained composition session
-  // as the target-order owner; stateful Step then carries that order into its
-  // explicit, identity-bound DAG descriptor.
-  const targets = options.wasmRuntime ? orderOneClickClearTargetsWithWasm(options, assignedTargets) : assignedTargets;
+  // Assignment already emits the canonical forward-column order. The
+  // retained composition session consumes that order for DAG construction;
+  // starting a second session just to sort would duplicate ownership.
+  const targets = assignedTargets;
 
   const context: OneClickClearSearchContext = {
     bestValidatedPointCount: Number.POSITIVE_INFINITY,
@@ -1898,47 +1897,6 @@ function collectOneClickClearTargets(options: GraphwarOneClickClearSearchOptions
       },
     ];
   });
-}
-
-/** Reuses the composition ABI's stable target ordering for non-stateless paths. */
-function orderOneClickClearTargetsWithWasm(
-  options: GraphwarOneClickClearSearchOptions,
-  targets: readonly OneClickClearTarget[],
-): OneClickClearTarget[] {
-  // Step-glitch unit seams may provide only the scanner surface. Keep those
-  // tests on their explicit TS fallback; validated production runtimes always
-  // expose the retained composition arena methods.
-  if (!options.wasmRuntime || typeof options.wasmRuntime.markArena !== "function" || targets.length === 0) {
-    return [...targets];
-  }
-  const composition = beginGraphwarWasmOneClickClear(options.wasmRuntime, {
-    candidates: targets.map((target) => ({
-      hitCenter: target.routePoint,
-      hitRadius: target.hitCircle.radius,
-      isEnemy: true,
-    })),
-    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
-    isStepStateful: false,
-    isTargetOrderDescending: !xPlusGoesRight(options.bounds),
-    path: options.pathPoints,
-    requestNonce: options.wasmRequestNonce ?? 1,
-    targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, targets),
-    verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
-  });
-  if (composition.status !== "waiting-edge-batch") {
-    throw new GraphwarWasmFault("abi", "one-click WASM target ordering returned a terminal session");
-  }
-  try {
-    return composition.targetOrder.map((targetIndex) => {
-      const target = targets[targetIndex];
-      if (!target) {
-        throw new GraphwarWasmFault("abi", "one-click WASM target ordering references an unknown target");
-      }
-      return target;
-    });
-  } finally {
-    composition.handle.cancel();
-  }
 }
 
 /** 建立 START 和士兵建路点之间的几何 DAG；Step 必须把累计舍入高度纳入节点标签。 */

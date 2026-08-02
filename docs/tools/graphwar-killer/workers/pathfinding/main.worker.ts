@@ -1563,7 +1563,7 @@ async function buildOneClickClearPath(
                 model: pathSearchPolicy.runtime.model,
                 points,
                 summedArea: pathSearchPolicy.runtime.summedArea,
-              }).ok,
+              }),
           }
         : {}),
     });

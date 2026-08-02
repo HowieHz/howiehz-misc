@@ -67,6 +67,7 @@ import type {
   GraphwarStepGlitchReplayEvidence,
   GraphwarStepGlitchScanTimingStage,
 } from "../routing/step-glitch-scan";
+import type { GraphwarStepRoutePathValidation } from "../routing/step-route";
 import type { GraphwarPathfindingDebugMetrics } from "../runtime/diagnostics";
 import { isGraphwarOneClickClearStepRouteState, type GraphwarOneClickClearStepRouteState } from "./step-route-state";
 import { assignGraphwarOneClickClearTargetRoutePoints } from "./target-assignment";
@@ -292,7 +293,7 @@ export interface GraphwarOneClickClearOptions {
   /** Effective WASM backend; present only for the Worker-owned Step-glitch production branch. */
   wasmRuntime?: GraphwarWasmKernelRuntime;
   /** Step 严格包络整路校验；由持有共用 summed-area 的 master Worker 注入。 */
-  validateStepRoute?: (points: readonly PixelPoint[]) => boolean;
+  validateStepRoute?: (points: readonly PixelPoint[]) => boolean | GraphwarStepRoutePathValidation;
   /** 让出主线程控制权；页面用于响应取消和刷新状态。 */
   yieldControl?: () => Promise<void> | void;
 }
@@ -1361,6 +1362,17 @@ async function runOneClickClearSearchAttemptWithWasm(
   if (!selectedRoute) {
     return { reason: "no-usable-target", type: "failure", workUnits };
   }
+  const selectedRouteStepValidation = validateOneClickClearStepRoute(options, selectedRoute.pathPoints);
+  if (!selectedRouteStepValidation.ok) {
+    const failedEdge = findOneClickClearStepRouteFailedEdge(
+      options,
+      selectedEdges,
+      selectedRouteStepValidation.invalidSegmentIndex,
+    );
+    return failedEdge
+      ? { failedEdge, type: "retry", workUnits: workUnits + 1 }
+      : { reason: "no-usable-target", type: "failure", workUnits: workUnits + 1 };
+  }
 
   const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
     runOneClickClearWasmRouteValidation(options, selectedRoute.pathPoints, selectedRoute.targetSequence, false),
@@ -1515,7 +1527,7 @@ function runOneClickClearWasmRouteValidation(
   }
 
   const { formula, trajectory } = outcome;
-  const signProtection = formula.observedSignProtection;
+  const signProtection = trajectory.continuationEvidence.observedSignProtection;
   const formulaPoints = formula.formulaPoints.map((point) => createGraphPoint(point.x, point.y));
   const stepOverflowProtectionRange = createStepOverflowProtectionRange(options.bounds, formulaPoints);
   const formulaEvaluation = {
@@ -1562,6 +1574,11 @@ function runOneClickClearWasmRouteValidation(
       trajectory.reachedRequiredTargetCount + trajectory.reachedTargetCount - validationTargets.prefixTargetCount,
     ),
   );
+  const trajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(
+    trajectory.visiblePixels,
+    trajectory.obstacle.type === "hit" ? trajectory.obstacle.sampleIndex : -1,
+    options.debugMetrics,
+  );
   return {
     formulaContext,
     ...(trajectory.pathError === undefined ? {} : { pathError: trajectory.pathError }),
@@ -1569,7 +1586,7 @@ function runOneClickClearWasmRouteValidation(
     reachesTargetSequenceBeforeObstacle,
     trackedTargetHitIndexes: trajectory.trackedTargetHitIndexes,
     trackedTargets,
-    trajectoryPoints: trajectory.visiblePixels,
+    trajectoryPoints,
   };
 }
 
@@ -1582,7 +1599,10 @@ async function optimizeOneClickClearPathWithWasm(
   const options = context.options;
   let optimized = route;
   const firstGeneratedIndex = options.pathPoints.length;
-  const protectedTargetPoints = route.targetSequence.map((target) => target.routePoint);
+  const protectedTargetPoints =
+    options.formulaMode.contract.pathSearchPolicy.type === "step-glitch"
+      ? route.targetSequence.map((target) => target.routePoint)
+      : [];
   const shouldPreserveLocalSoldierHits =
     options.deleteHitCheckRadiusPixels > 0 && options.formulaMode.contract.deleteInfluence.type === "adjacent-local";
   for (let index = firstGeneratedIndex; index < optimized.pathPoints.length;) {
@@ -1607,6 +1627,11 @@ async function optimizeOneClickClearPathWithWasm(
       continue;
     }
     workUnits += 1;
+    if (!validateOneClickClearStepRoute(options, candidatePath).ok) {
+      index += 1;
+      await yieldOneClickClearControl(options);
+      continue;
+    }
     const validation = runOneClickClearWasmRouteValidation(options, candidatePath, optimized.targetSequence, false);
     if (validation?.reachesTargetSequenceBeforeObstacle) {
       optimized = {
@@ -2755,11 +2780,47 @@ function mergeOneClickClearContinuationPoints<TPoint extends { readonly x: numbe
 }
 
 /** Step 的严格包络是硬边条件；删点和最终安全网都必须重新检查整条候选路径。 */
+interface OneClickClearStepRouteValidation {
+  readonly invalidSegmentIndex?: number;
+  readonly ok: boolean;
+}
+
+function validateOneClickClearStepRoute(
+  options: GraphwarOneClickClearSearchOptions,
+  pathPoints: readonly PixelPoint[],
+): OneClickClearStepRouteValidation {
+  if (options.formulaMode.contract.pathSearchPolicy.type !== "step-stateful") {
+    return { ok: true };
+  }
+  const validation = options.validateStepRoute?.(pathPoints.map(clonePixelPoint));
+  if (validation === undefined) {
+    return { ok: false };
+  }
+  return typeof validation === "boolean" ? { ok: validation } : validation;
+}
+
+/** Maps a validator segment index back to the edge that introduced that segment. */
+function findOneClickClearStepRouteFailedEdge(
+  options: GraphwarOneClickClearSearchOptions,
+  edges: readonly OneClickClearDagEdge[],
+  invalidSegmentIndex: number | undefined,
+) {
+  if (invalidSegmentIndex === undefined) {
+    return edges.at(-1);
+  }
+  let firstEdgeSegmentIndex = Math.max(0, options.pathPoints.length - 1);
+  for (const edge of edges) {
+    const segmentCount = Math.max(0, edge.route.length - 1);
+    if (invalidSegmentIndex >= firstEdgeSegmentIndex && invalidSegmentIndex < firstEdgeSegmentIndex + segmentCount) {
+      return edge;
+    }
+    firstEdgeSegmentIndex += segmentCount;
+  }
+  return edges.at(-1);
+}
+
 function oneClickClearStepRouteIsValid(options: GraphwarOneClickClearSearchOptions, pathPoints: readonly PixelPoint[]) {
-  return (
-    options.formulaMode.contract.pathSearchPolicy.type !== "step-stateful" ||
-    options.validateStepRoute?.(pathPoints.map(clonePixelPoint)) === true
-  );
+  return validateOneClickClearStepRoute(options, pathPoints).ok;
 }
 
 /** 返回整条弹道复验结果；routePoint 提供目标采样点，hitCircle 提供真实命中半径。 */

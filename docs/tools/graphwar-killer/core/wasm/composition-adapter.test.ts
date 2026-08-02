@@ -58,6 +58,9 @@ describe("Graphwar WASM composition adapter", () => {
     expect(result?.trajectory.targetHitIndex).toBeGreaterThanOrEqual(0);
     expect(result?.trajectory.visiblePixels.length).toBeGreaterThan(0);
     expect(result?.formula.compiledMaterials.algorithm).toBe("abs");
+    expect(result?.formula.observedSignProtection).toEqual(
+      result?.trajectory.continuationEvidence.observedSignProtection,
+    );
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 

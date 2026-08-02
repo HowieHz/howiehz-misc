@@ -5,11 +5,12 @@ import { imageToGraphPoint, pixelCirclesEqual, pixelPointsEqual, xPlusGoesRight 
 import { graphXAdvancesStrictly } from "../../core/numbers";
 import { imageXToNearestPlaneColumn, planeColumnToForwardColumn } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
-import { clonePixelPoint, createPixelPoint } from "../../core/types";
+import { clonePixelPoint, createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   beginGraphwarWasmOneClickClear,
+  runGraphwarWasmOneClickTrajectoryValidation,
   type GraphwarWasmOneClickClearResult,
   type GraphwarWasmOneClickDagJob,
   type GraphwarWasmOneClickEdgeResult,
@@ -25,7 +26,8 @@ import type {
   GraphwarWasmStepGlitchGeometryTestContext,
   GraphwarWasmStepGlitchOwnedEvidence,
 } from "../../core/wasm/step-glitch-adapter";
-import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
+import { buildFormula } from "../../formula/generation/build";
+import { createStepOverflowProtectionRange, resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
 import {
   graphwarByteArraysEqual,
   graphwarFinalReplaySnapshotMatches,
@@ -1260,6 +1262,13 @@ async function runOneClickClearSearchAttempt(
     };
   }
 
+  // The effective normal WASM path owns trajectory validation and deletion
+  // replay. The TypeScript implementation remains the cold-replay backend and
+  // is selected only when this request has no validated WASM runtime.
+  if (options.wasmRuntime && options.formulaMode.contract.pathSearchPolicy.type !== "step-glitch") {
+    return runOneClickClearSearchAttemptWithWasm(context, dag, selectedEdges, workUnits);
+  }
+
   const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
     validateOneClickClearDagRoute(context, dag, selectedEdges),
   );
@@ -1328,6 +1337,293 @@ async function runOneClickClearSearchAttempt(
         type: "failure",
         workUnits: optimized.workUnits,
       };
+}
+
+interface OneClickClearWasmRouteValidation {
+  readonly formulaContext: GraphwarTrajectoryFormulaContext;
+  readonly pathError?: number;
+  readonly reachedTargetCount: number;
+  readonly reachesTargetSequenceBeforeObstacle: boolean;
+  readonly trackedTargetHitIndexes: readonly number[];
+  readonly trackedTargets: readonly OneClickClearTrackedTarget[];
+  readonly trajectoryPoints: readonly PixelPoint[];
+}
+
+/** Runs the selected complete route through the multi-target WASM trajectory command. */
+async function runOneClickClearSearchAttemptWithWasm(
+  context: OneClickClearSearchContext,
+  dag: OneClickClearDag,
+  selectedEdges: readonly OneClickClearDagEdge[],
+  workUnits: number,
+): Promise<OneClickClearSearchAttemptResult> {
+  const options = context.options;
+  const selectedRoute = createOneClickClearRouteFromEdges(options, dag, selectedEdges);
+  if (!selectedRoute) {
+    return { reason: "no-usable-target", type: "failure", workUnits };
+  }
+
+  const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
+    runOneClickClearWasmRouteValidation(options, selectedRoute.pathPoints, selectedRoute.targetSequence, false),
+  );
+  const nextWorkUnits = workUnits + 1;
+  if (!validation?.reachesTargetSequenceBeforeObstacle) {
+    const reachedTargetCount = validation?.reachedTargetCount ?? 0;
+    const failedEdge = selectedEdges[Math.min(reachedTargetCount, selectedEdges.length - 1)];
+    return failedEdge
+      ? { failedEdge, type: "retry", workUnits: nextWorkUnits }
+      : { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
+  }
+
+  let optimizedRoute: OneClickClearRoute = {
+    ...selectedRoute,
+    incumbentEvidence: {
+      formulaContext: validation.formulaContext,
+      trajectoryPoints: [...validation.trajectoryPoints],
+    },
+    ...(validation.pathError === undefined ? {} : { pathError: validation.pathError }),
+  } satisfies OneClickClearRoute;
+  let optimizedWorkUnits = nextWorkUnits;
+  if (options.isDeleteOptimizationEnabled) {
+    const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
+      optimizeOneClickClearPathWithWasm(context, optimizedRoute, optimizedWorkUnits),
+    );
+    optimizedRoute = optimized.route;
+    optimizedWorkUnits = optimized.workUnits;
+  }
+
+  const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
+    runOneClickClearWasmRouteValidation(options, optimizedRoute.pathPoints, optimizedRoute.targetSequence, true),
+  );
+  if (
+    oneClickClearStepRouteIsValid(options, optimizedRoute.pathPoints) &&
+    finalValidation?.reachesTargetSequenceBeforeObstacle
+  ) {
+    const route: OneClickClearRoute = {
+      ...optimizedRoute,
+      incumbentEvidence: {
+        formulaContext: finalValidation.formulaContext,
+        trajectoryPoints: [...finalValidation.trajectoryPoints],
+      },
+      ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
+    };
+    return {
+      hitTargets: collectOneClickClearHitTargets(
+        finalValidation.trackedTargets,
+        finalValidation.trackedTargetHitIndexes,
+      ),
+      route,
+      type: "validated",
+      workUnits: optimizedWorkUnits + 1,
+    };
+  }
+
+  const reachedTargetCount = finalValidation?.reachedTargetCount ?? 0;
+  const failedEdge = selectedEdges[Math.min(reachedTargetCount, selectedEdges.length - 1)];
+  return failedEdge
+    ? { failedEdge, type: "retry", workUnits: optimizedWorkUnits + 1 }
+    : { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits + 1 };
+}
+
+/** Builds the selected edge chain without asking TS to validate its formula. */
+function createOneClickClearRouteFromEdges(
+  options: GraphwarOneClickClearSearchOptions,
+  dag: OneClickClearDag,
+  edges: readonly OneClickClearDagEdge[],
+) {
+  const pathPoints = [...options.pathPoints];
+  const targetSequence: OneClickClearTarget[] = [];
+  for (const edge of edges) {
+    const targetNode = dag.nodes[edge.to];
+    const target = targetNode ? dag.targets[targetNode.targetIndex] : undefined;
+    const previousPoint = pathPoints.at(-1);
+    const routeStart = edge.route[0];
+    if (!target || !previousPoint || !routeStart || !pixelPointsEqual(previousPoint, routeStart)) {
+      return undefined;
+    }
+    pathPoints.push(...edge.route.slice(1));
+    targetSequence.push(target);
+  }
+  return { pathPoints, targetSequence };
+}
+
+/** Runs a complete path or deletion candidate through WASM's canonical trajectory core. */
+function runOneClickClearWasmRouteValidation(
+  options: GraphwarOneClickClearSearchOptions,
+  pathPoints: readonly PixelPoint[],
+  targetSequence: readonly OneClickClearTarget[],
+  trackActualHits: boolean,
+): OneClickClearWasmRouteValidation | undefined {
+  const wasmRuntime = options.wasmRuntime;
+  if (!wasmRuntime) {
+    return undefined;
+  }
+  if (pathPoints.length < 2) {
+    return undefined;
+  }
+  if (!oneClickClearPathFollowsGraphRule(options, pathPoints)) {
+    return undefined;
+  }
+  const graphPoints = pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  const soldierCenter = graphPoints[0];
+  if (!soldierCenter) {
+    return undefined;
+  }
+  const validationTargets = createOneClickClearValidationTargets(options, targetSequence, true);
+  const targetControlPoints = createOneClickClearTargetControlPoints(options, targetSequence);
+  const qualityPoints = graphPoints.filter((_point, index) => {
+    const sourcePoint = pathPoints[index];
+    return (
+      index > 0 &&
+      sourcePoint !== undefined &&
+      !targetControlPoints.some((targetPoint) => pixelPointsEqual(targetPoint, sourcePoint))
+    );
+  });
+  const trackedTargets = trackActualHits
+    ? createOneClickClearTrackedTargets(options, {
+        pathPoints: [...pathPoints],
+        targetSequence: [...targetSequence],
+      })
+    : [];
+  const outcome = runGraphwarWasmOneClickTrajectoryValidation(wasmRuntime, {
+    descriptor: {
+      bounds: options.bounds,
+      points: graphPoints,
+      settings: options.formulaMode.settings,
+      soldierCenter,
+    },
+    stop: {
+      boundsRect: options.boundsRect,
+      collision: options.simulationMask
+        ? {
+            boundaryExpansion: options.simulationBoundaryExpansion,
+            mask: options.simulationMask,
+            type: "mask",
+          }
+        : { type: "none" },
+      continueAfterTargetsUntilGraphX: { type: "none" },
+      orderedTargets: validationTargets.orderedTargets,
+      qualityPoints,
+      requiredTargets: validationTargets.requiredTargets,
+      shouldCollectVisiblePixels: true,
+      shouldStopOnTargetsComplete: !trackActualHits,
+      trackedTargets: trackedTargets.map((target) => target.hitCircle),
+      type: "targets",
+    },
+  });
+  if (!outcome) {
+    return undefined;
+  }
+
+  const { formula, trajectory } = outcome;
+  const signProtection = formula.observedSignProtection;
+  const formulaPoints = formula.formulaPoints.map((point) => createGraphPoint(point.x, point.y));
+  const stepOverflowProtectionRange = createStepOverflowProtectionRange(options.bounds, formulaPoints);
+  const formulaEvaluation = {
+    equation: options.formulaMode.settings.equation,
+    formulaDecimalPlaces: options.formulaMode.settings.decimalPlaces,
+    isStepOverflowProtectionEnabled: options.formulaMode.settings.isStepOverflowProtectionEnabled,
+    signProtection,
+    stepOverflowProtectionRange,
+  };
+  const formulaContext: GraphwarTrajectoryFormulaContext = {
+    compiledMaterials: formula.compiledMaterials,
+    formulaEvaluation,
+    formulaPoints,
+    formulaResult: buildFormula(
+      formulaPoints,
+      options.formulaMode.settings.steepness,
+      options.formulaMode.settings.equation,
+      options.formulaMode.settings.algorithm,
+      options.formulaMode.settings.decimalPlaces,
+      {
+        compiledMaterials: formula.compiledMaterials,
+        signProtection,
+        isStepOverflowProtectionEnabled: options.formulaMode.settings.isStepOverflowProtectionEnabled,
+        stepOverflowProtectionRange,
+      },
+    ),
+    ...(trajectory.launchAngleRadians === undefined ? {} : { launchAngleRadians: trajectory.launchAngleRadians }),
+    settings: options.formulaMode.settings,
+    signProtection,
+    soldierCenter,
+  };
+  const requiredCount = validationTargets.requiredTargets.length;
+  const orderedCount = validationTargets.orderedTargets.length;
+  const targetCountsComplete =
+    trajectory.reachedRequiredTargetCount >= requiredCount && trajectory.reachedTargetCount >= orderedCount;
+  const obstacleSampleIndex = trajectory.obstacle.type === "hit" ? trajectory.obstacle.sampleIndex : -1;
+  const reachesTargetSequenceBeforeObstacle =
+    targetCountsComplete &&
+    (obstacleSampleIndex < 0 || (trajectory.targetHitIndex >= 0 && trajectory.targetHitIndex <= obstacleSampleIndex));
+  const reachedTargetCount = Math.min(
+    targetSequence.length,
+    Math.max(
+      0,
+      trajectory.reachedRequiredTargetCount + trajectory.reachedTargetCount - validationTargets.prefixTargetCount,
+    ),
+  );
+  return {
+    formulaContext,
+    ...(trajectory.pathError === undefined ? {} : { pathError: trajectory.pathError }),
+    reachedTargetCount,
+    reachesTargetSequenceBeforeObstacle,
+    trackedTargetHitIndexes: trajectory.trackedTargetHitIndexes,
+    trackedTargets,
+    trajectoryPoints: trajectory.visiblePixels,
+  };
+}
+
+/** Deletes points by repeatedly asking the same WASM trajectory core to prove the shortened path. */
+async function optimizeOneClickClearPathWithWasm(
+  context: OneClickClearSearchContext,
+  route: OneClickClearRoute,
+  workUnits: number,
+) {
+  const options = context.options;
+  let optimized = route;
+  const firstGeneratedIndex = options.pathPoints.length;
+  const protectedTargetPoints = route.targetSequence.map((target) => target.routePoint);
+  const shouldPreserveLocalSoldierHits =
+    options.deleteHitCheckRadiusPixels > 0 && options.formulaMode.contract.deleteInfluence.type === "adjacent-local";
+  for (let index = firstGeneratedIndex; index < optimized.pathPoints.length;) {
+    if (options.isCancelled?.()) {
+      break;
+    }
+    const point = optimized.pathPoints[index];
+    if (point && protectedTargetPoints.some((protectedPoint) => pixelPointsEqual(protectedPoint, point))) {
+      index += 1;
+      continue;
+    }
+    if (
+      shouldPreserveLocalSoldierHits &&
+      !oneClickClearPointDeleteKeepsLocalSoldierHits(options, optimized.pathPoints, index)
+    ) {
+      index += 1;
+      continue;
+    }
+    const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
+    if (!oneClickClearPathFollowsGraphRule(options, candidatePath)) {
+      index += 1;
+      continue;
+    }
+    workUnits += 1;
+    const validation = runOneClickClearWasmRouteValidation(options, candidatePath, optimized.targetSequence, false);
+    if (validation?.reachesTargetSequenceBeforeObstacle) {
+      optimized = {
+        incumbentEvidence: {
+          formulaContext: validation.formulaContext,
+          trajectoryPoints: [...validation.trajectoryPoints],
+        },
+        pathPoints: candidatePath,
+        targetSequence: optimized.targetSequence,
+        ...(validation.pathError === undefined ? {} : { pathError: validation.pathError }),
+      };
+      continue;
+    }
+    index += 1;
+    await yieldOneClickClearControl(options);
+  }
+  return { route: optimized, workUnits };
 }
 
 /** 当前已有路径必须能先命中尾点；追加清图路线前先挡住已经无效的前缀。 */

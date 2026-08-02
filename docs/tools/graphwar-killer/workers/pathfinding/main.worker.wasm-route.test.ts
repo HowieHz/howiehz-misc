@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   buildVisibilityRoute: vi.fn(() => {
     throw new Error("TypeScript visibility routing must not run for a WASM smart route");
   }),
+  validateTrajectory: vi.fn(() => {
+    throw new Error("TypeScript smart trajectory validation must not run for a WASM smart route");
+  }),
 }));
 
 vi.mock("../../pathfinding/routing/theta-star", async (importOriginal) => ({
@@ -28,6 +31,11 @@ vi.mock("../../pathfinding/routing/theta-star", async (importOriginal) => ({
 vi.mock("../../pathfinding/routing/visibility-graph", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../pathfinding/routing/visibility-graph")>()),
   buildGraphwarVisibilityGraphPathForMask: mocks.buildVisibilityRoute,
+}));
+
+vi.mock("../../pathfinding/smart/trajectory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../pathfinding/smart/trajectory")>()),
+  createGraphwarSmartPathfindingTrajectoryResult: mocks.validateTrajectory,
 }));
 
 const originalSelfDescriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
@@ -115,6 +123,7 @@ describe("Pathfinding master Worker WASM Step routing", () => {
     }
     expect(mocks.buildThetaRoute).not.toHaveBeenCalled();
     expect(mocks.buildVisibilityRoute).not.toHaveBeenCalled();
+    expect(mocks.validateTrajectory).not.toHaveBeenCalled();
   });
 });
 

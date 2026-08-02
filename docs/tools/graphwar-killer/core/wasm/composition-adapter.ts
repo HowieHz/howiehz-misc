@@ -9,7 +9,13 @@ import {
   writeGraphwarWasmUint32Values,
   type GraphwarWasmMemorySource,
 } from "./abi";
-import { packGraphwarWasmTrajectoryCommandTemplate } from "./formula-adapter";
+import {
+  packGraphwarWasmTrajectoryCommandTemplate,
+  prepareGraphwarWasmFormulaLaunch,
+  runGraphwarWasmTrajectory,
+  type GraphwarWasmFormulaLaunchResult,
+  type GraphwarWasmTrajectoryResult,
+} from "./formula-adapter";
 import type { GraphwarWasmKernelRuntime } from "./runtime";
 import type { GraphwarWasmFormulaInputDescriptor, GraphwarWasmPoint, GraphwarWasmStopPolicy } from "./task-adapter";
 
@@ -223,6 +229,21 @@ export interface GraphwarWasmSmartRouteValidationEvidence {
   readonly points: readonly GraphwarWasmPoint[];
   /** Continuous Graphwar x values paired by index with `points`. */
   readonly graphX: readonly number[];
+}
+
+/**
+ * One-click normal DAG validation uses the same multi-target trajectory command as the standalone trajectory Worker.
+ * Keeping this boundary here prevents the search module from rebuilding formula materials or sampling a TS candidate
+ * after the WASM edge composition has selected it.
+ */
+export interface GraphwarWasmOneClickTrajectoryValidationInput {
+  readonly descriptor: GraphwarWasmFormulaInputDescriptor;
+  readonly stop: Extract<GraphwarWasmStopPolicy, { type: "targets" }>;
+}
+
+export interface GraphwarWasmOneClickTrajectoryValidationResult {
+  readonly formula: Extract<GraphwarWasmFormulaLaunchResult, { status: "success" }>;
+  readonly trajectory: GraphwarWasmTrajectoryResult;
 }
 
 export type GraphwarWasmSmartPathfindingResult =
@@ -1003,6 +1024,38 @@ export function runGraphwarWasmSmartPathfinding(
     const result = copySmartResult(runtime, resultPointer, input, outputMinimumPointer);
     runtime.resetArena(mark);
     return result;
+  } catch (error) {
+    runtime.resetArenaAfterFault(mark);
+    throw error;
+  }
+}
+
+/**
+ * Validates one complete one-click route in one WASM-owned formula/trajectory attempt. The launch result is copied
+ * separately so callers can format the already-selected canonical materials without resolving the formula in TS.
+ */
+export function runGraphwarWasmOneClickTrajectoryValidation(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmOneClickTrajectoryValidationInput,
+): GraphwarWasmOneClickTrajectoryValidationResult | undefined {
+  const mark = runtime.markArena();
+  try {
+    const formula = prepareGraphwarWasmFormulaLaunch(runtime, input.descriptor);
+    if (formula.status !== "success") {
+      runtime.resetArena(mark);
+      return undefined;
+    }
+    const trajectory = runGraphwarWasmTrajectory(runtime, {
+      descriptor: input.descriptor,
+      start: { type: "cold" },
+      stop: input.stop,
+    });
+    if (!trajectory) {
+      runtime.resetArena(mark);
+      return undefined;
+    }
+    runtime.resetArena(mark);
+    return { formula, trajectory };
   } catch (error) {
     runtime.resetArenaAfterFault(mark);
     throw error;

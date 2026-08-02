@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   beginGraphwarWasmOneClickClear,
+  runGraphwarWasmOneClickTrajectoryValidation,
   runGraphwarWasmSmartPathfinding,
   type GraphwarWasmOneClickEdgeResult,
 } from "./composition-adapter";
@@ -11,6 +12,55 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
 
 describe("Graphwar WASM composition adapter", () => {
+  it("validates an ordinary one-click route with ordered multi-target stop state", async () => {
+    const runtime = await createRuntime();
+    const graphPoints = [
+      { x: -20, y: 0 },
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+    ];
+    const soldierCenter = graphPoints[0];
+    if (!soldierCenter) {
+      throw new Error("test fixture must contain a soldier center");
+    }
+    const result = runGraphwarWasmOneClickTrajectoryValidation(runtime, {
+      descriptor: {
+        bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+        points: graphPoints,
+        settings: {
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        },
+        soldierCenter,
+      },
+      stop: {
+        boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+        collision: { type: "none" },
+        continueAfterTargetsUntilGraphX: { type: "none" },
+        orderedTargets: [
+          { center: { x: 385, y: 225 }, radius: 30 },
+          { center: { x: 693, y: 225 }, radius: 30 },
+        ],
+        qualityPoints: [],
+        requiredTargets: [],
+        shouldCollectVisiblePixels: true,
+        shouldStopOnTargetsComplete: true,
+        trackedTargets: [],
+        type: "targets",
+      },
+    });
+
+    expect(result?.trajectory.reachedTargetCount).toBe(2);
+    expect(result?.trajectory.targetHitIndex).toBeGreaterThanOrEqual(0);
+    expect(result?.trajectory.visiblePixels.length).toBeGreaterThan(0);
+    expect(result?.formula.compiledMaterials.algorithm).toBe("abs");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("round-trips smart path output and performs owned point deletion", async () => {
     const runtime = await createRuntime();
 

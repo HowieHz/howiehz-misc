@@ -1725,17 +1725,6 @@ async function optimizeOneClickClearPathWithWasm(
       !targetControlPoints.some((targetPoint) => pixelPointsEqual(targetPoint, sourcePoint))
     );
   });
-  // The coarse smart ABI intentionally accepts one ordered target and the
-  // complete internal quality-point slice. Multi-target and append-prefix
-  // routes keep their exact target/quality semantics through the same WASM
-  // trajectory command, one deletion candidate at a time.
-  if (
-    validationTargets.orderedTargets.length !== 1 ||
-    validationTargets.requiredTargets.length !== 0 ||
-    qualityPoints.length !== Math.max(0, graphPoints.length - 2)
-  ) {
-    return optimizeOneClickClearPathWithWasmFallback(context, route, workUnits);
-  }
   const smartInput = {
     allowTerminalPointDeletion: true,
     isDeleteOptimizationEnabled: true,
@@ -1816,67 +1805,6 @@ async function optimizeOneClickClearPathWithWasm(
     },
     workUnits: workUnits + Math.max(1, optimized.removedPointCount),
   };
-}
-
-/** Preserves multi-target/prefix stop semantics while every candidate still replays in WASM. */
-async function optimizeOneClickClearPathWithWasmFallback(
-  context: OneClickClearSearchContext,
-  route: OneClickClearRoute,
-  workUnits: number,
-) {
-  const options = context.options;
-  let optimized = route;
-  const firstGeneratedIndex = options.pathPoints.length;
-  const protectedTargetPoints =
-    options.formulaMode.contract.pathSearchPolicy.type === "step-glitch"
-      ? route.targetSequence.map((target) => target.routePoint)
-      : [];
-  const shouldPreserveLocalSoldierHits =
-    options.deleteHitCheckRadiusPixels > 0 && options.formulaMode.contract.deleteInfluence.type === "adjacent-local";
-  for (let index = firstGeneratedIndex; index < optimized.pathPoints.length;) {
-    if (options.isCancelled?.()) {
-      break;
-    }
-    const point = optimized.pathPoints[index];
-    if (point && protectedTargetPoints.some((protectedPoint) => pixelPointsEqual(protectedPoint, point))) {
-      index += 1;
-      continue;
-    }
-    if (
-      shouldPreserveLocalSoldierHits &&
-      !oneClickClearPointDeleteKeepsLocalSoldierHits(options, optimized.pathPoints, index)
-    ) {
-      index += 1;
-      continue;
-    }
-    const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
-    if (!oneClickClearPathFollowsGraphRule(options, candidatePath)) {
-      index += 1;
-      continue;
-    }
-    workUnits += 1;
-    if (!validateOneClickClearStepRoute(options, candidatePath).ok) {
-      index += 1;
-      await yieldOneClickClearControl(options);
-      continue;
-    }
-    const validation = runOneClickClearWasmRouteValidation(options, candidatePath, optimized.targetSequence, false);
-    if (validation?.reachesTargetSequenceBeforeObstacle) {
-      optimized = {
-        incumbentEvidence: {
-          formulaContext: validation.formulaContext,
-          trajectoryPoints: [...validation.trajectoryPoints],
-        },
-        pathPoints: candidatePath,
-        targetSequence: optimized.targetSequence,
-        ...(validation.pathError === undefined ? {} : { pathError: validation.pathError }),
-      };
-      continue;
-    }
-    index += 1;
-    await yieldOneClickClearControl(options);
-  }
-  return { route: optimized, workUnits };
 }
 
 /** 当前已有路径必须能先命中尾点；追加清图路线前先挡住已经无效的前缀。 */

@@ -1361,10 +1361,10 @@ function packSmartTrajectoryCommand(
       "input",
     );
   }
-  const [orderedTarget] = validation.stop.orderedTargets;
+  const orderedTargets = validation.stop.orderedTargets;
+  const orderedTarget = orderedTargets.at(-1);
   if (
-    validation.stop.orderedTargets.length !== 1 ||
-    validation.stop.requiredTargets.length !== 0 ||
+    orderedTargets.length === 0 ||
     validation.stop.trackedTargets.length !== 0 ||
     validation.stop.continueAfterTargetsUntilGraphX.type !== "none" ||
     validation.stop.shouldCollectVisiblePixels ||
@@ -1375,24 +1375,28 @@ function packSmartTrajectoryCommand(
   ) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
-      "smart trajectory stop policy does not match the single requested target",
+      "smart trajectory stop policy does not match the final requested target",
       "input",
     );
   }
   const qualityPoints = validatePoints(validation.stop.qualityPoints, "trajectoryValidation.stop.qualityPoints");
-  const expectedQualityPoints = descriptorPoints.slice(1, -1);
-  if (
-    qualityPoints.length !== expectedQualityPoints.length ||
-    qualityPoints.some((point, index) => {
-      const expectedPoint = expectedQualityPoints[index];
-      return expectedPoint === undefined || !pointsEqual(point, expectedPoint);
-    })
-  ) {
-    throw new GraphwarWasmAdapterError(
-      "invalid-session-identity",
-      "smart trajectory quality points must be the candidate's internal graph points",
-      "input",
-    );
+  let descriptorIndex = 1;
+  for (const [qualityIndex, point] of qualityPoints.entries()) {
+    while (descriptorIndex < descriptorPoints.length - 1) {
+      const descriptorPoint = descriptorPoints[descriptorIndex];
+      if (descriptorPoint && pointsEqual(descriptorPoint, point)) {
+        break;
+      }
+      descriptorIndex += 1;
+    }
+    if (descriptorIndex >= descriptorPoints.length - 1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `smart trajectory quality point ${qualityIndex} is not an ordered candidate point`,
+        "input",
+      );
+    }
+    descriptorIndex += 1;
   }
   return packGraphwarWasmTrajectoryCommandTemplate(runtime, {
     descriptor: validation.descriptor,
@@ -1746,6 +1750,7 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     );
   }
   const dagEdgeIdentities = new Set<string>();
+  const dagNodeTargets = new Map<number, number>();
   for (const [index, job] of dagJobs.entries()) {
     if (
       job.toNodeId >= dagNodeCount ||
@@ -1762,6 +1767,8 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
       );
     }
     dagEdgeIdentities.add(identity);
+    bindDagNodeTarget(dagNodeTargets, job.fromNodeId, job.from, index);
+    bindDagNodeTarget(dagNodeTargets, job.toNodeId, job.to, index);
   }
   validateDagNodeAcyclic(dagJobs);
   if (!input.dagJobs && input.dagNodeCount !== undefined) {
@@ -1810,6 +1817,22 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
   };
+}
+
+/** A retained node identity must represent one target column across every edge. */
+function bindDagNodeTarget(nodeTargets: Map<number, number>, nodeId: number, targetIndex: number, jobIndex: number) {
+  if (nodeId === oneClickEdgeStartSentinel) {
+    return;
+  }
+  const previousTargetIndex = nodeTargets.get(nodeId);
+  if (previousTargetIndex !== undefined && previousTargetIndex !== targetIndex) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      `dagJobs[${jobIndex}] reuses DAG node ${nodeId} for target ${targetIndex}, previously bound to ${previousTargetIndex}`,
+      "input",
+    );
+  }
+  nodeTargets.set(nodeId, targetIndex);
 }
 
 function packOneClickTargetAssignmentInput(

@@ -307,6 +307,61 @@ describe("Graphwar WASM composition adapter", () => {
     expect(optimizedRuntime.arenaCursor).toBe(optimizedRuntime.arenaBase);
   });
 
+  it("accepts multi-target smart deletion with required prefix targets", async () => {
+    const runtime = await createRuntime();
+    const descriptorPoints = [
+      { x: -20, y: 0 },
+      { x: 0, y: 0 },
+      { x: 20, y: -5 },
+    ];
+
+    const result = runGraphwarWasmSmartPathfinding(runtime, {
+      allowTerminalPointDeletion: true,
+      isDeleteOptimizationEnabled: true,
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+        { x: 693, y: 300 },
+      ],
+      sourcePointCount: 1,
+      target: { x: 693, y: 300 },
+      targetRadius: 1_000,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+          points: descriptorPoints,
+          settings: {
+            algorithm: "abs",
+            decimalPlaces: 4,
+            equation: "y",
+            isStepGlitchModeEnabled: false,
+            isStepOverflowProtectionEnabled: true,
+            steepness: 67,
+          },
+          soldierCenter: { x: -20, y: 0 },
+        },
+        stop: {
+          boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+          collision: { type: "none" },
+          continueAfterTargetsUntilGraphX: { type: "none" },
+          orderedTargets: [{ center: { x: 693, y: 300 }, radius: 1_000 }],
+          qualityPoints: [{ x: 0, y: 0 }],
+          requiredTargets: [{ center: { x: 385, y: 225 }, radius: 1_000 }],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets",
+        },
+        type: "trajectory",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.points[0]).toEqual({ x: 77, y: 225 });
+    expect(result.points.at(-1)).toEqual({ x: 693, y: 300 });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("consumes one-click edge results by stable job id, independent of completion order", async () => {
     const runtime = await createRuntime();
     const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
@@ -983,6 +1038,41 @@ describe("Graphwar WASM composition adapter", () => {
     ).toThrow(/dagNodeCount must be zero/u);
     expect(emptyRuntime.arenaCursor).toBe(emptyRuntime.arenaBase);
 
+    const targetBindingRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(targetBindingRuntime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        candidates: [
+          { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 30, y: 0 }, hitRadius: 1, isEnemy: true },
+        ],
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 1,
+          },
+          {
+            from: 1,
+            fromNodeId: 1,
+            id: 1,
+            startPoint: { x: 20, y: 0 },
+            targetPoint: { x: 30, y: 0 },
+            to: 2,
+            toNodeId: 2,
+          },
+        ],
+        dagNodeCount: 3,
+      }),
+    ).toThrow(/reuses DAG node 1/u);
+    expect(targetBindingRuntime.arenaCursor).toBe(targetBindingRuntime.arenaBase);
+
     const cycleRuntime = await createRuntime();
     expect(() =>
       beginGraphwarWasmOneClickClear(cycleRuntime, {
@@ -1023,7 +1113,7 @@ describe("Graphwar WASM composition adapter", () => {
         ],
         dagNodeCount: 4,
       }),
-    ).toThrow(/contain a cycle/u);
+    ).toThrow(/reuses DAG node 2/u);
     expect(cycleRuntime.arenaCursor).toBe(cycleRuntime.arenaBase);
   });
 

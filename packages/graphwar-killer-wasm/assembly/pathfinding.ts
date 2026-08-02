@@ -7170,9 +7170,21 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
       let previousIndex: u32 = 0;
       while (previousIndex < dagIndex) {
         const previousJob = dagJobPointer + previousIndex * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+        const previousFrom = load<u32>(previousJob + ONE_CLICK_EDGE_FROM_OFFSET);
+        const previousTo = load<u32>(previousJob + ONE_CLICK_EDGE_TO_OFFSET);
+        const previousFromNodeId = load<u32>(previousJob + ONE_CLICK_EDGE_FROM_NODE_OFFSET);
+        const previousToNodeId = load<u32>(previousJob + ONE_CLICK_EDGE_TO_NODE_OFFSET);
         if (
-          load<u32>(previousJob + ONE_CLICK_EDGE_FROM_NODE_OFFSET) == fromNodeId &&
-          load<u32>(previousJob + ONE_CLICK_EDGE_TO_NODE_OFFSET) == toNodeId
+          (fromNodeId != u32.MAX_VALUE &&
+            ((previousFromNodeId == fromNodeId && previousFrom != from) ||
+              (previousToNodeId == fromNodeId && previousTo != from))) ||
+          ((previousFromNodeId == toNodeId && previousFrom != to) ||
+            (previousToNodeId == toNodeId && previousTo != to))
+        )
+          trap();
+        if (
+          previousFromNodeId == fromNodeId &&
+          previousToNodeId == toNodeId
         )
           trap();
         previousIndex += 1;

@@ -1473,17 +1473,6 @@ async function runOneClickClearSearchAttemptWithWasm(
   if (!selectedRoute) {
     return { reason: "no-usable-target", type: "failure", workUnits };
   }
-  const selectedRouteStepValidation = validateOneClickClearStepRoute(options, selectedRoute.pathPoints);
-  if (!selectedRouteStepValidation.ok) {
-    const failedEdge = findOneClickClearStepRouteFailedEdge(
-      options,
-      selectedEdges,
-      selectedRouteStepValidation.invalidSegmentIndex,
-    );
-    return failedEdge
-      ? { failedEdge, type: "retry", workUnits: workUnits + 1 }
-      : { reason: "no-usable-target", type: "failure", workUnits: workUnits + 1 };
-  }
 
   const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
     runOneClickClearWasmRouteValidation(options, selectedRoute.pathPoints, selectedRoute.targetSequence, false),
@@ -1517,10 +1506,8 @@ async function runOneClickClearSearchAttemptWithWasm(
   const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
     runOneClickClearWasmRouteValidation(options, optimizedRoute.pathPoints, optimizedRoute.targetSequence, true),
   );
-  if (
-    oneClickClearStepRouteIsValid(options, optimizedRoute.pathPoints) &&
-    finalValidation?.reachesTargetSequenceBeforeObstacle
-  ) {
+  const finalStepValidation = validateOneClickClearStepRoute(options, optimizedRoute.pathPoints);
+  if (finalStepValidation.ok && finalValidation?.reachesTargetSequenceBeforeObstacle) {
     const route: OneClickClearRoute = {
       ...optimizedRoute,
       incumbentEvidence: {
@@ -1538,6 +1525,17 @@ async function runOneClickClearSearchAttemptWithWasm(
       type: "validated",
       workUnits: optimizedWorkUnits + 1,
     };
+  }
+
+  if (!finalStepValidation.ok) {
+    const failedEdge = findOneClickClearStepRouteFailedEdge(
+      options,
+      selectedEdges,
+      finalStepValidation.invalidSegmentIndex,
+    );
+    return failedEdge
+      ? { failedEdge, type: "retry", workUnits: optimizedWorkUnits + 1 }
+      : { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits + 1 };
   }
 
   const reachedTargetCount = finalValidation?.reachedTargetCount ?? 0;
@@ -3174,7 +3172,7 @@ function validateOneClickClearStepRoute(
   return typeof validation === "boolean" ? { ok: validation } : validation;
 }
 
-/** Maps a validator segment index back to the edge that introduced that segment. */
+/** Maps a final Step boundary failure back to the edge that introduced it. */
 function findOneClickClearStepRouteFailedEdge(
   options: GraphwarOneClickClearSearchOptions,
   edges: readonly OneClickClearDagEdge[],

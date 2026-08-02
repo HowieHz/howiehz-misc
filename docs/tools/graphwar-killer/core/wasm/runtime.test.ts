@@ -137,8 +137,8 @@ describe("Graphwar WASM runtime boundary", () => {
     const rawExports = arena.instance.exports as unknown as Record<string, (...args: number[]) => number>;
     const reserveResult = (byteLength: number) => rawExports.reserveArena(byteLength, 8);
     rawExports.runSmartPathfinding = () => reserveResult(graphwarWasmCompositionLayout.smartResultByteLength);
-    rawExports.beginOneClickClear = () => reserveResult(52);
-    rawExports.resumeOneClickClear = () => reserveResult(52);
+    rawExports.beginOneClickClear = () => reserveResult(56);
+    rawExports.resumeOneClickClear = () => reserveResult(56);
     const runtime = await instantiateGraphwarWasmRuntime(await compileKernel(), {
       instantiate: async () => arena.instance,
     });

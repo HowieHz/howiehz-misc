@@ -187,10 +187,156 @@ describe("Graphwar WASM composition adapter", () => {
         { x: 10, y: 0 },
         { x: 20, y: 0 },
       ],
+      selectedEdgeIds: [0, 2],
       selectedEdgeCount: 2,
       status: "complete",
       targetOrder: [0, 1],
     });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("does not let callers mutate the retained edge descriptors through the handle", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const exposedJob = started.handle.edgeJobs[0];
+    if (exposedJob) exposedJob.targetPoint.x = 999;
+    const result = started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce));
+    expect(result.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a begin result and retained target order that point back into the input command", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      const sessionPointer = result.getUint32(8, true);
+      result.setUint32(20, commandPointer, true);
+      new DataView(runtime.buffer, sessionPointer, 112).setUint32(84, commandPointer, true);
+      return resultPointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(/outside the current/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects overlapping retained target arrays", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      const sessionPointer = result.getUint32(8, true);
+      const session = new DataView(runtime.buffer, sessionPointer, 112);
+      session.setUint32(20, session.getUint32(16, true), true);
+      return resultPointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(/overlapping ranges/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a resume result that reuses the previous result record", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let previousResultPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (previousResultPointer === 0) previousResultPointer = resultPointer;
+      else return previousResultPointer;
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(() => partial.handle.resume([])).toThrow(/outside the current/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a resume pending edge batch that reuses an older output range", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let previousEdgeJobPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (previousEdgeJobPointer === 0) {
+        previousEdgeJobPointer = result.getUint32(12, true);
+      } else {
+        result.setUint32(12, previousEdgeJobPointer, true);
+      }
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(() => partial.handle.resume([])).toThrow(/outside the current/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects retained target descriptor content mutation on resume", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let targetXPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (targetXPointer === 0) {
+        const result = new DataView(runtime.buffer, resultPointer, 56);
+        const sessionPointer = result.getUint32(8, true);
+        targetXPointer = new DataView(runtime.buffer, sessionPointer, 112).getUint32(16, true);
+      }
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    new Float64Array(runtime.buffer, targetXPointer, 2)[0] += 1;
+    expect(() => partial.handle.resume([])).toThrow(/retained session content changed/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects retained source path content mutation on resume", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let pathXPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (pathXPointer === 0) {
+        const result = new DataView(runtime.buffer, resultPointer, 56);
+        const sessionPointer = result.getUint32(8, true);
+        pathXPointer = new DataView(runtime.buffer, sessionPointer, 112).getUint32(32, true);
+      }
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    new Float64Array(runtime.buffer, pathXPointer, 1)[0] += 1;
+    expect(() => partial.handle.resume([])).toThrow(/retained session content changed/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -290,7 +436,13 @@ describe("Graphwar WASM composition adapter", () => {
         sessionNonce: started.handle.nonce,
       })),
     );
-    expect(result).toEqual({ path: [{ x: 0, y: 0 }], selectedEdgeCount: 0, status: "failure", targetOrder: [0, 1] });
+    expect(result).toEqual({
+      path: [{ x: 0, y: 0 }],
+      selectedEdgeIds: [],
+      selectedEdgeCount: 0,
+      status: "failure",
+      targetOrder: [0, 1],
+    });
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -361,6 +513,7 @@ describe("Graphwar WASM composition adapter", () => {
         { x: 10, y: 0 },
         { x: 20, y: 0 },
       ],
+      selectedEdgeIds: [1],
       selectedEdgeCount: 1,
       status: "complete",
       targetOrder: [0, 1],
@@ -500,8 +653,31 @@ describe("Graphwar WASM composition adapter", () => {
         { x: 10, y: 0 },
         { x: 20, y: 0 },
       ]);
+      expect(result.selectedEdgeIds).toEqual([0, 2]);
       expect(result.selectedEdgeCount).toBe(2);
     }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects explicit DAG endpoints that do not match retained target descriptors", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 999, y: 999 },
+            to: 0,
+            toNodeId: 1,
+          },
+        ],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/endpoints do not match its target descriptors/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -558,6 +734,7 @@ describe("Graphwar WASM composition adapter", () => {
         { x: 10, y: 0 },
         { x: 20, y: 0 },
       ]);
+      expect(result.selectedEdgeIds).toEqual([1, 0]);
       expect(result.selectedEdgeCount).toBe(2);
     }
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
@@ -720,6 +897,119 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("rejects a terminal selected-edge chain that was mutated in linear memory", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0 && result.getUint32(40, true) === 2) {
+        const selectedEdgeIdsPointer = result.getUint32(52, true);
+        new Uint32Array(runtime.buffer, selectedEdgeIdsPointer, 2)[1] = 0;
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/duplicated/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a terminal path whose final endpoint was mutated in linear memory", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0) {
+        const pathYPointer = result.getUint32(32, true);
+        const pathCount = result.getUint32(36, true);
+        new Float64Array(runtime.buffer, pathYPointer, pathCount)[pathCount - 1] += 1;
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/terminal path does not match/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects terminal point arrays that overlap each other", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0) result.setUint32(32, result.getUint32(28, true), true);
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/terminal output contains overlapping ranges/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a completed route whose x/y pointer identity was replaced on resume", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 10, y: 10 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 20, y: 20 }, hitRadius: 1, isEnemy: true },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let sessionPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (sessionPointer === 0) sessionPointer = new DataView(runtime.buffer, resultPointer, 56).getUint32(8, true);
+      return resultPointer;
+    });
+    const partial = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    const retained = partial.handle.resume([]);
+    expect(retained.status).toBe("waiting-edge-batch");
+    if (retained.status !== "waiting-edge-batch") return;
+    const session = new DataView(runtime.buffer, sessionPointer, 112);
+    const routeXByJobPointer = session.getUint32(72, true);
+    const routeYByJobPointer = session.getUint32(80, true);
+    const routeYPointer = new Uint32Array(runtime.buffer, routeYByJobPointer, 3)[0];
+    new Uint32Array(runtime.buffer, routeXByJobPointer, 3)[0] = routeYPointer;
+
+    expect(() => retained.handle.resume([])).toThrow(/route pointers changed while resuming/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("keeps a paused partial session valid across linear-memory growth and supports cancellation", async () => {
     const runtime = await createRuntime(2_048);
     const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
@@ -844,15 +1134,41 @@ describe("Graphwar WASM composition adapter", () => {
       candidates: [],
     });
 
-    expect(result).toEqual({ path: [{ x: 0, y: 0 }], selectedEdgeCount: 0, status: "failure", targetOrder: [] });
+    expect(result).toEqual({
+      path: [{ x: 0, y: 0 }],
+      selectedEdgeIds: [],
+      selectedEdgeCount: 0,
+      status: "failure",
+      targetOrder: [],
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects an initial failure whose path differs from the owned input snapshot", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      const pathXPointer = result.getUint32(28, true);
+      new Float64Array(runtime.buffer, pathXPointer, 1)[0] = 999;
+      return resultPointer;
+    });
+
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        candidates: [],
+      }),
+    ).toThrow(/changed its retained source path/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
   it("rejects a complete result whose selected edge count exceeds its target count", async () => {
     const runtime = await createRuntime();
     vi.spyOn(runtime, "beginOneClickClear").mockImplementation(() => {
-      const pointer = runtime.reserveArena(52, 8);
-      const view = new DataView(runtime.buffer, pointer, 52);
+      const pointer = runtime.reserveArena(56, 8);
+      const view = new DataView(runtime.buffer, pointer, 56);
       view.setUint32(0, 0x4f43_5253, true);
       view.setUint32(4, 0, true);
       view.setUint32(8, 0, true);

@@ -373,7 +373,9 @@ export const ONE_CLICK_RESULT_PATH_COUNT_OFFSET: u32 = 36;
 export const ONE_CLICK_RESULT_SELECTED_EDGE_COUNT_OFFSET: u32 = 40;
 export const ONE_CLICK_RESULT_NONCE_OFFSET: u32 = 44;
 export const ONE_CLICK_RESULT_REQUEST_NONCE_OFFSET: u32 = 48;
-export const ONE_CLICK_RESULT_BYTE_LENGTH: u32 = 52;
+/** Ordered selected edge ids, from the retained source path to the final target. */
+export const ONE_CLICK_RESULT_SELECTED_EDGE_IDS_POINTER_OFFSET: u32 = 52;
+export const ONE_CLICK_RESULT_BYTE_LENGTH: u32 = 56;
 
 // Edge jobs are flat records: three leading u32 fields for id/from/to, four f64
 // endpoint fields, then two u32 node identities. Results carry the same id plus

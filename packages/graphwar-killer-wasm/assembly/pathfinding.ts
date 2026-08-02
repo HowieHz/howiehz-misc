@@ -6814,6 +6814,7 @@ function writeOneClickResult(
   pathYPointer: u32,
   pathCount: u32,
   selectedEdgeCount: u32,
+  selectedEdgeIdsPointer: u32,
 ): u32 {
   const resultPointer = reserveArena(Layout.ONE_CLICK_RESULT_BYTE_LENGTH, sizeof<u64>());
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_RESULT_MAGIC);
@@ -6829,6 +6830,7 @@ function writeOneClickResult(
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_SELECTED_EDGE_COUNT_OFFSET, selectedEdgeCount);
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_NONCE_OFFSET, nonce);
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_REQUEST_NONCE_OFFSET, requestNonce);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_SELECTED_EDGE_IDS_POINTER_OFFSET, selectedEdgeIdsPointer);
   return resultPointer;
 }
 
@@ -7155,6 +7157,7 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
       copiedPathY,
       pathCount,
       0,
+      0,
     );
   }
   const resultPointer = writeOneClickResult(
@@ -7166,6 +7169,7 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
     jobCount,
     targetOrderPointer,
     candidateCount,
+    0,
     0,
     0,
     0,
@@ -7299,6 +7303,7 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
       0,
       0,
       0,
+      0,
     );
   }
 
@@ -7427,6 +7432,7 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
       load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET),
       load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_COUNT_OFFSET),
       0,
+      0,
     );
   }
 
@@ -7455,7 +7461,9 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   }
   const outputXPointer = outputCapacity == 0 ? 0 : reserveArena(outputCapacity * sizeof<f64>(), sizeof<u64>());
   const outputYPointer = outputCapacity == 0 ? 0 : reserveArena(outputCapacity * sizeof<f64>(), sizeof<u64>());
+  const selectedEdgeIdsPointer = chainCount == 0 ? 0 : reserveArena(chainCount * sizeof<u32>(), sizeof<u32>());
   let outputCount: u32 = 0;
+  let selectedEdgeIndex: u32 = 0;
   if (sourcePathCount != 0) {
     const sourceX = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET);
     const sourceY = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET);
@@ -7467,6 +7475,8 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   while (chainIndex > 0) {
     chainIndex -= 1;
     const selectedJob = load<u32>(chainPointer + chainIndex * sizeof<u32>());
+    store<u32>(selectedEdgeIdsPointer + selectedEdgeIndex * sizeof<u32>(), selectedJob);
+    selectedEdgeIndex += 1;
     const routeCount = load<u32>(routeCountByJobPointer + selectedJob * sizeof<u32>());
     const routeX = load<u32>(routeXByJobPointer + selectedJob * sizeof<u32>());
     const routeY = load<u32>(routeYByJobPointer + selectedJob * sizeof<u32>());
@@ -7496,5 +7506,6 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
     outputYPointer,
     outputCount,
     chainCount,
+    selectedEdgeIdsPointer,
   );
 }

@@ -224,6 +224,27 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("rejects a begin waiting session whose source path changed", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 1) {
+        const sessionPointer = result.getUint32(8, true);
+        const session = new DataView(runtime.buffer, sessionPointer, 112);
+        const pathXPointer = session.getUint32(32, true);
+        new Float64Array(runtime.buffer, pathXPointer, session.getUint32(40, true))[0] += 1;
+      }
+      return resultPointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(
+      /one-click session source path changed/u,
+    );
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("rejects overlapping retained target arrays", async () => {
     const runtime = await createRuntime();
     const begin = runtime.beginOneClickClear.bind(runtime);
@@ -961,6 +982,33 @@ describe("Graphwar WASM composition adapter", () => {
     expect(() =>
       started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
     ).toThrow(/terminal output contains overlapping ranges/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects selected edge ids that alias the retained target order", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const sessionPointer = new DataView(runtime.buffer, pointer, 16).getUint32(0, true);
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0) {
+        const targetOrderPointer = runtime.reserveArena(8, 4);
+        new Uint32Array(runtime.buffer, targetOrderPointer, 2).set([0, 1]);
+        result.setUint32(20, targetOrderPointer, true);
+        const retainedTargetOrderPointer = new DataView(runtime.buffer, sessionPointer, 112).getUint32(84, true);
+        result.setUint32(52, retainedTargetOrderPointer, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/terminal selected edge ids overlaps a live one-click range/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 

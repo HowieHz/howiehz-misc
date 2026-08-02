@@ -480,12 +480,15 @@ function validateOneClickTerminalEvidence(
 ) {
   assertOneClickArrayEqual(targetOrder, retainedSession.targetOrder, "terminal target order");
   validateOneClickWorkEvidence(retainedSession, expectedWork);
+  if (retainedSession.completedCount + expectedWork.length !== retainedSession.edgeJobCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "terminal one-click result does not contain a complete edge work batch",
+      "output",
+    );
+  }
   if (status === "failure") {
-    if (
-      retainedSession.completedCount + expectedWork.length !== retainedSession.edgeJobCount ||
-      selectedEdgeIds.length !== 0 ||
-      !oneClickPointsArraysEqual(path, retainedSession.path)
-    ) {
+    if (selectedEdgeIds.length !== 0 || !oneClickPointsArraysEqual(path, retainedSession.path)) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
         "failed one-click result does not retain a completed source path",
@@ -754,9 +757,9 @@ function validateOneClickImmutableSessionContent(
 function assertOneClickRangesDisjoint(
   ranges: readonly OneClickMemoryRange[],
   fieldName: string,
-  allowExactDuplicates = true,
+  shouldAllowExactDuplicates = true,
 ) {
-  const uniqueRanges = allowExactDuplicates
+  const uniqueRanges = shouldAllowExactDuplicates
     ? ranges.filter((range, index) => ranges.findIndex((candidate) => oneClickRangeMatches(candidate, range)) === index)
     : ranges;
   for (let index = 0; index < uniqueRanges.length; index += 1) {
@@ -768,6 +771,30 @@ function assertOneClickRangesDisjoint(
         throw new GraphwarWasmAdapterError(
           "range-out-of-bounds",
           `${fieldName} contains overlapping ranges (${range.pointer}/${range.length} and ${other.pointer}/${other.length})`,
+          "output",
+        );
+      }
+    }
+  }
+}
+
+function assertOneClickRangesDoNotOverlap(
+  candidates: readonly OneClickMemoryRange[],
+  liveRanges: readonly OneClickMemoryRange[],
+  fieldName: string,
+  allowedExactAliases: readonly OneClickMemoryRange[] = [],
+) {
+  assertOneClickRangesDisjoint(candidates, `${fieldName} candidates`, false);
+  for (const candidate of candidates) {
+    for (const live of liveRanges) {
+      if (!oneClickRangesOverlap(live, candidate)) continue;
+      const isAllowedExactAlias =
+        oneClickRangeMatches(live, candidate) &&
+        allowedExactAliases.some((allowed) => oneClickRangeMatches(allowed, candidate));
+      if (!isAllowedExactAlias) {
+        throw new GraphwarWasmAdapterError(
+          "range-out-of-bounds",
+          `${fieldName} overlaps a live one-click range (${candidate.pointer}/${candidate.length} and ${live.pointer}/${live.length})`,
           "output",
         );
       }
@@ -1871,6 +1898,7 @@ function copyOneClickResult(
           { alignment: 8, length: graphwarWasmCompositionLayout.oneClickResultByteLength, pointer: resultPointer },
         ],
         boundary.expectedWork,
+        boundary.expectedPath,
       ),
     );
     if (session.nonce !== resultNonce) {
@@ -1917,40 +1945,87 @@ function copyOneClickResult(
     ],
     boundary.expectedWork,
   );
-  const terminalRanges = [
-    {
-      alignment: Uint32Array.BYTES_PER_ELEMENT,
-      length: targetCount * Uint32Array.BYTES_PER_ELEMENT,
-      pointer: targetOrderPointer,
-    },
-    {
-      alignment: Uint32Array.BYTES_PER_ELEMENT,
-      length: selectedEdgeCount * Uint32Array.BYTES_PER_ELEMENT,
-      pointer: selectedEdgeIdsPointer,
-    },
-    {
-      alignment: Float64Array.BYTES_PER_ELEMENT,
-      length: pathCount * Float64Array.BYTES_PER_ELEMENT,
-      pointer: pathXPointer,
-    },
-    {
-      alignment: Float64Array.BYTES_PER_ELEMENT,
-      length: pathCount * Float64Array.BYTES_PER_ELEMENT,
-      pointer: pathYPointer,
-    },
+  const targetOrderRange = {
+    alignment: Uint32Array.BYTES_PER_ELEMENT,
+    length: targetCount * Uint32Array.BYTES_PER_ELEMENT,
+    pointer: targetOrderPointer,
+  } satisfies OneClickMemoryRange;
+  const selectedEdgeIdsRange = {
+    alignment: Uint32Array.BYTES_PER_ELEMENT,
+    length: selectedEdgeCount * Uint32Array.BYTES_PER_ELEMENT,
+    pointer: selectedEdgeIdsPointer,
+  } satisfies OneClickMemoryRange;
+  const pathXRange = {
+    alignment: Float64Array.BYTES_PER_ELEMENT,
+    length: pathCount * Float64Array.BYTES_PER_ELEMENT,
+    pointer: pathXPointer,
+  } satisfies OneClickMemoryRange;
+  const pathYRange = {
+    alignment: Float64Array.BYTES_PER_ELEMENT,
+    length: pathCount * Float64Array.BYTES_PER_ELEMENT,
+    pointer: pathYPointer,
+  } satisfies OneClickMemoryRange;
+  const terminalRanges = [targetOrderRange, selectedEdgeIdsRange, pathXRange, pathYRange].filter(
+    ({ length }) => length > 0,
+  );
+  // A terminal record may reuse only the retained array for the same semantic field:
+  // target order, or the matching source-path axis on a normal failure. Selected IDs
+  // and successful paths must always be newly published output ranges.
+  const liveRanges = [
+    ...boundary.additionalRanges,
+    ...(boundary.retainedSession?.ranges ?? []),
+    ...boundary.forbiddenRanges,
   ].filter(({ length }) => length > 0);
-  // A terminal record may legitimately reuse retained session arrays (for example,
-  // a normal no-route failure), but its newly published arrays must never alias one
-  // another or an unrelated live range.
+  // Terminal fields must not overlap each other even when their pointers happen to
+  // match a retained range. This keeps each published field's ownership explicit.
   assertOneClickRangesDisjoint(terminalRanges, "one-click terminal output", false);
-  assertOneClickRangesDisjoint(
-    [
-      ...boundary.additionalRanges,
-      ...(boundary.retainedSession?.ranges ?? []),
-      ...boundary.forbiddenRanges,
-      ...terminalRanges,
-    ].filter(({ length }) => length > 0),
-    "one-click terminal output",
+  const allowedTerminalAliases = {
+    targetOrder: retainedSession
+      ? {
+          alignment: Uint32Array.BYTES_PER_ELEMENT,
+          length: targetCount * Uint32Array.BYTES_PER_ELEMENT,
+          pointer: retainedSession.targetOrderPointer,
+        }
+      : undefined,
+    pathX:
+      retainedSession && status === 2
+        ? {
+            alignment: Float64Array.BYTES_PER_ELEMENT,
+            length: pathCount * Float64Array.BYTES_PER_ELEMENT,
+            pointer: retainedSession.pathXPointer,
+          }
+        : undefined,
+    pathY:
+      retainedSession && status === 2
+        ? {
+            alignment: Float64Array.BYTES_PER_ELEMENT,
+            length: pathCount * Float64Array.BYTES_PER_ELEMENT,
+            pointer: retainedSession.pathYPointer,
+          }
+        : undefined,
+  };
+  assertOneClickRangesDoNotOverlap(
+    targetOrderRange.length > 0 ? [targetOrderRange] : [],
+    liveRanges,
+    "one-click terminal target order",
+    allowedTerminalAliases.targetOrder ? [allowedTerminalAliases.targetOrder] : [],
+  );
+  assertOneClickRangesDoNotOverlap(
+    selectedEdgeIdsRange.length > 0 ? [selectedEdgeIdsRange] : [],
+    liveRanges,
+    "one-click terminal selected edge ids",
+  );
+  assertOneClickRangesDoNotOverlap(
+    pathXRange.length > 0 ? [pathXRange] : [],
+    liveRanges,
+    "one-click terminal path x",
+    allowedTerminalAliases.pathX ? [allowedTerminalAliases.pathX] : [],
+  );
+  assertOneClickRangesDoNotOverlap(
+    pathYRange.length > 0 ? [pathYRange] : [],
+    liveRanges,
+    "one-click terminal path y",
+    allowedTerminalAliases.pathY ? [allowedTerminalAliases.pathY] : [],
   );
   const targetOrder = copyOneClickUint32Values(
     runtime,
@@ -2411,6 +2486,9 @@ function readOneClickSession(
     "session path",
     sessionArraySource,
   );
+  if (boundary.expectedPath && !oneClickPointsArraysEqual(path, boundary.expectedPath)) {
+    throw new GraphwarWasmAdapterError("invalid-session-identity", "one-click session source path changed", "output");
+  }
   if (retainedSession) {
     validateOneClickImmutableSessionContent(retainedSession, {
       dagNodeCount,

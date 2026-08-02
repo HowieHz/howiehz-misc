@@ -873,7 +873,6 @@ describe("Graphwar WASM composition adapter", () => {
           toNodeId: 5,
         },
       ],
-      dagNodeCount: 6,
     });
     expect(started.status).toBe("waiting-edge-batch");
     if (started.status !== "waiting-edge-batch") return;
@@ -903,6 +902,31 @@ describe("Graphwar WASM composition adapter", () => {
       ]);
       expect(result.selectedEdgeIds).toEqual([0, 2]);
       expect(result.selectedEdgeCount).toBe(2);
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("derives sparse explicit DAG node storage for a retained retry descriptor", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 2,
+        },
+      ],
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.handle.dagNodeCount).toBe(3);
+      started.handle.cancel();
     }
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });

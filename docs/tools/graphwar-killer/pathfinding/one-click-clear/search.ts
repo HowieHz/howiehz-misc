@@ -1402,7 +1402,6 @@ async function selectOneClickClearStatelessDagPathWithWasm(
       isEnemy: true,
     })),
     dagJobs,
-    dagNodeCount: dag.nodes.length,
     isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
     isStepStateful: false,
     isTargetOrderDescending: !xPlusGoesRight(options.bounds),
@@ -2398,7 +2397,6 @@ async function selectOneClickClearStepDagPathWithWasm(
       isEnemy: true,
     })),
     dagJobs,
-    dagNodeCount: dag.nodes.length,
     isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
     isStepStateful: true,
     isTargetOrderDescending: !xPlusGoesRight(options.bounds),
@@ -2503,7 +2501,6 @@ async function applyWasmPreferredStepDagPath(
     targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
     verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
     dagJobs,
-    dagNodeCount: dag.nodes.length,
   });
   if (composition.status !== "waiting-edge-batch") {
     return dag;

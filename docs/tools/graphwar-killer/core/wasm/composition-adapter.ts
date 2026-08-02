@@ -337,7 +337,7 @@ export interface GraphwarWasmOneClickClearInput {
   readonly candidates: readonly GraphwarWasmOneClickCandidate[];
   /** Optional full DAG descriptor; when present WASM consumes these jobs verbatim. */
   readonly dagJobs?: readonly GraphwarWasmOneClickDagJob[];
-  /** Number of interned DAG nodes referenced by dagJobs. */
+  /** Optional legacy upper bound for interned DAG nodes; omitted values are derived from job identities. */
   readonly dagNodeCount?: number;
   readonly isDeleteOptimizationEnabled: boolean;
   readonly isStepStateful: boolean;
@@ -1738,17 +1738,23 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     throw new GraphwarWasmAdapterError("invalid-index", "targetOrderKeys must match candidate count", "input");
   }
   const dagJobs = input.dagJobs ? input.dagJobs.map((job, index) => validateDagJob(job, index, candidates.length)) : [];
-  const dagNodeCount = input.dagJobs ? validateGraphwarWasmU32(input.dagNodeCount ?? 0, "dagNodeCount", "input") : 0;
-  if (input.dagJobs && dagJobs.length > 0 && dagNodeCount === 0) {
+  const declaredDagNodeCount = input.dagJobs
+    ? input.dagNodeCount === undefined
+      ? undefined
+      : validateGraphwarWasmU32(input.dagNodeCount, "dagNodeCount", "input")
+    : undefined;
+  const derivedDagNodeCount = deriveOneClickDagNodeCount(dagJobs);
+  if (input.dagJobs && dagJobs.length > 0 && (declaredDagNodeCount ?? derivedDagNodeCount) === 0) {
     throw new GraphwarWasmAdapterError("invalid-session-state", "dagNodeCount must be positive", "input");
   }
-  if (input.dagJobs && dagJobs.length === 0 && dagNodeCount !== 0) {
+  if (input.dagJobs && dagJobs.length === 0 && declaredDagNodeCount !== undefined && declaredDagNodeCount !== 0) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-state",
       "dagNodeCount must be zero when dagJobs is empty",
       "input",
     );
   }
+  const dagNodeCount = declaredDagNodeCount ?? derivedDagNodeCount;
   const dagEdgeIdentities = new Set<string>();
   const dagNodeTargets = new Map<number, number>();
   for (const [index, job] of dagJobs.entries()) {
@@ -1817,6 +1823,18 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
   };
+}
+
+/** The retained session owns node-table sizing; sparse retry descriptors use max-id + 1. */
+function deriveOneClickDagNodeCount(dagJobs: readonly GraphwarWasmOneClickDagJob[]) {
+  let maximumNodeId = -1;
+  for (const job of dagJobs) {
+    if (job.fromNodeId !== oneClickEdgeStartSentinel) {
+      maximumNodeId = Math.max(maximumNodeId, job.fromNodeId);
+    }
+    maximumNodeId = Math.max(maximumNodeId, job.toNodeId);
+  }
+  return maximumNodeId + 1;
 }
 
 /** A retained node identity must represent one target column across every edge. */

@@ -178,6 +178,7 @@ describe("Graphwar WASM composition adapter", () => {
 
     expect(
       runGraphwarWasmSmartPathfinding(runtime, {
+        allowTerminalPointDeletion: true,
         isDeleteOptimizationEnabled: true,
         points,
         sourcePointCount: 1,
@@ -186,6 +187,78 @@ describe("Graphwar WASM composition adapter", () => {
         trajectoryValidation: { type: "route-only" },
       }),
     ).toMatchObject({ points, removedPointCount: 0, status: "success" });
+  });
+
+  it("deletes a terminal generated point only when trajectory validation opts in", async () => {
+    const createInput = (allowTerminalPointDeletion?: boolean) => ({
+      ...(allowTerminalPointDeletion === undefined ? {} : { allowTerminalPointDeletion }),
+      isDeleteOptimizationEnabled: true,
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+        { x: 693, y: 300 },
+      ],
+      sourcePointCount: 1,
+      target: { x: 385, y: 225 },
+      targetRadius: 30,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+          points: [
+            { x: -20, y: 0 },
+            { x: 0, y: 0 },
+            { x: 20, y: -5 },
+          ],
+          settings: {
+            algorithm: "abs" as const,
+            decimalPlaces: 4,
+            equation: "y" as const,
+            isStepGlitchModeEnabled: false,
+            isStepOverflowProtectionEnabled: true,
+            steepness: 67,
+          },
+          soldierCenter: { x: -20, y: 0 },
+        },
+        stop: {
+          boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+          collision: { type: "none" as const },
+          continueAfterTargetsUntilGraphX: { type: "none" as const },
+          orderedTargets: [{ center: { x: 385, y: 225 }, radius: 30 }],
+          qualityPoints: [{ x: 0, y: 0 }],
+          requiredTargets: [],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets" as const,
+        },
+        type: "trajectory" as const,
+      },
+    });
+
+    const defaultRuntime = await createRuntime();
+    const defaultResult = runGraphwarWasmSmartPathfinding(defaultRuntime, createInput());
+    expect(defaultResult).toMatchObject({
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+        { x: 693, y: 300 },
+      ],
+      removedPointCount: 0,
+      status: "success",
+    });
+    expect(defaultRuntime.arenaCursor).toBe(defaultRuntime.arenaBase);
+
+    const optimizedRuntime = await createRuntime();
+    const optimizedResult = runGraphwarWasmSmartPathfinding(optimizedRuntime, createInput(true));
+    expect(optimizedResult).toMatchObject({
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+      ],
+      removedPointCount: 1,
+      status: "success",
+    });
+    expect(optimizedRuntime.arenaCursor).toBe(optimizedRuntime.arenaBase);
   });
 
   it("consumes one-click edge results by stable job id, independent of completion order", async () => {

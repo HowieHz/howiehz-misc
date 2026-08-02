@@ -37,6 +37,7 @@ const smartInputDeleteOptimizationFlag = 1;
 const smartInputRouteContextValidationFlag = 2;
 const smartInputGraphValidationFlag = 4;
 const smartInputTrajectoryValidationFlag = 8;
+const smartInputTerminalPointDeletionFlag = 16;
 const smartResultMagic = 0x534d_5253;
 const oneClickInputMagic = 0x4f_434c_52;
 const oneClickInputVersion = 1;
@@ -201,6 +202,8 @@ const oneClickResume = {
 } as const;
 
 interface GraphwarWasmSmartPathfindingInputBase {
+  /** One-click routes may stop on a target before their terminal control point. */
+  readonly allowTerminalPointDeletion?: boolean;
   readonly isDeleteOptimizationEnabled: boolean;
   readonly points: readonly GraphwarWasmPoint[];
   readonly routeContextPointer?: number;
@@ -1162,6 +1165,7 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
   return {
     flags:
       (input.isDeleteOptimizationEnabled ? smartInputDeleteOptimizationFlag : 0) |
+      (input.allowTerminalPointDeletion === true ? smartInputTerminalPointDeletionFlag : 0) |
       (routeContextPointer !== 0 ? smartInputRouteContextValidationFlag : 0) |
       (hasGraphValidation ? smartInputGraphValidationFlag : 0) |
       (input.trajectoryValidation.type === "trajectory" ? smartInputTrajectoryValidationFlag : 0),
@@ -1482,7 +1486,15 @@ export function copySmartResult(
   if (status === 1) {
     const inputLastPoint = validatedInputPoints.at(-1);
     const outputLastPoint = points.at(-1);
-    if (!inputLastPoint || !outputLastPoint || !pointsEqual(inputLastPoint, outputLastPoint)) {
+    const canDeleteTerminalPoint =
+      input.allowTerminalPointDeletion === true &&
+      input.isDeleteOptimizationEnabled &&
+      input.trajectoryValidation.type === "trajectory";
+    if (
+      !inputLastPoint ||
+      !outputLastPoint ||
+      (!canDeleteTerminalPoint && !pointsEqual(inputLastPoint, outputLastPoint))
+    ) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-state",
         "smart result does not preserve the candidate target point",

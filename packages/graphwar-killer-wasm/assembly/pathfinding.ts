@@ -6321,7 +6321,8 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
         Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION |
         Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION |
         Layout.SMART_INPUT_FLAG_GRAPH_VALIDATION |
-        Layout.SMART_INPUT_FLAG_TRAJECTORY_VALIDATION
+        Layout.SMART_INPUT_FLAG_TRAJECTORY_VALIDATION |
+        Layout.SMART_INPUT_FLAG_TERMINAL_POINT_DELETION
       )) !=
     0
   ) trap();
@@ -6343,6 +6344,10 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const hasRouteContextValidation = (flags & Layout.SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION) != 0;
   const hasGraphValidation = (flags & Layout.SMART_INPUT_FLAG_GRAPH_VALIDATION) != 0;
   const hasTrajectoryValidation = (flags & Layout.SMART_INPUT_FLAG_TRAJECTORY_VALIDATION) != 0;
+  const canDeleteTerminalPoint =
+    (flags & Layout.SMART_INPUT_FLAG_TERMINAL_POINT_DELETION) != 0 &&
+    (flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 &&
+    hasTrajectoryValidation;
   if (hasRouteContextValidation != (routeContextPointer != 0)) trap();
   if (hasGraphValidation != (hasRouteContextValidation || hasTrajectoryValidation)) trap();
   if (routeContextPointer != 0) requireRouteContext(routeContextPointer);
@@ -6569,8 +6574,8 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
     }
   } else if (
     (flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 &&
-    pointCount > 3 &&
-    outputCount > sourcePointCount + 1
+    pointCount > (canDeleteTerminalPoint ? 2 : 3) &&
+    outputCount > (canDeleteTerminalPoint ? (sourcePointCount > 2 ? sourcePointCount : 2) : sourcePointCount + 1)
   ) {
     const candidateXPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
     const candidateYPointer = reserveArena(pointCount * sizeof<f64>(), sizeof<u64>());
@@ -6587,13 +6592,18 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
       ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
       : 0;
     const firstOptimizableIndex = sourcePointCount < 1 ? 1 : sourcePointCount;
-    while (outputCount > sourcePointCount + 1) {
+    const minimumOutputCount: u32 = canDeleteTerminalPoint
+      ? sourcePointCount > 2
+        ? sourcePointCount
+        : 2
+      : sourcePointCount + 1;
+    while (outputCount > minimumOutputCount) {
       let hasBestCandidate = false;
       let bestCandidateIndex: u32 = 0;
       let hasBestPathError = false;
       let bestPathError = 0.0;
       let index: u32 = firstOptimizableIndex;
-      while (index + 1 < outputCount) {
+      while (index + 1 < outputCount || (canDeleteTerminalPoint && index < outputCount)) {
         let sourceIndex: u32 = 0;
         let candidateIndex: u32 = 0;
         while (sourceIndex < outputCount) {

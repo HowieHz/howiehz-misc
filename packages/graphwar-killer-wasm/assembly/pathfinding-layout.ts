@@ -273,6 +273,8 @@ export const SMART_INPUT_FLAG_DELETE_OPTIMIZATION: u32 = 1;
 export const SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION: u32 = 2;
 export const SMART_INPUT_FLAG_GRAPH_VALIDATION: u32 = 4;
 export const SMART_INPUT_FLAG_TRAJECTORY_VALIDATION: u32 = 8;
+/** Allows trajectory-aware callers to remove the final generated control point. */
+export const SMART_INPUT_FLAG_TERMINAL_POINT_DELETION: u32 = 16;
 export const SMART_INPUT_MAGIC_OFFSET: u32 = 0;
 export const SMART_INPUT_VERSION_OFFSET: u32 = 4;
 export const SMART_INPUT_FLAGS_OFFSET: u32 = 8;

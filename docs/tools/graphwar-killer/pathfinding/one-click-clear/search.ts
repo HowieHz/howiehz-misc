@@ -1367,8 +1367,11 @@ async function selectOneClickClearStatelessDagPathWithWasm(
   const options = context.options;
   const wasmRuntime = options.wasmRuntime;
   const activeEdges = dag.edges.filter((edge) => edge.active);
-  if (!wasmRuntime || activeEdges.length === 0 || dag.nodes.some((node) => node.type !== "stateless")) {
+  if (!wasmRuntime || dag.nodes.some((node) => node.type !== "stateless")) {
     return undefined;
+  }
+  if (activeEdges.length === 0) {
+    return [];
   }
   const edgesByJobId = new Map<number, OneClickClearDagEdge>();
   const dagJobs = activeEdges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
@@ -2345,8 +2348,11 @@ async function selectOneClickClearStepDagPathWithWasm(
   const options = context.options;
   const wasmRuntime = options.wasmRuntime;
   const activeEdges = dag.edges.filter((edge) => edge.active);
-  if (!wasmRuntime || activeEdges.length === 0 || dag.nodes.some((node) => node.type !== "step-stateful")) {
+  if (!wasmRuntime || dag.nodes.some((node) => node.type !== "step-stateful")) {
     return undefined;
+  }
+  if (activeEdges.length === 0) {
+    return [];
   }
 
   const edgesByJobId = new Map<number, OneClickClearDagEdge>();

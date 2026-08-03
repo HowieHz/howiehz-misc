@@ -37,6 +37,9 @@ export const graphwarWasmCompositionLayout = {
   smartResultByteLength: 96,
   oneClickStepStateDedupInputByteLength: 40,
   oneClickStepStateDedupResultByteLength: 16,
+  oneClickStepDagExpansionInputByteLength: 64,
+  oneClickStepDagExpansionResultByteLength: 16,
+  oneClickStepDagExpansionJobByteLength: 48,
 } as const;
 
 const smartInputMagic = 0x534d_4152;
@@ -65,6 +68,10 @@ const oneClickTargetAssignmentResultMagic = 0x4f_4341_52;
 const oneClickStepStateDedupCommand = 21;
 const oneClickStepStateDedupMagic = 0x4f_4344_50;
 const oneClickStepStateDedupVersion = 1;
+const oneClickStepDagExpansionCommand = 22;
+const oneClickStepDagExpansionMagic = 0x4f_434a_45;
+const oneClickStepDagExpansionVersion = 1;
+const oneClickStepDagExpansionStartFlag = 1;
 
 const smartInput = {
   flags: 8,
@@ -270,6 +277,38 @@ const oneClickStepStateDedupResult = {
   nodeCount: 12,
 } as const;
 
+const oneClickStepDagExpansionInput = {
+  flags: 8,
+  targetX: 12,
+  targetY: 16,
+  targetGraphX: 20,
+  targetCount: 24,
+  sourceNodeIds: 28,
+  sourceTargets: 32,
+  sourceCount: 36,
+  startX: 40,
+  startY: 48,
+  nodeCount: 56,
+} as const;
+
+const oneClickStepDagExpansionResult = {
+  magic: 0,
+  status: 4,
+  jobs: 8,
+  jobCount: 12,
+} as const;
+
+const oneClickStepDagExpansionJob = {
+  id: 0,
+  fromNodeId: 4,
+  fromTargetIndex: 8,
+  toTargetIndex: 12,
+  startX: 16,
+  startY: 24,
+  targetX: 32,
+  targetY: 40,
+} as const;
+
 interface GraphwarWasmSmartPathfindingInputBase {
   /** One-click routes may stop on a target before their terminal control point. */
   readonly allowTerminalPointDeletion?: boolean;
@@ -391,6 +430,31 @@ export interface GraphwarWasmOneClickStepStateEvidence {
   readonly resolvedStateKey: string;
   readonly resolvedY: number;
   readonly targetIndex: number;
+}
+
+/** Target geometry and source-node identities consumed by one bounded stateful DAG expansion. */
+export interface GraphwarWasmOneClickStepDagExpansionInput {
+  readonly isStartExpansion: boolean;
+  readonly nodeCount: number;
+  readonly sourceNodes: readonly {
+    readonly nodeId: number;
+    readonly targetIndex: number;
+  }[];
+  readonly startPoint: GraphwarWasmPoint;
+  readonly targets: readonly {
+    readonly graphX: number;
+    readonly routePoint: GraphwarWasmPoint;
+  }[];
+}
+
+/** Stable edge descriptor emitted by the bounded stateful DAG expansion command. */
+export interface GraphwarWasmOneClickStepDagExpansionJob {
+  readonly fromNodeId: number;
+  readonly fromTargetIndex: number;
+  readonly id: number;
+  readonly startPoint: GraphwarWasmPoint;
+  readonly targetPoint: GraphwarWasmPoint;
+  readonly toTargetIndex: number;
 }
 
 export interface GraphwarWasmOneClickStepStateInternResult {
@@ -1308,6 +1372,272 @@ export function internGraphwarWasmOneClickStepStates(
     }
     runtime.resetArena(mark);
     return { nodeCount: observedNodeCount, nodeIds };
+  } catch (error) {
+    runtime.resetArenaAfterFault(mark);
+    throw error;
+  }
+}
+
+/** Expands one stateful Step DAG layer in WASM; edge route execution stays with the existing Worker boundary. */
+export function expandGraphwarWasmOneClickStepDagJobs(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmOneClickStepDagExpansionInput,
+): GraphwarWasmOneClickStepDagExpansionJob[] {
+  const mark = runtime.markArena();
+  try {
+    const targets = input.targets.map((target, index) => ({
+      graphX: validateGraphwarWasmFiniteNumber(target.graphX, `targets[${index}].graphX`, "input"),
+      routePoint: validatePoint(target.routePoint, `targets[${index}].routePoint`),
+    }));
+    for (let index = 1; index < targets.length; index += 1) {
+      const previous = targets[index - 1];
+      const current = targets[index];
+      if (previous && current && current.graphX < previous.graphX) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `targets[${index}] is not ordered by graph x`,
+          "input",
+        );
+      }
+    }
+    const sourceNodes = input.sourceNodes.map((source, index) => ({
+      nodeId: validateGraphwarWasmU32(source.nodeId, `sourceNodes[${index}].nodeId`, "input"),
+      targetIndex: validateGraphwarWasmU32(source.targetIndex, `sourceNodes[${index}].targetIndex`, "input"),
+    }));
+    const nodeCount = validateGraphwarWasmU32(input.nodeCount, "nodeCount", "input");
+    const startPoint = validatePoint(input.startPoint, "startPoint");
+    if (input.isStartExpansion && (sourceNodes.length !== 0 || nodeCount !== 0)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "start stateful DAG expansion cannot carry source nodes",
+        "input",
+      );
+    }
+    if (!input.isStartExpansion && sourceNodes.some(({ nodeId }) => nodeId >= nodeCount)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "stateful DAG expansion source node is outside the retained evidence table",
+        "input",
+      );
+    }
+    const seenNodeIds = new Set<number>();
+    let previousTargetIndex = -1;
+    for (const [index, source] of sourceNodes.entries()) {
+      if (seenNodeIds.has(source.nodeId)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `sourceNodes[${index}] duplicates a source node id`,
+          "input",
+        );
+      }
+      if (source.targetIndex >= targets.length || source.targetIndex < previousTargetIndex) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `sourceNodes[${index}] is not ordered by target layer`,
+          "input",
+        );
+      }
+      seenNodeIds.add(source.nodeId);
+      previousTargetIndex = source.targetIndex;
+    }
+    const targetX = writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(targets.map(({ routePoint }) => routePoint.x)),
+      runtime.arenaBase,
+    );
+    const targetY = writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(targets.map(({ routePoint }) => routePoint.y)),
+      runtime.arenaBase,
+    );
+    const targetGraphX = writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(targets.map(({ graphX }) => graphX)),
+      runtime.arenaBase,
+    );
+    const sourceNodeIds = writeGraphwarWasmUint32Values(
+      runtime,
+      Uint32Array.from(sourceNodes, ({ nodeId }) => nodeId),
+      runtime.arenaBase,
+    );
+    const sourceTargets = writeGraphwarWasmUint32Values(
+      runtime,
+      Uint32Array.from(sourceNodes, ({ targetIndex }) => targetIndex),
+      runtime.arenaBase,
+    );
+    const commandPointer = runtime.reserveArena(
+      graphwarWasmCompositionLayout.oneClickStepDagExpansionInputByteLength,
+      8,
+    );
+    const command = new DataView(
+      runtime.buffer,
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickStepDagExpansionInputByteLength,
+    );
+    command.setUint32(0, oneClickStepDagExpansionMagic, true);
+    command.setUint32(4, oneClickStepDagExpansionVersion, true);
+    command.setUint32(
+      oneClickStepDagExpansionInput.flags,
+      input.isStartExpansion ? oneClickStepDagExpansionStartFlag : 0,
+      true,
+    );
+    command.setUint32(oneClickStepDagExpansionInput.targetX, targetX.pointer, true);
+    command.setUint32(oneClickStepDagExpansionInput.targetY, targetY.pointer, true);
+    command.setUint32(oneClickStepDagExpansionInput.targetGraphX, targetGraphX.pointer, true);
+    command.setUint32(oneClickStepDagExpansionInput.targetCount, targets.length, true);
+    command.setUint32(oneClickStepDagExpansionInput.sourceNodeIds, sourceNodeIds.pointer, true);
+    command.setUint32(oneClickStepDagExpansionInput.sourceTargets, sourceTargets.pointer, true);
+    command.setUint32(oneClickStepDagExpansionInput.sourceCount, sourceNodes.length, true);
+    command.setFloat64(oneClickStepDagExpansionInput.startX, startPoint.x, true);
+    command.setFloat64(oneClickStepDagExpansionInput.startY, startPoint.y, true);
+    command.setUint32(oneClickStepDagExpansionInput.nodeCount, nodeCount, true);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runRouteTask(
+      oneClickStepDagExpansionCommand,
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickStepDagExpansionInputByteLength,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { pointer: resultPointer, length: graphwarWasmCompositionLayout.oneClickStepDagExpansionResultByteLength },
+      { alignment: 8, elementByteLength: 1, minimumPointer: outputMinimumPointer, sliceFaultDomain: "output" },
+    );
+    const result = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (result.getUint32(oneClickStepDagExpansionResult.magic, true) !== oneClickStepDagExpansionMagic) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-pointer",
+        "Step DAG expansion result magic is invalid",
+        "output",
+      );
+    }
+    if (result.getUint32(oneClickStepDagExpansionResult.status, true) !== 0) {
+      throw new GraphwarWasmAdapterError("invalid-enum", "Step DAG expansion result status is invalid", "output");
+    }
+    const jobCount = validateGraphwarWasmU32(
+      result.getUint32(oneClickStepDagExpansionResult.jobCount, true),
+      "Step DAG expansion job count",
+      "output",
+    );
+    const expectedJobCount = input.isStartExpansion
+      ? targets.length
+      : sourceNodes.reduce((count, source) => {
+          const sourceGraphX = targets[source.targetIndex]?.graphX;
+          if (sourceGraphX === undefined) {
+            return count;
+          }
+          return count + targets.slice(source.targetIndex + 1).filter(({ graphX }) => graphX > sourceGraphX).length;
+        }, 0);
+    if (jobCount !== expectedJobCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step DAG expansion returned an incomplete job batch",
+        "output",
+      );
+    }
+    const jobPointer = validateGraphwarWasmU32(
+      result.getUint32(oneClickStepDagExpansionResult.jobs, true),
+      "Step DAG expansion job pointer",
+      "output",
+    );
+    const jobRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { pointer: jobPointer, length: jobCount * graphwarWasmCompositionLayout.oneClickStepDagExpansionJobByteLength },
+      { alignment: 8, elementByteLength: 1, minimumPointer: outputMinimumPointer, sliceFaultDomain: "output" },
+    );
+    const jobView = new DataView(jobRange.buffer, jobRange.byteOffset, jobRange.byteLength);
+    const sourceNodesById = new Map(sourceNodes.map((source) => [source.nodeId, source]));
+    const jobIdentities = new Set<string>();
+    const jobs = Array.from({ length: jobCount }, (_, index) => {
+      const offset = index * graphwarWasmCompositionLayout.oneClickStepDagExpansionJobByteLength;
+      const id = validateGraphwarWasmU32(
+        jobView.getUint32(offset + oneClickStepDagExpansionJob.id, true),
+        `jobs[${index}].id`,
+        "output",
+      );
+      if (id !== index) {
+        throw new GraphwarWasmAdapterError("unexpected-work-id", `jobs[${index}] has an unstable id`, "output");
+      }
+      const fromNodeId = validateGraphwarWasmU32(
+        jobView.getUint32(offset + oneClickStepDagExpansionJob.fromNodeId, true),
+        `jobs[${index}].fromNodeId`,
+        "output",
+      );
+      const fromTargetIndex = validateGraphwarWasmU32(
+        jobView.getUint32(offset + oneClickStepDagExpansionJob.fromTargetIndex, true),
+        `jobs[${index}].fromTargetIndex`,
+        "output",
+      );
+      const toTargetIndex = validateGraphwarWasmU32(
+        jobView.getUint32(offset + oneClickStepDagExpansionJob.toTargetIndex, true),
+        `jobs[${index}].toTargetIndex`,
+        "output",
+      );
+      const start = {
+        x: validateGraphwarWasmFiniteNumber(
+          jobView.getFloat64(offset + oneClickStepDagExpansionJob.startX, true),
+          `jobs[${index}].startX`,
+          "output",
+        ),
+        y: validateGraphwarWasmFiniteNumber(
+          jobView.getFloat64(offset + oneClickStepDagExpansionJob.startY, true),
+          `jobs[${index}].startY`,
+          "output",
+        ),
+      };
+      const target = {
+        x: validateGraphwarWasmFiniteNumber(
+          jobView.getFloat64(offset + oneClickStepDagExpansionJob.targetX, true),
+          `jobs[${index}].targetX`,
+          "output",
+        ),
+        y: validateGraphwarWasmFiniteNumber(
+          jobView.getFloat64(offset + oneClickStepDagExpansionJob.targetY, true),
+          `jobs[${index}].targetY`,
+          "output",
+        ),
+      };
+      const expectedTarget = targets[toTargetIndex]?.routePoint;
+      const expectedStart = fromNodeId === 0xffff_ffff ? startPoint : targets[fromTargetIndex]?.routePoint;
+      const sourceNode = sourceNodesById.get(fromNodeId);
+      const identity = `${fromNodeId}:${toTargetIndex}`;
+      if (jobIdentities.has(identity)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `jobs[${index}] duplicates a source/target identity`,
+          "output",
+        );
+      }
+      jobIdentities.add(identity);
+      if (
+        !expectedTarget ||
+        !expectedStart ||
+        !pointsEqual(target, expectedTarget) ||
+        !pointsEqual(start, expectedStart) ||
+        (input.isStartExpansion
+          ? fromNodeId !== 0xffff_ffff || fromTargetIndex !== 0xffff_ffff
+          : fromNodeId === 0xffff_ffff ||
+            fromNodeId >= nodeCount ||
+            sourceNode?.targetIndex !== fromTargetIndex ||
+            fromTargetIndex >= targets.length ||
+            toTargetIndex <= fromTargetIndex)
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `jobs[${index}] does not preserve stateful DAG endpoint identity`,
+          "output",
+        );
+      }
+      return {
+        fromNodeId,
+        fromTargetIndex,
+        id,
+        startPoint: start,
+        targetPoint: target,
+        toTargetIndex,
+      };
+    });
+    runtime.resetArena(mark);
+    return jobs;
   } catch (error) {
     runtime.resetArenaAfterFault(mark);
     throw error;

@@ -190,6 +190,178 @@ function internOneClickStepStateKeys(inputPointer: u32, inputByteLength: u32): u
   return resultPointer;
 }
 
+/** Emits one stable stateful Step DAG layer; edge workers remain outside this synchronous command. */
+function expandOneClickStepDagJobs(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
+  if (
+    load<u32>(inputPointer) != Layout.ONE_CLICK_STEP_DAG_EXPAND_MAGIC ||
+    load<u32>(inputPointer + 4) != Layout.ONE_CLICK_STEP_DAG_EXPAND_VERSION
+  )
+    trap();
+  const flags = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_FLAGS_OFFSET);
+  if ((flags & ~Layout.ONE_CLICK_STEP_DAG_EXPAND_FLAG_START) != 0) trap();
+  const isStartExpansion = (flags & Layout.ONE_CLICK_STEP_DAG_EXPAND_FLAG_START) != 0;
+  const targetXPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_TARGET_X_POINTER_OFFSET);
+  const targetYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_TARGET_Y_POINTER_OFFSET);
+  const targetGraphXPointer = load<u32>(
+    inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_TARGET_GRAPH_X_POINTER_OFFSET,
+  );
+  const targetCount = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_TARGET_COUNT_OFFSET);
+  const sourceNodeIdsPointer = load<u32>(
+    inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_SOURCE_NODE_IDS_POINTER_OFFSET,
+  );
+  const sourceTargetsPointer = load<u32>(
+    inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_SOURCE_TARGETS_POINTER_OFFSET,
+  );
+  const sourceCount = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_SOURCE_COUNT_OFFSET);
+  const startX = load<f64>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_START_X_OFFSET);
+  const startY = load<f64>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_START_Y_OFFSET);
+  const nodeCount = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_INPUT_NODE_COUNT_OFFSET);
+  compositionRequireFinite(startX);
+  compositionRequireFinite(startY);
+  if (targetCount == 0) {
+    if (targetXPointer != 0 || targetYPointer != 0 || targetGraphXPointer != 0) trap();
+  } else {
+    if (targetCount > u32.MAX_VALUE / sizeof<f64>()) trap();
+    requireArenaRange(targetXPointer, targetCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(targetYPointer, targetCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(targetGraphXPointer, targetCount * sizeof<f64>(), sizeof<f64>());
+  }
+  if (sourceCount == 0) {
+    if (sourceNodeIdsPointer != 0 || sourceTargetsPointer != 0) trap();
+  } else {
+    if (sourceCount > u32.MAX_VALUE / sizeof<u32>()) trap();
+    requireArenaRange(sourceNodeIdsPointer, sourceCount * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(sourceTargetsPointer, sourceCount * sizeof<u32>(), sizeof<u32>());
+  }
+  if (isStartExpansion) {
+    if (sourceCount != 0 || nodeCount != 0) trap();
+  } else if (sourceCount != 0 && nodeCount == 0) {
+    trap();
+  }
+
+  let targetIndex: u32 = 0;
+  let previousGraphX: f64 = 0;
+  let hasPreviousGraphX = false;
+  while (targetIndex < targetCount) {
+    const graphX = load<f64>(targetGraphXPointer + targetIndex * sizeof<f64>());
+    compositionRequireFinite(graphX);
+    compositionRequireFinite(load<f64>(targetXPointer + targetIndex * sizeof<f64>()));
+    compositionRequireFinite(load<f64>(targetYPointer + targetIndex * sizeof<f64>()));
+    if (hasPreviousGraphX && graphX < previousGraphX) trap();
+    previousGraphX = graphX;
+    hasPreviousGraphX = true;
+    targetIndex += 1;
+  }
+
+  let sourceIndex: u32 = 0;
+  let previousSourceTarget: u32 = 0;
+  let hasPreviousSourceTarget = false;
+  while (sourceIndex < sourceCount) {
+    const sourceNodeId = load<u32>(sourceNodeIdsPointer + sourceIndex * sizeof<u32>());
+    const sourceTarget = load<u32>(sourceTargetsPointer + sourceIndex * sizeof<u32>());
+    if (sourceNodeId >= nodeCount || sourceTarget >= targetCount) trap();
+    if (hasPreviousSourceTarget && sourceTarget < previousSourceTarget) trap();
+    let previousSourceIndex: u32 = 0;
+    while (previousSourceIndex < sourceIndex) {
+      if (load<u32>(sourceNodeIdsPointer + previousSourceIndex * sizeof<u32>()) == sourceNodeId) trap();
+      previousSourceIndex += 1;
+    }
+    previousSourceTarget = sourceTarget;
+    hasPreviousSourceTarget = true;
+    sourceIndex += 1;
+  }
+
+  let jobCount64: u64 = 0;
+  if (isStartExpansion) {
+    jobCount64 = <u64>targetCount;
+  } else {
+    sourceIndex = 0;
+    while (sourceIndex < sourceCount) {
+      const sourceTarget = load<u32>(sourceTargetsPointer + sourceIndex * sizeof<u32>());
+      const sourceGraphX = load<f64>(targetGraphXPointer + sourceTarget * sizeof<f64>());
+      targetIndex = sourceTarget + 1;
+      while (targetIndex < targetCount) {
+        if (load<f64>(targetGraphXPointer + targetIndex * sizeof<f64>()) > sourceGraphX) jobCount64 += 1;
+        targetIndex += 1;
+      }
+      sourceIndex += 1;
+    }
+  }
+  if (jobCount64 > <u64>u32.MAX_VALUE / Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_BYTE_LENGTH) trap();
+  const jobCount = <u32>jobCount64;
+  const jobPointer =
+    jobCount == 0 ? 0 : reserveArena(jobCount * Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_BYTE_LENGTH, sizeof<u64>());
+  let jobIndex: u32 = 0;
+  if (isStartExpansion) {
+    targetIndex = 0;
+    while (targetIndex < targetCount) {
+      const job = jobPointer + jobIndex * Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_BYTE_LENGTH;
+      store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_ID_OFFSET, jobIndex);
+      store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_FROM_NODE_OFFSET, u32.MAX_VALUE);
+      store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_FROM_TARGET_OFFSET, u32.MAX_VALUE);
+      store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_TO_TARGET_OFFSET, targetIndex);
+      store<f64>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_START_X_OFFSET, startX);
+      store<f64>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_START_Y_OFFSET, startY);
+      store<f64>(
+        job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_TARGET_X_OFFSET,
+        load<f64>(targetXPointer + targetIndex * sizeof<f64>()),
+      );
+      store<f64>(
+        job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_TARGET_Y_OFFSET,
+        load<f64>(targetYPointer + targetIndex * sizeof<f64>()),
+      );
+      jobIndex += 1;
+      targetIndex += 1;
+    }
+  } else {
+    sourceIndex = 0;
+    while (sourceIndex < sourceCount) {
+      const sourceNodeId = load<u32>(sourceNodeIdsPointer + sourceIndex * sizeof<u32>());
+      const sourceTarget = load<u32>(sourceTargetsPointer + sourceIndex * sizeof<u32>());
+      const sourceGraphX = load<f64>(targetGraphXPointer + sourceTarget * sizeof<f64>());
+      targetIndex = sourceTarget + 1;
+      while (targetIndex < targetCount) {
+        if (load<f64>(targetGraphXPointer + targetIndex * sizeof<f64>()) > sourceGraphX) {
+          const job = jobPointer + jobIndex * Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_BYTE_LENGTH;
+          store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_ID_OFFSET, jobIndex);
+          store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_FROM_NODE_OFFSET, sourceNodeId);
+          store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_FROM_TARGET_OFFSET, sourceTarget);
+          store<u32>(job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_TO_TARGET_OFFSET, targetIndex);
+          store<f64>(
+            job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_START_X_OFFSET,
+            load<f64>(targetXPointer + sourceTarget * sizeof<f64>()),
+          );
+          store<f64>(
+            job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_START_Y_OFFSET,
+            load<f64>(targetYPointer + sourceTarget * sizeof<f64>()),
+          );
+          store<f64>(
+            job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_TARGET_X_OFFSET,
+            load<f64>(targetXPointer + targetIndex * sizeof<f64>()),
+          );
+          store<f64>(
+            job + Layout.ONE_CLICK_STEP_DAG_EXPAND_JOB_TARGET_Y_OFFSET,
+            load<f64>(targetYPointer + targetIndex * sizeof<f64>()),
+          );
+          jobIndex += 1;
+        }
+        targetIndex += 1;
+      }
+      sourceIndex += 1;
+    }
+  }
+  if (jobIndex != jobCount) trap();
+  const resultPointer = reserveArena(Layout.ONE_CLICK_STEP_DAG_EXPAND_RESULT_BYTE_LENGTH, sizeof<u64>());
+  memory.fill(resultPointer, 0, Layout.ONE_CLICK_STEP_DAG_EXPAND_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_STEP_DAG_EXPAND_MAGIC);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_RESULT_STATUS_OFFSET, 0);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_RESULT_JOB_POINTER_OFFSET, jobPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_DAG_EXPAND_RESULT_JOB_COUNT_OFFSET, jobCount);
+  return resultPointer;
+}
+
 @inline
 function getPlaneWidth(): u32 {
   return <u32>getGraphwarPlaneLength();
@@ -6060,6 +6232,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_ONE_CLICK_STEP_STATE_DEDUP) {
     return internOneClickStepStateKeys(inputPointer, inputByteLength);
+  }
+  if (command == Layout.ROUTE_COMMAND_ONE_CLICK_STEP_DAG_EXPAND) {
+    return expandOneClickStepDagJobs(inputPointer, inputByteLength);
   }
   if (command == Layout.ROUTE_COMMAND_STEP_THETA_STAR) return runStepThetaStarSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_VISIBILITY_GRAPH) {

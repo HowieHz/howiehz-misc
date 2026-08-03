@@ -12,6 +12,7 @@ import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  expandGraphwarWasmOneClickStepDagJobs,
   internGraphwarWasmOneClickStepStates,
   runGraphwarWasmSmartPathfinding,
   runGraphwarWasmOneClickTrajectoryValidation,
@@ -2509,21 +2510,46 @@ async function buildOneClickClearStepDag(
   };
 
   const startJobs: GraphwarOneClickClearDagEdgeBuildJob[] = [];
-  for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
-    const target = targets[targetIndex];
-    if (!target) {
-      continue;
-    }
-    startJobs.push({
-      from: START_NODE_INDEX,
-      id: nextJobId,
+  if (options.wasmRuntime) {
+    const expandedJobs = expandGraphwarWasmOneClickStepDagJobs(options.wasmRuntime, {
+      isStartExpansion: true,
+      nodeCount: 0,
+      sourceNodes: [],
       startPoint,
-      stepRouteStartState: startState,
-      targetPoint: target.routePoint,
-      to: targetIndex,
-      type: "step-stateful",
+      targets: targets.map((target) => ({ graphX: target.sortGraphX, routePoint: target.routePoint })),
     });
-    nextJobId += 1;
+    for (const expandedJob of expandedJobs) {
+      if (expandedJob.fromNodeId !== 0xffff_ffff || expandedJob.fromTargetIndex !== 0xffff_ffff) {
+        throw new GraphwarWasmFault("abi", "one-click Step start expansion returned a source node");
+      }
+      startJobs.push({
+        from: START_NODE_INDEX,
+        id: nextJobId + expandedJob.id,
+        startPoint: createPixelPoint(expandedJob.startPoint.x, expandedJob.startPoint.y),
+        stepRouteStartState: startState,
+        targetPoint: createPixelPoint(expandedJob.targetPoint.x, expandedJob.targetPoint.y),
+        to: expandedJob.toTargetIndex,
+        type: "step-stateful",
+      });
+    }
+    nextJobId += expandedJobs.length;
+  } else {
+    for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+      const target = targets[targetIndex];
+      if (!target) {
+        continue;
+      }
+      startJobs.push({
+        from: START_NODE_INDEX,
+        id: nextJobId,
+        startPoint,
+        stepRouteStartState: startState,
+        targetPoint: target.routePoint,
+        to: targetIndex,
+        type: "step-stateful",
+      });
+      nextJobId += 1;
+    }
   }
   await addBuiltRoutes(startJobs);
 
@@ -2536,28 +2562,63 @@ async function buildOneClickClearStepDag(
     }
 
     const jobs: GraphwarOneClickClearDagEdgeBuildJob[] = [];
-    for (let sourceTargetIndex = layerStart; sourceTargetIndex < layerEnd; sourceTargetIndex += 1) {
-      const sourceTarget = targets[sourceTargetIndex];
-      if (!sourceTarget) {
-        continue;
+    if (options.wasmRuntime) {
+      if (wasmStateEvidence.length !== nodes.length) {
+        throw new GraphwarWasmFault("abi", "one-click Step expansion lost atomic node evidence");
       }
-      for (const sourceNode of nodesByTargetIndex[sourceTargetIndex] ?? []) {
-        const stepRouteStartState = sourceNode.stepRouteState;
-        for (let targetIndex = layerEnd; targetIndex < targets.length; targetIndex += 1) {
-          const target = targets[targetIndex];
-          if (!target || !graphXAdvancesStrictly(sourceTarget.sortGraphX, target.sortGraphX)) {
-            continue;
+      const sourceNodes = [];
+      for (let sourceTargetIndex = layerStart; sourceTargetIndex < layerEnd; sourceTargetIndex += 1) {
+        for (const sourceNode of nodesByTargetIndex[sourceTargetIndex] ?? []) {
+          sourceNodes.push({ nodeId: sourceNode.id, targetIndex: sourceTargetIndex });
+        }
+      }
+      const expandedJobs = expandGraphwarWasmOneClickStepDagJobs(options.wasmRuntime, {
+        isStartExpansion: false,
+        nodeCount: wasmStateEvidence.length,
+        sourceNodes,
+        startPoint,
+        targets: targets.map((target) => ({ graphX: target.sortGraphX, routePoint: target.routePoint })),
+      });
+      for (const expandedJob of expandedJobs) {
+        const sourceNode = nodes[expandedJob.fromNodeId];
+        if (!sourceNode || sourceNode.targetIndex !== expandedJob.fromTargetIndex) {
+          throw new GraphwarWasmFault("abi", "one-click Step expansion returned a mismatched source node");
+        }
+        jobs.push({
+          from: sourceNode.id,
+          id: nextJobId + expandedJob.id,
+          startPoint: createPixelPoint(expandedJob.startPoint.x, expandedJob.startPoint.y),
+          stepRouteStartState: sourceNode.stepRouteState,
+          targetPoint: createPixelPoint(expandedJob.targetPoint.x, expandedJob.targetPoint.y),
+          to: expandedJob.toTargetIndex,
+          type: "step-stateful",
+        });
+      }
+      nextJobId += expandedJobs.length;
+    } else {
+      for (let sourceTargetIndex = layerStart; sourceTargetIndex < layerEnd; sourceTargetIndex += 1) {
+        const sourceTarget = targets[sourceTargetIndex];
+        if (!sourceTarget) {
+          continue;
+        }
+        for (const sourceNode of nodesByTargetIndex[sourceTargetIndex] ?? []) {
+          const stepRouteStartState = sourceNode.stepRouteState;
+          for (let targetIndex = layerEnd; targetIndex < targets.length; targetIndex += 1) {
+            const target = targets[targetIndex];
+            if (!target || !graphXAdvancesStrictly(sourceTarget.sortGraphX, target.sortGraphX)) {
+              continue;
+            }
+            jobs.push({
+              from: sourceNode.id,
+              id: nextJobId,
+              startPoint: sourceTarget.routePoint,
+              stepRouteStartState,
+              targetPoint: target.routePoint,
+              to: targetIndex,
+              type: "step-stateful",
+            });
+            nextJobId += 1;
           }
-          jobs.push({
-            from: sourceNode.id,
-            id: nextJobId,
-            startPoint: sourceTarget.routePoint,
-            stepRouteStartState,
-            targetPoint: target.routePoint,
-            to: targetIndex,
-            type: "step-stateful",
-          });
-          nextJobId += 1;
         }
       }
     }

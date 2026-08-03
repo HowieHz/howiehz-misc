@@ -777,6 +777,7 @@ describe("one-click-clear mirrored WASM guard", () => {
     });
     expect(wasmJob.stepRouteStartState).toEqual(tsJob.stepRouteStartState);
     expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(true);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 22)).toBe(true);
     runRouteTask.mockRestore();
   });
 

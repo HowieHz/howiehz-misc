@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  expandGraphwarWasmOneClickStepDagJobs,
   graphwarWasmCompositionLayout,
   internGraphwarWasmOneClickStepStates,
   runGraphwarWasmOneClickTrajectoryValidation,
@@ -31,6 +32,95 @@ describe("Graphwar WASM composition adapter", () => {
     ]);
 
     expect(result).toEqual({ nodeCount: 3, nodeIds: [0, 1, 0, 2] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("expands stateful Step START and layer jobs with stable node evidence", async () => {
+    const runtime = await createRuntime();
+    const targets = [
+      { graphX: 1, routePoint: { x: 10, y: 20 } },
+      { graphX: 1, routePoint: { x: 11, y: 30 } },
+      { graphX: 2, routePoint: { x: 20, y: 40 } },
+    ];
+
+    expect(
+      expandGraphwarWasmOneClickStepDagJobs(runtime, {
+        isStartExpansion: true,
+        nodeCount: 0,
+        sourceNodes: [],
+        startPoint: { x: 0, y: 0 },
+        targets,
+      }),
+    ).toEqual([
+      {
+        fromNodeId: 0xffff_ffff,
+        fromTargetIndex: 0xffff_ffff,
+        id: 0,
+        startPoint: { x: 0, y: 0 },
+        targetPoint: { x: 10, y: 20 },
+        toTargetIndex: 0,
+      },
+      {
+        fromNodeId: 0xffff_ffff,
+        fromTargetIndex: 0xffff_ffff,
+        id: 1,
+        startPoint: { x: 0, y: 0 },
+        targetPoint: { x: 11, y: 30 },
+        toTargetIndex: 1,
+      },
+      {
+        fromNodeId: 0xffff_ffff,
+        fromTargetIndex: 0xffff_ffff,
+        id: 2,
+        startPoint: { x: 0, y: 0 },
+        targetPoint: { x: 20, y: 40 },
+        toTargetIndex: 2,
+      },
+    ]);
+
+    expect(
+      expandGraphwarWasmOneClickStepDagJobs(runtime, {
+        isStartExpansion: false,
+        nodeCount: 2,
+        sourceNodes: [
+          { nodeId: 0, targetIndex: 0 },
+          { nodeId: 1, targetIndex: 1 },
+        ],
+        startPoint: { x: 0, y: 0 },
+        targets,
+      }),
+    ).toEqual([
+      {
+        fromNodeId: 0,
+        fromTargetIndex: 0,
+        id: 0,
+        startPoint: { x: 10, y: 20 },
+        targetPoint: { x: 20, y: 40 },
+        toTargetIndex: 2,
+      },
+      {
+        fromNodeId: 1,
+        fromTargetIndex: 1,
+        id: 1,
+        startPoint: { x: 11, y: 30 },
+        targetPoint: { x: 20, y: 40 },
+        toTargetIndex: 2,
+      },
+    ]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a stateful Step expansion source outside the retained node table", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      expandGraphwarWasmOneClickStepDagJobs(runtime, {
+        isStartExpansion: false,
+        nodeCount: 1,
+        sourceNodes: [{ nodeId: 1, targetIndex: 0 }],
+        startPoint: { x: 0, y: 0 },
+        targets: [{ graphX: 1, routePoint: { x: 10, y: 20 } }],
+      }),
+    ).toThrow(/outside the retained evidence table/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 

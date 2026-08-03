@@ -1713,7 +1713,7 @@ function runOneClickClearWasmRouteValidation(
   if (pathPoints.length < 2) {
     return undefined;
   }
-  if (!oneClickClearPathFollowsGraphRule(options, pathPoints)) {
+  if (!validateOneClickClearWasmRouteGeometry(options, pathPoints)) {
     return undefined;
   }
   const graphPoints = pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
@@ -1831,6 +1831,41 @@ function runOneClickClearWasmRouteValidation(
   };
 }
 
+/** Keeps graph-order and route-mask validation in the effective WASM path. */
+function validateOneClickClearWasmRouteGeometry(
+  options: GraphwarOneClickClearSearchOptions,
+  pathPoints: readonly PixelPoint[],
+) {
+  const wasmRuntime = options.wasmRuntime;
+  const firstPoint = pathPoints[0];
+  const lastPoint = pathPoints.at(-1);
+  if (!wasmRuntime || !firstPoint || !lastPoint) {
+    return false;
+  }
+  const routeContext = createGraphwarWasmRouteContext(wasmRuntime, {
+    boundaryExpansion: options.boundaryExpansion,
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    routeOriginPoint: imageToGraphPoint(firstPoint, options.bounds, options.boundsRect),
+    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+    sourceMask: options.routeMask.mask,
+    sourceMaskType: "route",
+  });
+  try {
+    const result = routeContext.runSmartPathfinding({
+      isDeleteOptimizationEnabled: false,
+      points: pathPoints,
+      sourcePointCount: options.pathPoints.length,
+      target: lastPoint,
+      targetRadius: 0,
+      trajectoryValidation: { type: "route-only" },
+    });
+    return result.status === "success";
+  } finally {
+    routeContext.dispose();
+  }
+}
+
 /** Deletes points by repeatedly asking the same WASM trajectory core to prove the shortened path. */
 async function optimizeOneClickClearPathWithWasm(
   context: OneClickClearSearchContext,
@@ -1930,6 +1965,10 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearSearchOptions
     return true;
   }
 
+  if (options.wasmRuntime) {
+    return validateOneClickClearPrefixWithWasm(options);
+  }
+
   const target = options.prefixTarget ?? {
     center: options.pathPoints.at(-1) ?? options.pathPoints[0],
     radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS,
@@ -1947,6 +1986,64 @@ function validateOneClickClearPrefix(options: GraphwarOneClickClearSearchOptions
     targetPoints: [target.center],
   });
   return result.reachesTargetSequenceBeforeObstacle;
+}
+
+/** Runs the existing prefix target proof through the effective WASM trajectory backend. */
+function validateOneClickClearPrefixWithWasm(options: GraphwarOneClickClearSearchOptions) {
+  const wasmRuntime = options.wasmRuntime;
+  const firstPoint = options.pathPoints[0];
+  const lastPoint = options.pathPoints.at(-1);
+  if (!wasmRuntime || !firstPoint || !lastPoint) {
+    return false;
+  }
+  const graphPoints = options.pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
+  const soldierCenter = graphPoints[0];
+  if (!soldierCenter) {
+    return false;
+  }
+  const target = options.prefixTarget ?? {
+    center: lastPoint,
+    radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS,
+  };
+  const qualityPoints = graphPoints.filter((_point, index) => {
+    const sourcePoint = options.pathPoints[index];
+    return index > 0 && sourcePoint !== undefined && !pixelPointsEqual(lastPoint, sourcePoint);
+  });
+  const outcome = runGraphwarWasmOneClickTrajectoryValidation(wasmRuntime, {
+    descriptor: {
+      bounds: options.bounds,
+      points: graphPoints,
+      settings: options.formulaMode.settings,
+      soldierCenter,
+    },
+    stop: {
+      boundsRect: options.boundsRect,
+      collision: options.simulationMask
+        ? {
+            boundaryExpansion: options.simulationBoundaryExpansion,
+            mask: options.simulationMask,
+            type: "mask",
+          }
+        : { type: "none" },
+      continueAfterTargetsUntilGraphX: { type: "none" },
+      orderedTargets: [target],
+      qualityPoints,
+      requiredTargets: [],
+      shouldCollectVisiblePixels: false,
+      shouldStopOnTargetsComplete: true,
+      trackedTargets: [],
+      type: "targets",
+    },
+  });
+  if (!outcome) {
+    return false;
+  }
+  const { trajectory } = outcome;
+  const obstacleSampleIndex = trajectory.obstacle.type === "hit" ? trajectory.obstacle.sampleIndex : -1;
+  return (
+    trajectory.reachedTargetCount >= 1 &&
+    (obstacleSampleIndex < 0 || (trajectory.targetHitIndex >= 0 && trajectory.targetHitIndex <= obstacleSampleIndex))
+  );
 }
 
 /** 收集圆心或安全边缘候选，统一分配后按最终 x 建立普通 DAG 层或邪道扫描层。 */

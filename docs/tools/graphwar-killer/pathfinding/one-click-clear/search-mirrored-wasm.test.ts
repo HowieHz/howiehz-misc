@@ -82,6 +82,93 @@ describe("one-click-clear mirrored WASM guard", () => {
     expect(jobs.every(isStatelessJob)).toBe(true);
   });
 
+  it("runs the existing prefix proof through the WASM trajectory adapter", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const runTrajectory = vi.spyOn(runtime, "runTrajectory");
+    const start = createPixelPoint(700, 225);
+    const prefix = createPixelPoint(650, 225);
+    const candidate = { id: "target", isEnemy: true, hitCenter: createPixelPoint(500, 225), hitRadius: 30 };
+
+    try {
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async () => ({ routes: [], timings: [] }),
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode({
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        }),
+        hitCandidates: [candidate],
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start, prefix],
+        routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        simulationBoundaryExpansion: 0,
+        simulationMask: emptyMask,
+        simulationMaskCacheId: 1,
+        wasmRequestNonce: 25,
+        wasmRuntime: runtime,
+      } satisfies GraphwarOneClickClearBuildOptions);
+
+      expect(result.type).toBe("failure");
+      expect(runTrajectory).toHaveBeenCalledTimes(1);
+    } finally {
+      runTrajectory.mockRestore();
+    }
+  });
+
+  it("validates selected route geometry through the WASM route-only composition", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const runSmartPathfinding = vi.spyOn(runtime, "runSmartPathfinding");
+    const start = createPixelPoint(700, 225);
+    const target = createPixelPoint(500, 225);
+    const candidates = [{ id: "target", isEnemy: true, hitCenter: target, hitRadius: 30 }];
+
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.filter(isStatelessJob).map((job) => ({
+          jobId: job.id,
+          route: [job.startPoint, createPixelPoint(job.startPoint.x, job.startPoint.y - 10), job.targetPoint],
+          type: "stateless" as const,
+        })),
+        timings: [],
+      }),
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "y",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+        steepness: 67,
+      }),
+      hitCandidates: candidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      simulationBoundaryExpansion: 0,
+      simulationMask: emptyMask,
+      simulationMaskCacheId: 1,
+      wasmRequestNonce: 24,
+      wasmRuntime: runtime,
+    } satisfies GraphwarOneClickClearBuildOptions);
+
+    expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+    expect(runSmartPathfinding).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a selected WASM job identity when an earlier job is unreachable", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
     const start = createPixelPoint(100, 225);

@@ -1576,6 +1576,9 @@ async function runOneClickClearSearchAttemptWithWasm(
   workUnits: number,
 ): Promise<OneClickClearSearchAttemptResult> {
   const options = context.options;
+  if (options.isCancelled?.()) {
+    return { reason: "no-usable-target", type: "failure", workUnits };
+  }
   const selectedRoute = createOneClickClearRouteFromEdges(options, dag, selectedEdges);
   if (!selectedRoute) {
     return { reason: "no-usable-target", type: "failure", workUnits };
@@ -1591,6 +1594,9 @@ async function runOneClickClearSearchAttemptWithWasm(
     return failedEdge
       ? { failedEdge, type: "retry", workUnits: nextWorkUnits }
       : { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
+  }
+  if (options.isCancelled?.()) {
+    return { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
   }
 
   let optimizedRoute: OneClickClearRoute = {
@@ -1609,10 +1615,16 @@ async function runOneClickClearSearchAttemptWithWasm(
     optimizedRoute = optimized.route;
     optimizedWorkUnits = optimized.workUnits;
   }
+  if (options.isCancelled?.()) {
+    return { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits };
+  }
 
   const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
     runOneClickClearWasmRouteValidation(options, optimizedRoute.pathPoints, optimizedRoute.targetSequence, true),
   );
+  if (options.isCancelled?.()) {
+    return { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits + 1 };
+  }
   const finalStepValidation = validateOneClickClearStepRoute(options, optimizedRoute.pathPoints);
   if (finalStepValidation.ok && finalValidation?.reachesTargetSequenceBeforeObstacle) {
     const route: OneClickClearRoute = {

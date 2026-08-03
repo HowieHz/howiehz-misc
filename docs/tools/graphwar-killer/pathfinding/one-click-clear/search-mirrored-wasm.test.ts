@@ -246,6 +246,53 @@ describe("one-click-clear mirrored WASM guard", () => {
     }
   });
 
+  it("does not publish an ordinary WASM route after optimization cancellation", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const start = createPixelPoint(100, 225);
+    const first = createPixelPoint(300, 225);
+    const second = createPixelPoint(500, 225);
+    const candidates = [
+      { id: "first", isEnemy: true, hitCenter: first, hitRadius: 20 },
+      { id: "second", isEnemy: true, hitCenter: second, hitRadius: 20 },
+    ];
+    let isCancelled = false;
+    const result = await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs.filter(isStatelessJob).map((job) => createSuccessfulEdgeRoute(job)),
+        timings: [],
+      }),
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        algorithm: "abs",
+        decimalPlaces: 4,
+        equation: "y",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+        steepness: 67,
+      }),
+      hitCandidates: candidates,
+      isCancelled: () => isCancelled,
+      isDeleteOptimizationEnabled: true,
+      pathPoints: [start],
+      routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      simulationBoundaryExpansion: 0,
+      simulationMask: emptyMask,
+      simulationMaskCacheId: 1,
+      wasmRequestNonce: 22,
+      wasmRuntime: runtime,
+      yieldControl: () => {
+        isCancelled = true;
+      },
+    } satisfies GraphwarOneClickClearBuildOptions);
+
+    expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+  });
+
   it("drops the ordinary WASM obstacle terminal sample from the incumbent", async () => {
     const baselineRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
     const ordinaryBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };

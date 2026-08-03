@@ -246,7 +246,7 @@ describe("one-click-clear mirrored WASM guard", () => {
     }
   });
 
-  it("does not publish an ordinary WASM route after optimization cancellation", async () => {
+  it("does not report success after ordinary WASM incumbent cancellation", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
     const start = createPixelPoint(100, 225);
     const first = createPixelPoint(300, 225);
@@ -277,6 +277,9 @@ describe("one-click-clear mirrored WASM guard", () => {
       hitCandidates: candidates,
       isCancelled: () => isCancelled,
       isDeleteOptimizationEnabled: true,
+      onValidatedIncumbent: () => {
+        isCancelled = true;
+      },
       pathPoints: [start],
       routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
       routeMode: "visibility-graph",
@@ -285,9 +288,6 @@ describe("one-click-clear mirrored WASM guard", () => {
       simulationMaskCacheId: 1,
       wasmRequestNonce: 22,
       wasmRuntime: runtime,
-      yieldControl: () => {
-        isCancelled = true;
-      },
     } satisfies GraphwarOneClickClearBuildOptions);
 
     expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });

@@ -744,6 +744,9 @@ async function buildOneClickClearDagPath(
     }
     if (attempt.type === "validated") {
       publishOneClickClearValidatedRoute(context, attempt.route);
+      if (options.isCancelled?.()) {
+        return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+      }
       return createOneClickClearSuccessResult(options, attempt.route, attempt.hitTargets, startedAt, workUnits);
     }
 
@@ -901,6 +904,10 @@ async function buildOneClickClearStepGlitchPath(
     ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
   };
   publishOneClickClearValidatedRoute(context, finalRoute);
+
+  if (options.isCancelled?.()) {
+    return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+  }
 
   const hitTargets = collectOneClickClearHitTargets(
     finalValidation.trackedTargets,
@@ -1069,6 +1076,9 @@ async function buildOneClickClearStepGlitchPathWithWasm(
       ...(finalEvidence.trajectory.pathError === undefined ? {} : { pathError: finalEvidence.trajectory.pathError }),
     };
     publishOneClickClearValidatedRoute(context, finalRoute);
+    if (options.isCancelled?.()) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+    }
     const trackedTargets = createOneClickClearTrackedTargets(options, finalRoute);
     const hitTargets = collectOneClickClearHitTargets(trackedTargets, finalEvidence.trajectory.trackedTargetHitIndexes);
     return createOneClickClearSuccessResult(options, finalRoute, hitTargets, startedAt, workUnits);

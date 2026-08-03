@@ -415,8 +415,11 @@ interface OneClickClearDag {
   outgoingEdges: Map<number, OneClickClearDagEdge[]>;
   /** 按建路目标 x 排序后的目标。 */
   targets: OneClickClearTarget[];
-  /** Stable edge ids selected by the WASM composition core before formula validation. */
-  preferredEdgeIds?: readonly number[];
+  /**
+   * Authoritative result of the retained WASM composition session. A normal no-route result is distinct from an absent
+   * selection so the TypeScript DP cannot silently take ownership of the effective WASM path.
+   */
+  wasmSelection?: { readonly edgeIds: readonly number[]; readonly type: "selected" } | { readonly type: "failure" };
 }
 
 /** 到达某个 DAG 节点的当前最佳累计路径。 */
@@ -1264,10 +1267,30 @@ async function runOneClickClearSearchAttempt(
     };
   }
 
+  // The retained WASM session is authoritative whenever it returned a
+  // terminal business failure. Do not rerun the independent TypeScript DAG
+  // DP over the same edges and accidentally turn that result into success.
+  if (dag.wasmSelection?.type === "failure") {
+    return {
+      reason: "no-usable-target",
+      type: "failure",
+      workUnits,
+    };
+  }
+
+  if (dag.wasmSelection?.type === "selected") {
+    if (dag.wasmSelection.edgeIds.length === 0) {
+      throw new GraphwarWasmFault("abi", "one-click WASM composition selected no edge");
+    }
+    if (dag.wasmSelection.edgeIds.some((edgeId) => dag.edges[edgeId]?.id !== edgeId)) {
+      throw new GraphwarWasmFault("abi", "one-click WASM composition selected an unknown edge");
+    }
+  }
+
   const canReuseWasmPreferredPath =
-    dag.preferredEdgeIds !== undefined &&
-    dag.preferredEdgeIds.length > 0 &&
-    dag.preferredEdgeIds.every((edgeId) => dag.edges[edgeId]?.active === true);
+    dag.wasmSelection?.type === "selected" &&
+    dag.wasmSelection.edgeIds.length > 0 &&
+    dag.wasmSelection.edgeIds.every((edgeId) => dag.edges[edgeId]?.active === true);
   const wasmSelectedEdges =
     options.wasmRuntime && !canReuseWasmPreferredPath
       ? dag.nodes.every((node) => node.type === "stateless")
@@ -1417,6 +1440,9 @@ async function selectOneClickClearStatelessDagPathWithWasm(
     return [];
   }
   try {
+    if (composition.targetOrder.some((targetIndex, index) => targetIndex !== index)) {
+      throw new GraphwarWasmFault("abi", "one-click stateless retry changed DAG ordering");
+    }
     assertOneClickClearWasmDagJobDescriptors(composition.edgeJobs, dagJobs, "one-click stateless retry");
     const result = composition.handle.resume(
       composition.edgeJobs.map((job) => {
@@ -1440,7 +1466,7 @@ async function selectOneClickClearStatelessDagPathWithWasm(
     if (result.status === "waiting-edge-batch") {
       throw new GraphwarWasmFault("abi", "one-click stateless retry returned an unexpected pending batch");
     }
-    if (result.status !== "complete" || result.selectedEdgeIds.length === 0) {
+    if (result.status !== "complete") {
       return [];
     }
     const selectedEdgeIds = mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId);
@@ -1983,6 +2009,7 @@ async function buildOneClickClearStatelessDagWithWasm(
       nodesByTargetIndex: [],
       outgoingEdges: new Map(),
       targets: [],
+      wasmSelection: { type: "failure" },
     };
   }
 
@@ -2051,17 +2078,20 @@ async function buildOneClickClearStatelessDagWithWasm(
       }
       edgesByJobId.set(job.id, edge);
     }
-    const preferredEdgeIds =
-      composed.status === "complete" && composed.selectedEdgeIds.length > 0
-        ? mapOneClickClearSelectedJobIdsToEdgeIds(composed.selectedEdgeIds, edgesByJobId)
-        : undefined;
+    const wasmSelection =
+      composed.status === "complete"
+        ? {
+            edgeIds: mapOneClickClearSelectedJobIdsToEdgeIds(composed.selectedEdgeIds, edgesByJobId),
+            type: "selected" as const,
+          }
+        : { type: "failure" as const };
     return {
       edges,
       nodes,
       nodesByTargetIndex,
       outgoingEdges,
-      ...(preferredEdgeIds ? { preferredEdgeIds } : {}),
       targets: [...orderedTargets],
+      wasmSelection,
     };
   } finally {
     composition.handle.cancel();
@@ -2472,7 +2502,7 @@ async function selectOneClickClearStepDagPathWithWasm(
     if (result.status === "waiting-edge-batch") {
       throw new GraphwarWasmFault("abi", "stateful one-click retry returned an unexpected edge batch");
     }
-    if (result.status !== "complete" || result.selectedEdgeIds.length === 0) {
+    if (result.status !== "complete") {
       return [];
     }
     return mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId).flatMap((edgeId) =>
@@ -2540,29 +2570,20 @@ async function applyWasmPreferredStepDagPath(
     dagJobs,
   });
   if (composition.status !== "waiting-edge-batch") {
-    return dag;
+    return { ...dag, wasmSelection: { type: "failure" } };
   }
 
   // Explicit state-node identities keep duplicate target pairs distinct. The
   // adapter has already checked the descriptor, but the target order remains a
   // caller-owned identity that must match the retained DAG before publication.
-  if (
-    composition.targetOrder.some((targetIndex, index) => targetIndex !== index) ||
-    composition.edgeJobs.length !== dagJobs.length ||
-    composition.edgeJobs.some((job, index) => {
-      const expected = dagJobs[index];
-      return (
-        !expected ||
-        job.id !== expected.id ||
-        job.from !== expected.from ||
-        job.to !== expected.to ||
-        job.fromNodeId !== expected.fromNodeId ||
-        job.toNodeId !== expected.toNodeId
-      );
-    })
-  ) {
+  try {
+    if (composition.targetOrder.some((targetIndex, index) => targetIndex !== index)) {
+      throw new GraphwarWasmFault("abi", "stateful one-click WASM session changed DAG ownership");
+    }
+    assertOneClickClearWasmDagJobDescriptors(composition.edgeJobs, dagJobs, "stateful one-click composition");
+  } catch (error) {
     composition.handle.cancel();
-    return dag;
+    throw error;
   }
 
   const session = composition.handle;
@@ -2572,7 +2593,7 @@ async function applyWasmPreferredStepDagPath(
   });
   if (edgesForJobs.some((edge) => edge === undefined)) {
     session.cancel();
-    return dag;
+    throw new GraphwarWasmFault("abi", "stateful one-click WASM session returned an unknown edge job");
   }
   try {
     const edgeResults: GraphwarWasmOneClickEdgeResult[] = composition.edgeJobs.map((job, index) => {
@@ -2598,11 +2619,9 @@ async function applyWasmPreferredStepDagPath(
     }
     if (result.status === "complete") {
       const preferredEdgeIds = mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId);
-      if (preferredEdgeIds.length > 0) {
-        return { ...dag, preferredEdgeIds };
-      }
+      return { ...dag, wasmSelection: { edgeIds: preferredEdgeIds, type: "selected" } };
     }
-    return dag;
+    return { ...dag, wasmSelection: { type: "failure" } };
   } finally {
     session.cancel();
   }
@@ -2915,16 +2934,19 @@ function findOneClickClearLongestPath(dag: OneClickClearDag) {
 
 /** Keeps the composition core's stable choice ahead of the TypeScript fallback DP. */
 function reconstructOneClickClearPreferredPath(dag: OneClickClearDag) {
-  if (!dag.preferredEdgeIds || dag.preferredEdgeIds.length === 0) {
+  if (!dag.wasmSelection || dag.wasmSelection.type === "failure") {
     return undefined;
+  }
+  if (dag.wasmSelection.edgeIds.length === 0) {
+    throw new GraphwarWasmFault("abi", "one-click WASM composition selected no edge");
   }
   const edgesById = new Map(dag.edges.map((edge) => [edge.id, edge]));
   const preferredEdges: OneClickClearDagEdge[] = [];
   let from = START_NODE_INDEX;
-  for (const edgeId of dag.preferredEdgeIds) {
+  for (const edgeId of dag.wasmSelection.edgeIds) {
     const edge = edgesById.get(edgeId);
     if (!edge || !edge.active || edge.from !== from) {
-      return undefined;
+      throw new GraphwarWasmFault("abi", "one-click WASM composition selected a malformed edge chain");
     }
     preferredEdges.push(edge);
     from = edge.to;

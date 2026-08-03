@@ -10,6 +10,7 @@ import {
   type GraphBounds,
   type PixelPoint,
 } from "../../core/types";
+import { graphwarWasmCompositionLayout } from "../../core/wasm/composition-adapter";
 import { readGraphwarKernelBytes } from "../../core/wasm/kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "../../core/wasm/runtime";
 import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
@@ -125,6 +126,78 @@ describe("one-click-clear mirrored WASM guard", () => {
     if (result.type === "success") {
       expect(result.targetIds).toEqual(["selected"]);
       expect(result.pathPoints.at(-1)).toEqual(createPixelPoint(400, 225));
+    }
+  });
+
+  it("does not fall back to the TypeScript longest-path DP after a normal WASM no-route result", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const start = createPixelPoint(700, 225);
+    const target = createPixelPoint(500, 225);
+    const candidates = [{ id: "target", isEnemy: true, hitCenter: target, hitRadius: 30 }];
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    const resumeSpy = vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((inputPointer, inputByteLength) => {
+      const input = new DataView(runtime.buffer, inputPointer, inputByteLength);
+      const sessionPointer = input.getUint32(0, true);
+      const session = new DataView(
+        runtime.buffer,
+        sessionPointer,
+        graphwarWasmCompositionLayout.oneClickSessionByteLength,
+      );
+      const sourcePathX = session.getUint32(32, true);
+      const sourcePathY = session.getUint32(36, true);
+      const sourcePathCount = session.getUint32(40, true);
+      const resultPointer = resume(inputPointer, inputByteLength);
+      const result = new DataView(
+        runtime.buffer,
+        resultPointer,
+        graphwarWasmCompositionLayout.oneClickResultByteLength,
+      );
+      // Force a valid terminal business failure with the retained source path.
+      // This models an authoritative WASM no-route result; the search must not
+      // reinterpret the already-built edges through its TypeScript DP.
+      result.setUint32(4, 2, true);
+      result.setUint32(28, sourcePathX, true);
+      result.setUint32(32, sourcePathY, true);
+      result.setUint32(36, sourcePathCount, true);
+      result.setUint32(40, 0, true);
+      result.setUint32(52, 0, true);
+      return resultPointer;
+    });
+
+    try {
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.filter(isStatelessJob).map((job) => createSuccessfulEdgeRoute(job)),
+          timings: [],
+        }),
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode({
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        }),
+        hitCandidates: candidates,
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start],
+        routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        simulationBoundaryExpansion: 0,
+        simulationMask: emptyMask,
+        simulationMaskCacheId: 1,
+        wasmRequestNonce: 21,
+        wasmRuntime: runtime,
+      } satisfies GraphwarOneClickClearBuildOptions);
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+    } finally {
+      resumeSpy.mockRestore();
     }
   });
 

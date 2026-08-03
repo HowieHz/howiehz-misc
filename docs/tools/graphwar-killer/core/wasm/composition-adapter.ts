@@ -7,6 +7,7 @@ import {
   validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
   validateGraphwarWasmU32,
+  writeGraphwarWasmBytes,
   writeGraphwarWasmFloat64Values,
   writeGraphwarWasmUint32Values,
   type GraphwarWasmMemorySource,
@@ -33,6 +34,8 @@ export const graphwarWasmCompositionLayout = {
   oneClickTargetAssignmentResultByteLength: 24,
   smartInputByteLength: 80,
   smartResultByteLength: 96,
+  oneClickStepStateDedupInputByteLength: 40,
+  oneClickStepStateDedupResultByteLength: 16,
 } as const;
 
 const smartInputMagic = 0x534d_4152;
@@ -57,6 +60,10 @@ const oneClickTargetAssignmentInputMagic = 0x4f_4341_53;
 const oneClickTargetAssignmentInputVersion = 1;
 const oneClickTargetAssignmentMirroredFlag = 1;
 const oneClickTargetAssignmentResultMagic = 0x4f_4341_52;
+// Route commands 1..10 and Step-glitch commands 11..20 share runRouteTask.
+const oneClickStepStateDedupCommand = 21;
+const oneClickStepStateDedupMagic = 0x4f_4344_50;
+const oneClickStepStateDedupVersion = 1;
 
 const smartInput = {
   flags: 8,
@@ -238,6 +245,23 @@ const oneClickTargetAssignmentResult = {
   count: 20,
 } as const;
 
+const oneClickStepStateDedupInput = {
+  targetIndexes: 8,
+  keyOffsets: 12,
+  keyBytes: 16,
+  keyLengths: 20,
+  resolvedY: 24,
+  count: 28,
+  keyByteLength: 32,
+} as const;
+
+const oneClickStepStateDedupResult = {
+  magic: 0,
+  status: 4,
+  nodeIds: 8,
+  nodeCount: 12,
+} as const;
+
 interface GraphwarWasmSmartPathfindingInputBase {
   /** One-click routes may stop on a target before their terminal control point. */
   readonly allowTerminalPointDeletion?: boolean;
@@ -350,6 +374,19 @@ export interface GraphwarWasmOneClickClearInput {
   readonly targetOrderKeys?: readonly number[];
   /** Graphwar-unit vertical variation per image-pixel y unit. */
   readonly verticalVariationScale?: number;
+}
+
+/** Canonical Step node evidence; WASM owns target/state identity interning. */
+export interface GraphwarWasmOneClickStepStateEvidence {
+  readonly resolvedStateKey: string;
+  readonly resolvedY: number;
+  readonly targetIndex: number;
+}
+
+export interface GraphwarWasmOneClickStepStateInternResult {
+  /** Stable node id for each input record, assigned by first occurrence. */
+  readonly nodeIds: readonly number[];
+  readonly nodeCount: number;
 }
 
 export interface GraphwarWasmOneClickEdgeJob {
@@ -1114,6 +1151,149 @@ export function assignGraphwarWasmOneClickTargetRoutePoints(
     const result = copyOneClickTargetAssignmentResult(runtime, resultPointer, packed, outputMinimumPointer);
     runtime.resetArena(mark);
     return result;
+  } catch (error) {
+    runtime.resetArenaAfterFault(mark);
+    throw error;
+  }
+}
+
+/** Interns Step DAG identities in one raw WASM call; no JS Map owns effective-WASM dedup. */
+export function internGraphwarWasmOneClickStepStates(
+  runtime: GraphwarWasmKernelRuntime,
+  evidence: readonly GraphwarWasmOneClickStepStateEvidence[],
+): GraphwarWasmOneClickStepStateInternResult {
+  const mark = runtime.markArena();
+  try {
+    const targetIndexes = evidence.map((entry, index) => {
+      const targetIndex = validateGraphwarWasmU32(entry.targetIndex, `stepStates[${index}].targetIndex`, "input");
+      const resolvedY = validateGraphwarWasmFiniteNumber(entry.resolvedY, `stepStates[${index}].resolvedY`, "input");
+      if (!Number.isInteger(targetIndex)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-index",
+          `stepStates[${index}].targetIndex is not an integer`,
+          "input",
+        );
+      }
+      if (!Number.isFinite(resolvedY)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-finite-number",
+          `stepStates[${index}].resolvedY is not finite`,
+          "input",
+        );
+      }
+      try {
+        if (BigInt(entry.resolvedStateKey).toString() !== entry.resolvedStateKey) {
+          throw new Error("non-canonical");
+        }
+      } catch {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `stepStates[${index}].resolvedStateKey is not canonical`,
+          "input",
+        );
+      }
+      return targetIndex;
+    });
+    const keyBytes = new Uint8Array(evidence.reduce((length, entry) => length + entry.resolvedStateKey.length, 0));
+    const keyOffsets = new Uint32Array(evidence.length + 1);
+    const keyLengths = new Uint32Array(evidence.length);
+    let keyOffset = 0;
+    for (const [index, entry] of evidence.entries()) {
+      keyOffsets[index] = keyOffset;
+      keyLengths[index] = entry.resolvedStateKey.length;
+      for (let characterIndex = 0; characterIndex < entry.resolvedStateKey.length; characterIndex += 1) {
+        const code = entry.resolvedStateKey.charCodeAt(characterIndex);
+        if (code > 0x7f) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `stepStates[${index}] key is not ASCII`,
+            "input",
+          );
+        }
+        keyBytes[keyOffset + characterIndex] = code;
+      }
+      keyOffset += entry.resolvedStateKey.length;
+    }
+    keyOffsets[evidence.length] = keyOffset;
+    const packedTargets = writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetIndexes), runtime.arenaBase);
+    const packedOffsets = writeGraphwarWasmUint32Values(runtime, keyOffsets, runtime.arenaBase);
+    const packedLengths = writeGraphwarWasmUint32Values(runtime, keyLengths, runtime.arenaBase);
+    const packedKeys = writeGraphwarWasmBytes(runtime, keyBytes, runtime.arenaBase);
+    const packedResolvedY = writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(evidence.map((entry) => entry.resolvedY)),
+      runtime.arenaBase,
+    );
+    const commandPointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickStepStateDedupInputByteLength, 8);
+    const command = new DataView(
+      runtime.buffer,
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickStepStateDedupInputByteLength,
+    );
+    command.setUint32(0, oneClickStepStateDedupMagic, true);
+    command.setUint32(4, oneClickStepStateDedupVersion, true);
+    command.setUint32(oneClickStepStateDedupInput.targetIndexes, packedTargets.pointer, true);
+    command.setUint32(oneClickStepStateDedupInput.keyOffsets, packedOffsets.pointer, true);
+    command.setUint32(oneClickStepStateDedupInput.keyBytes, packedKeys.pointer, true);
+    command.setUint32(oneClickStepStateDedupInput.keyLengths, packedLengths.pointer, true);
+    command.setUint32(oneClickStepStateDedupInput.resolvedY, packedResolvedY.pointer, true);
+    command.setUint32(oneClickStepStateDedupInput.count, evidence.length, true);
+    command.setUint32(oneClickStepStateDedupInput.keyByteLength, packedKeys.length, true);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runRouteTask(
+      oneClickStepStateDedupCommand,
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickStepStateDedupInputByteLength,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { pointer: resultPointer, length: graphwarWasmCompositionLayout.oneClickStepStateDedupResultByteLength },
+      { alignment: 8, elementByteLength: 1, minimumPointer: outputMinimumPointer, sliceFaultDomain: "output" },
+    );
+    const result = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (result.getUint32(oneClickStepStateDedupResult.magic, true) !== oneClickStepStateDedupMagic) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-pointer",
+        "Step state dedup result magic is invalid",
+        "output",
+      );
+    }
+    if (result.getUint32(oneClickStepStateDedupResult.status, true) !== 0) {
+      throw new GraphwarWasmAdapterError("invalid-enum", "Step state dedup result status is invalid", "output");
+    }
+    const nodeCount = validateGraphwarWasmU32(
+      result.getUint32(oneClickStepStateDedupResult.nodeCount, true),
+      "Step state dedup node count",
+      "output",
+    );
+    if (nodeCount > evidence.length) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step state dedup node count exceeds input count",
+        "output",
+      );
+    }
+    const nodePointer = validateGraphwarWasmU32(
+      result.getUint32(oneClickStepStateDedupResult.nodeIds, true),
+      "Step state dedup node pointer",
+      "output",
+    );
+    const nodeIds =
+      evidence.length === 0
+        ? []
+        : Array.from(
+            copyGraphwarWasmUint32Values(
+              runtime,
+              { pointer: nodePointer, length: evidence.length },
+              outputMinimumPointer,
+            ),
+          );
+    const observedNodeCount = nodeIds.reduce((maximum, nodeId) => Math.max(maximum, nodeId + 1), 0);
+    if (observedNodeCount !== nodeCount || nodeIds.some((nodeId) => nodeId >= nodeCount)) {
+      throw new GraphwarWasmAdapterError("invalid-session-state", "Step state dedup node ids are invalid", "output");
+    }
+    runtime.resetArena(mark);
+    return { nodeCount: observedNodeCount, nodeIds };
   } catch (error) {
     runtime.resetArenaAfterFault(mark);
     throw error;

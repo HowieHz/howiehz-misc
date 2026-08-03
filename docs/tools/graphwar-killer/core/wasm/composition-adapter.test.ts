@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  internGraphwarWasmOneClickStepStates,
   runGraphwarWasmOneClickTrajectoryValidation,
   runGraphwarWasmSmartPathfinding,
   type GraphwarWasmOneClickEdgeResult,
@@ -13,6 +14,27 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
 
 describe("Graphwar WASM composition adapter", () => {
+  it("interns canonical Step state identities without truncating large keys", async () => {
+    const runtime = await createRuntime();
+    const result = internGraphwarWasmOneClickStepStates(runtime, [
+      { resolvedStateKey: "0", resolvedY: 1, targetIndex: 2 },
+      { resolvedStateKey: "18446744073709551616", resolvedY: 3, targetIndex: 2 },
+      { resolvedStateKey: "0", resolvedY: 1, targetIndex: 2 },
+      { resolvedStateKey: "0", resolvedY: 1, targetIndex: 3 },
+    ]);
+
+    expect(result).toEqual({ nodeCount: 3, nodeIds: [0, 1, 0, 2] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each(["01", "-0", "+1", "1.0"])("rejects non-canonical Step state key %s", async (resolvedStateKey) => {
+    const runtime = await createRuntime();
+    expect(() =>
+      internGraphwarWasmOneClickStepStates(runtime, [{ resolvedStateKey, resolvedY: 0, targetIndex: 0 }]),
+    ).toThrow(/canonical/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("assigns stable source identities and route columns in the versioned WASM ABI", async () => {
     const runtime = await createRuntime();
     const result = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {

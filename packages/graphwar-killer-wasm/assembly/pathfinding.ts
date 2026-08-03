@@ -80,6 +80,113 @@ function isIntegerValue(value: f64): bool {
   return isFiniteValue(value) && NativeMath.floor(value) == value;
 }
 
+/** Validates canonical decimal bytes before using them as a cross-boundary Step identity. */
+function isCanonicalStepStateKey(keyPointer: u32, keyLength: u32): bool {
+  if (keyLength == 0) return false;
+  let index: u32 = 0;
+  let hasSign = false;
+  if (load<u8>(keyPointer) == 45) {
+    hasSign = true;
+    if (keyLength == 1) return false;
+    index = 1;
+  }
+  const firstDigit = load<u8>(keyPointer + index);
+  if (firstDigit < 48 || firstDigit > 57) return false;
+  if (firstDigit == 48 && keyLength - index > 1) return false;
+  while (index < keyLength) {
+    const digit = load<u8>(keyPointer + index);
+    if (digit < 48 || digit > 57) return false;
+    index += 1;
+  }
+  // Negative zero is not a canonical BigInt decimal identity.
+  return !(hasSign && firstDigit == 48);
+}
+
+/** One-click state dedup is coarse and raw: no managed strings or fixed state limit cross this boundary. */
+function internOneClickStepStateKeys(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
+  if (
+    load<u32>(inputPointer) != Layout.ONE_CLICK_STEP_STATE_DEDUP_MAGIC ||
+    load<u32>(inputPointer + 4) != Layout.ONE_CLICK_STEP_STATE_DEDUP_VERSION
+  ) trap();
+  const targetPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_TARGET_POINTER_OFFSET);
+  const offsetPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_OFFSET_POINTER_OFFSET);
+  const keyPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_KEY_POINTER_OFFSET);
+  const keyLengthPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_KEY_LENGTH_OFFSET);
+  const resolvedYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_RESOLVED_Y_POINTER_OFFSET);
+  const count = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_COUNT_OFFSET);
+  const keyByteLength = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_KEY_BYTE_LENGTH_OFFSET);
+  if (count == u32.MAX_VALUE || count > u32.MAX_VALUE / sizeof<u32>()) trap();
+  if (count == 0) {
+    if (targetPointer != 0 || offsetPointer != 0 || keyPointer != 0 || keyLengthPointer != 0 || resolvedYPointer != 0 || keyByteLength != 0) trap();
+  } else {
+    requireArenaRange(targetPointer, count * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(offsetPointer, (count + 1) * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(keyLengthPointer, count * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(resolvedYPointer, count * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(keyPointer, keyByteLength, 1);
+    if (keyByteLength == 0) trap();
+  }
+  let recordIndex: u32 = 0;
+  while (recordIndex < count) {
+    const start = load<u32>(offsetPointer + recordIndex * sizeof<u32>());
+    const end = load<u32>(offsetPointer + (recordIndex + 1) * sizeof<u32>());
+    const declaredLength = load<u32>(keyLengthPointer + recordIndex * sizeof<u32>());
+    if (start > end || end > keyByteLength || end - start != declaredLength) trap();
+    const keyStart = keyPointer + start;
+    if (!isCanonicalStepStateKey(keyStart, declaredLength)) trap();
+    if (!isFiniteValue(load<f64>(resolvedYPointer + recordIndex * sizeof<f64>()))) trap();
+    recordIndex += 1;
+  }
+  const nodeIdsPointer = count == 0 ? 0 : reserveArena(count * sizeof<u32>(), sizeof<u32>());
+  let nodeCount: u32 = 0;
+  recordIndex = 0;
+  while (recordIndex < count) {
+    const target = load<u32>(targetPointer + recordIndex * sizeof<u32>());
+    const start = load<u32>(offsetPointer + recordIndex * sizeof<u32>());
+    const length = load<u32>(keyLengthPointer + recordIndex * sizeof<u32>());
+    const keyStart = keyPointer + start;
+    let matchingNode = u32.MAX_VALUE;
+    let previousIndex: u32 = 0;
+    while (previousIndex < recordIndex) {
+      if (load<u32>(targetPointer + previousIndex * sizeof<u32>()) == target) {
+        const previousStart = load<u32>(offsetPointer + previousIndex * sizeof<u32>());
+        const previousLength = load<u32>(keyLengthPointer + previousIndex * sizeof<u32>());
+        if (previousLength == length) {
+          let byteIndex: u32 = 0;
+          let matches = true;
+          while (byteIndex < length) {
+            if (load<u8>(keyPointer + previousStart + byteIndex) != load<u8>(keyStart + byteIndex)) {
+              matches = false;
+              break;
+            }
+            byteIndex += 1;
+          }
+          if (matches) {
+            matchingNode = load<u32>(nodeIdsPointer + previousIndex * sizeof<u32>());
+            break;
+          }
+        }
+      }
+      previousIndex += 1;
+    }
+    if (matchingNode == u32.MAX_VALUE) {
+      matchingNode = nodeCount;
+      nodeCount += 1;
+    }
+    store<u32>(nodeIdsPointer + recordIndex * sizeof<u32>(), matchingNode);
+    recordIndex += 1;
+  }
+  const resultPointer = reserveArena(Layout.ONE_CLICK_STEP_STATE_DEDUP_RESULT_BYTE_LENGTH, sizeof<u64>());
+  memory.fill(resultPointer, 0, Layout.ONE_CLICK_STEP_STATE_DEDUP_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_STEP_STATE_DEDUP_MAGIC);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_RESULT_STATUS_OFFSET, 0);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_RESULT_NODE_POINTER_OFFSET, nodeIdsPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_RESULT_NODE_COUNT_OFFSET, nodeCount);
+  return resultPointer;
+}
+
 @inline
 function getPlaneWidth(): u32 {
   return <u32>getGraphwarPlaneLength();
@@ -5948,6 +6055,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_THETA_STAR) return runThetaStarSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_VISIBILITY_GRAPH) return runVisibilityGraphSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
+  if (command == Layout.ROUTE_COMMAND_ONE_CLICK_STEP_STATE_DEDUP) {
+    return internOneClickStepStateKeys(inputPointer, inputByteLength);
+  }
   if (command == Layout.ROUTE_COMMAND_STEP_THETA_STAR) return runStepThetaStarSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_VISIBILITY_GRAPH) {
     return runStepVisibilityGraphSearch(inputPointer, inputByteLength);

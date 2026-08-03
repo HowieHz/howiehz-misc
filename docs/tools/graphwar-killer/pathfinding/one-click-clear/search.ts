@@ -12,11 +12,13 @@ import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  internGraphwarWasmOneClickStepStates,
   runGraphwarWasmSmartPathfinding,
   runGraphwarWasmOneClickTrajectoryValidation,
   type GraphwarWasmOneClickEdgeJob,
   type GraphwarWasmOneClickDagJob,
   type GraphwarWasmOneClickEdgeResult,
+  type GraphwarWasmOneClickStepStateEvidence,
 } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
@@ -2229,7 +2231,10 @@ async function buildOneClickClearStepDag(
   type StepDagNode = Extract<OneClickClearDagNode, { type: "step-stateful" }>;
   const nodes: StepDagNode[] = [];
   const nodesByTargetIndex = Array.from({ length: targets.length }, (): StepDagNode[] => []);
-  const nodesByTargetState = Array.from({ length: targets.length }, (): Map<string, StepDagNode> => new Map());
+  const wasmStateEvidence: GraphwarWasmOneClickStepStateEvidence[] = [];
+  const typescriptNodesByTargetState = options.wasmRuntime
+    ? undefined
+    : Array.from({ length: targets.length }, (): Map<string, StepDagNode> => new Map());
   const outgoingEdges = new Map<number, OneClickClearDagEdge[]>();
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const startState = resolveOneClickClearStepStartState(options);
@@ -2245,18 +2250,64 @@ async function buildOneClickClearStepDag(
     const result = await buildOneClickClearDagEdgeRoutes(context, jobs);
     emitOneClickClearDebugTimings(options, result.timings);
     const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
-    for (const job of jobs) {
+    const successfulRoutes = jobs.flatMap((job) => {
       const builtRoute = routesByJobId.get(job.id);
-      if (
-        builtRoute?.type !== "step-stateful" ||
-        !isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
-      ) {
-        continue;
+      return builtRoute?.type === "step-stateful" && isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
+        ? [{ builtRoute, job }]
+        : [];
+    });
+    if (options.wasmRuntime) {
+      const batchEvidence = successfulRoutes.map<GraphwarWasmOneClickStepStateEvidence>(({ builtRoute, job }) => ({
+        resolvedStateKey: builtRoute.stepRouteEndState.resolvedStateKey,
+        resolvedY: builtRoute.stepRouteEndState.resolvedY,
+        targetIndex: job.to,
+      }));
+      const interned = internGraphwarWasmOneClickStepStates(options.wasmRuntime, [
+        ...wasmStateEvidence,
+        ...batchEvidence,
+      ]);
+      const previousEvidenceCount = wasmStateEvidence.length;
+      if (interned.nodeIds.length !== previousEvidenceCount + batchEvidence.length) {
+        throw new GraphwarWasmFault("abi", "one-click Step state dedup returned an incomplete mapping");
       }
+      for (const [index, evidence] of batchEvidence.entries()) {
+        const nodeId = interned.nodeIds[previousEvidenceCount + index];
+        if (nodeId === undefined) {
+          throw new GraphwarWasmFault("abi", "one-click Step state dedup returned a missing node id");
+        }
+        let targetNode = nodes[nodeId];
+        if (!targetNode) {
+          if (nodeId !== nodes.length) {
+            throw new GraphwarWasmFault("abi", "one-click Step state dedup returned a sparse node id");
+          }
+          targetNode = {
+            id: nodeId,
+            stepRouteState: { resolvedStateKey: evidence.resolvedStateKey, resolvedY: evidence.resolvedY },
+            targetIndex: evidence.targetIndex,
+            type: "step-stateful",
+          };
+          nodes.push(targetNode);
+          nodesByTargetIndex[evidence.targetIndex]?.push(targetNode);
+          wasmStateEvidence.push(evidence);
+        } else if (
+          targetNode.targetIndex !== evidence.targetIndex ||
+          targetNode.stepRouteState.resolvedStateKey !== evidence.resolvedStateKey ||
+          !Object.is(targetNode.stepRouteState.resolvedY, evidence.resolvedY)
+        ) {
+          throw new GraphwarWasmFault("abi", "one-click Step state dedup changed node evidence");
+        }
+        const route = successfulRoutes[index]?.builtRoute.route;
+        const job = successfulRoutes[index]?.job;
+        if (!route || !job) {
+          throw new GraphwarWasmFault("abi", "one-click Step state dedup lost route evidence");
+        }
+        addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, route);
+      }
+      return;
+    }
+    for (const { builtRoute, job } of successfulRoutes) {
       const stepRouteEndState = builtRoute.stepRouteEndState;
-
-      // 状态身份来自打印系数整数累计；浮点 resolvedY 只用于下一段数值计算和调试。
-      const stateNodes = nodesByTargetState[job.to];
+      const stateNodes = typescriptNodesByTargetState?.[job.to];
       const targetNodes = nodesByTargetIndex[job.to];
       if (!stateNodes || !targetNodes) {
         continue;

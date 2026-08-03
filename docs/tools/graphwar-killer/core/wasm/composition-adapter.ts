@@ -2031,7 +2031,7 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
   }
   const dagNodeTargetEvidence = new Uint32Array(dagNodeEvidence.map(({ targetIndex }) => targetIndex));
   const dagNodeResolvedY = new Float64Array(dagNodeEvidence.map(({ resolvedY }) => resolvedY));
-  const dagNodeKeyOffsets = new Uint32Array(dagNodeEvidence.length + 1);
+  const dagNodeKeyOffsets = new Uint32Array(dagNodeEvidence.length === 0 ? 0 : dagNodeEvidence.length + 1);
   const dagNodeKeyLengths = new Uint32Array(dagNodeEvidence.length);
   const dagNodeKeyByteLength = dagNodeEvidence.reduce(
     (length, { resolvedStateKey }) => length + resolvedStateKey.length,

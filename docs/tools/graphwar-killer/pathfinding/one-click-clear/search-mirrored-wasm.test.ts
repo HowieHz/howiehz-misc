@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
 import { graphToImagePoint } from "../../core/geometry";
@@ -401,6 +401,98 @@ describe("one-click-clear mirrored WASM guard", () => {
       expect(result.targetIds).toEqual(["first", "second"]);
     }
     expect(removedEdges).toHaveLength(1);
+  });
+
+  it("derives a WASM Step start state from retained transitions and matches the TS fallback", async () => {
+    const forwardBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
+    const start = graphToImagePoint(createGraphPoint(-20, 0), forwardBounds, boundsRect);
+    const prefix = graphToImagePoint(createGraphPoint(-15, 4), forwardBounds, boundsRect);
+    const target = graphToImagePoint(createGraphPoint(-10, 4), forwardBounds, boundsRect);
+    const stepSettings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "y" as const,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
+      steepness: 67,
+    };
+    const model = createGraphwarStepRouteModel(0, stepSettings);
+    if (!model) {
+      throw new Error("expected a strict Step route model");
+    }
+    const emptyRouteMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    const expectedPrefix = validateGraphwarStepRoutePath({
+      boundaryInset: 0,
+      bounds: forwardBounds,
+      boundsRect,
+      model,
+      points: [start, prefix],
+      summedArea: createGraphwarStepRouteSummedArea(emptyRouteMask),
+    });
+    expect(expectedPrefix.ok).toBe(true);
+    if (!expectedPrefix.ok) {
+      return;
+    }
+
+    const candidate = { id: "target", isEnemy: true, hitCenter: target, hitRadius: 4 };
+    const createOptions = (
+      requests: GraphwarOneClickClearDagEdgeBuildRequest[],
+      wasmRuntime?: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>,
+    ) =>
+      ({
+        boundaryExpansion: 0,
+        bounds: forwardBounds,
+        boundsRect,
+        buildDagEdges: async (request: GraphwarOneClickClearDagEdgeBuildRequest) => {
+          requests.push(request);
+          return { routes: [], timings: [] };
+        },
+        candidates: [candidate],
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
+        hitCandidates: [candidate],
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start, prefix],
+        prefixTarget: { center: prefix, radius: 100 },
+        routeMask: { mask: emptyRouteMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph" as const,
+        simulationBoundaryExpansion: 0,
+        simulationMaskCacheId: 0,
+        validateStepRoute: (points: readonly PixelPoint[]) =>
+          validateGraphwarStepRoutePath({
+            boundaryInset: 0,
+            bounds: forwardBounds,
+            boundsRect,
+            model,
+            points,
+            summedArea: createGraphwarStepRouteSummedArea(emptyRouteMask),
+          }),
+        ...(wasmRuntime ? { wasmRuntime } : {}),
+      }) satisfies GraphwarOneClickClearBuildOptions;
+
+    const wasmRequests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
+    const wasmRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const runRouteTask = vi.spyOn(wasmRuntime, "runRouteTask");
+    const wasmResult = await buildGraphwarOneClickClearPath(createOptions(wasmRequests, wasmRuntime));
+    const tsRequests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
+    const tsResult = await buildGraphwarOneClickClearPath(createOptions(tsRequests));
+
+    expect(wasmResult.type).toBe("failure");
+    expect(tsResult.type).toBe("failure");
+    const wasmJob = wasmRequests[0]?.jobs[0];
+    const tsJob = tsRequests[0]?.jobs[0];
+    expect(wasmJob?.type).toBe("step-stateful");
+    expect(tsJob?.type).toBe("step-stateful");
+    if (wasmJob?.type !== "step-stateful" || tsJob?.type !== "step-stateful") {
+      return;
+    }
+    expect(wasmJob.stepRouteStartState).toEqual({
+      resolvedStateKey: expectedPrefix.routeStateKey ?? "0",
+      resolvedY: expectedPrefix.resolvedEndY,
+    });
+    expect(wasmJob.stepRouteStartState).toEqual(tsJob.stepRouteStartState);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(true);
+    runRouteTask.mockRestore();
   });
 });
 

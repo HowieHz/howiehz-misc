@@ -21,6 +21,7 @@ import {
   type GraphwarWasmOneClickStepStateEvidence,
 } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
+import type { GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
   createGraphwarWasmStepGlitchContext,
@@ -1763,28 +1764,13 @@ async function optimizeOneClickClearPathWithWasm(
   } satisfies Parameters<typeof runGraphwarWasmSmartPathfinding>[1];
   const isStatefulStep = options.formulaMode.contract.pathSearchPolicy.type === "step-stateful";
   const routeContext = isStatefulStep
-    ? createGraphwarWasmRouteContext(options.wasmRuntime, {
-        boundaryExpansion: options.boundaryExpansion,
-        bounds: options.bounds,
-        boundsRect: options.boundsRect,
-        routeOriginPoint: soldierCenter,
-        routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
-        sourceMask: options.routeMask.mask,
-        sourceMaskType: "route",
-        stepRouteModel: (() => {
-          const model = createGraphwarStepRouteModel(soldierCenter.y, options.formulaMode.settings);
-          if (!model) {
-            throw new GraphwarWasmFault("abi", "one-click Step smart optimization lost its route model");
-          }
-          return {
-            decimalPlaces: model.decimalPlaces,
-            equation: model.equation,
-            formulaSteepness: model.formulaSteepness,
-            originY: model.originY,
-            qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
-          };
-        })(),
-      })
+    ? (() => {
+        const model = createGraphwarStepRouteModel(soldierCenter.y, options.formulaMode.settings);
+        if (!model) {
+          throw new GraphwarWasmFault("abi", "one-click Step smart optimization lost its route model");
+        }
+        return createOneClickClearStepRouteContext(options, soldierCenter, model);
+      })()
     : undefined;
   let optimized;
   try {
@@ -2644,6 +2630,37 @@ function resolveOneClickClearStepStartState(options: GraphwarOneClickClearSearch
   if (!firstPoint) {
     return undefined;
   }
+
+  if (options.wasmRuntime) {
+    const model = createGraphwarStepRouteModel(firstPoint.y, settings);
+    if (!model) {
+      return undefined;
+    }
+    const routeContext = createOneClickClearStepRouteContext(options, firstPoint, model);
+    try {
+      const stepRoute = routeContext.stepRoute;
+      if (!stepRoute) {
+        throw new GraphwarWasmFault("abi", "one-click Step start-state context lost its route model");
+      }
+      let state = { resolvedY: firstPoint.y, routeStateKey: "0" };
+      for (let index = 1; index < graphPoints.length; index += 1) {
+        const previous = graphPoints[index - 1];
+        const next = graphPoints[index];
+        if (!previous || !next) {
+          return undefined;
+        }
+        const transition = stepRoute.evaluateTransition(previous, next, state);
+        if (transition.type !== "success") {
+          return undefined;
+        }
+        state = transition.transition.routeState;
+      }
+      return { resolvedStateKey: state.routeStateKey, resolvedY: state.resolvedY };
+    } finally {
+      routeContext.dispose();
+    }
+  }
+
   const resolved = resolveStepFormula(
     graphPoints,
     settings.formulaPathSteepness ?? settings.steepness,
@@ -2663,6 +2680,33 @@ function resolveOneClickClearStepStartState(options: GraphwarOneClickClearSearch
   return Number.isFinite(resolved.plateauState.resolvedY) && resolvedStateKey !== undefined
     ? { resolvedStateKey, resolvedY: resolved.plateauState.resolvedY }
     : undefined;
+}
+
+/** Creates the retained Step route context used by start-state and smart-composition validation. */
+function createOneClickClearStepRouteContext(
+  options: GraphwarOneClickClearSearchOptions,
+  routeOriginPoint: ReturnType<typeof imageToGraphPoint>,
+  model: NonNullable<ReturnType<typeof createGraphwarStepRouteModel>>,
+): GraphwarWasmRouteContext {
+  if (!options.wasmRuntime) {
+    throw new GraphwarWasmFault("abi", "one-click Step route context requires a WASM runtime");
+  }
+  return createGraphwarWasmRouteContext(options.wasmRuntime, {
+    boundaryExpansion: options.boundaryExpansion,
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    routeOriginPoint,
+    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+    sourceMask: options.routeMask.mask,
+    sourceMaskType: "route",
+    stepRouteModel: {
+      decimalPlaces: model.decimalPlaces,
+      equation: model.equation,
+      formulaSteepness: model.formulaSteepness,
+      originY: model.originY,
+      qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+    },
+  });
 }
 
 /** 批量建立 DAG 边，并允许外部 runner 并行执行几何寻路。 */

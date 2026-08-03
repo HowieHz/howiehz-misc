@@ -117,7 +117,10 @@ function internOneClickStepStateKeys(inputPointer: u32, inputByteLength: u32): u
   const resolvedYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_RESOLVED_Y_POINTER_OFFSET);
   const count = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_COUNT_OFFSET);
   const keyByteLength = load<u32>(inputPointer + Layout.ONE_CLICK_STEP_STATE_DEDUP_INPUT_KEY_BYTE_LENGTH_OFFSET);
-  if (count == u32.MAX_VALUE || count > u32.MAX_VALUE / sizeof<u32>()) trap();
+  // The descriptor contains both u32 arrays and an f64 array. Bound the
+  // strictest element width before any `count + 1` or byte multiplication so
+  // every range stays representable in the raw u32 ABI.
+  if (count > u32.MAX_VALUE / sizeof<f64>()) trap();
   if (count == 0) {
     if (targetPointer != 0 || offsetPointer != 0 || keyPointer != 0 || keyLengthPointer != 0 || resolvedYPointer != 0 || keyByteLength != 0) trap();
   } else {

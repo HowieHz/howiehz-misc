@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  graphwarWasmCompositionLayout,
   internGraphwarWasmOneClickStepStates,
   runGraphwarWasmOneClickTrajectoryValidation,
   runGraphwarWasmSmartPathfinding,
@@ -84,6 +85,34 @@ describe("Graphwar WASM composition adapter", () => {
 
     expect(forward).toEqual([{ routePoint: { x: 1, y: 225 }, sourceIndex: 1 }]);
     expect(mirrored).toEqual([{ routePoint: { x: 768, y: 225 }, sourceIndex: 2 }]);
+  });
+
+  it("rejects an assignment route point whose source candidate geometry was mutated", async () => {
+    const runtime = await createRuntime();
+    const assignOneClickTargets = runtime.assignOneClickTargets.bind(runtime);
+    vi.spyOn(runtime, "assignOneClickTargets").mockImplementation((inputPointer, inputByteLength) => {
+      const resultPointer = assignOneClickTargets(inputPointer, inputByteLength);
+      const result = new DataView(
+        runtime.buffer,
+        resultPointer,
+        graphwarWasmCompositionLayout.oneClickTargetAssignmentResultByteLength,
+      );
+      const routeXPointer = result.getUint32(12, true);
+      new Float64Array(runtime.buffer, routeXPointer, 1)[0] = 100;
+      return resultPointer;
+    });
+
+    expect(() =>
+      assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+        boundaryExpansion: 0,
+        boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+        candidates: [{ center: { x: 200, y: 225 }, hitRadius: 2, sourceIndex: 10 }],
+        isMirrored: false,
+        pathTail: { x: 0, y: 225 },
+        usableRect: { height: 450, width: 770, x: 0, y: 0 },
+      }),
+    ).toThrow(/source candidate hit circle/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
   it("validates an ordinary one-click route with ordered multi-target stop state", async () => {

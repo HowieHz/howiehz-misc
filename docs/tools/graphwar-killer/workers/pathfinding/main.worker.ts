@@ -1019,10 +1019,11 @@ export function findStepGlitchSmartPathWithWasm(
       // may only provide the scanner candidate. Deletion must be reproved by
       // the requested mode below, matching the TypeScript cold path.
       isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled && hasSharedFormulaMask,
+      targetControlPoints: [input.targetPoint],
       scanner,
       simulationMask,
       sourcePointCount: input.sourcePath.length,
-      targetSequence: [input.hitTarget],
+      targetSequence: [...evidence.requiredTargets, input.hitTarget],
     });
     if (hasSharedFormulaMask) {
       timings.push({

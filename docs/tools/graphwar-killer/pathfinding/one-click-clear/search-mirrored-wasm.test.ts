@@ -779,6 +779,83 @@ describe("one-click-clear mirrored WASM guard", () => {
     expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(true);
     runRouteTask.mockRestore();
   });
+
+  it("rejects stateful composition when WASM re-interning changes node identity", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    let stateDedupCallCount = 0;
+    const runRouteTaskSpy = vi
+      .spyOn(runtime, "runRouteTask")
+      .mockImplementation((command, inputPointer, inputByteLength) => {
+        const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+        if (command === 21 && ++stateDedupCallCount === 3) {
+          const result = new DataView(
+            runtime.buffer,
+            resultPointer,
+            graphwarWasmCompositionLayout.oneClickStepStateDedupResultByteLength,
+          );
+          const nodePointer = result.getUint32(8, true);
+          const nodeCount = result.getUint32(12, true);
+          if (nodeCount !== 2) {
+            throw new Error(`expected two stateful DAG nodes, received ${nodeCount}`);
+          }
+          const nodeIds = new Uint32Array(runtime.buffer, nodePointer, nodeCount);
+          const firstNodeId = nodeIds[0];
+          const secondNodeId = nodeIds[1];
+          if (firstNodeId === undefined || secondNodeId === undefined) {
+            throw new Error("expected two stateful DAG node identities");
+          }
+          [nodeIds[0], nodeIds[1]] = [secondNodeId, firstNodeId];
+        }
+        return resultPointer;
+      });
+
+    const start = createPixelPoint(100, 225);
+    const candidates = [
+      { id: "first", isEnemy: true, hitCenter: createPixelPoint(300, 225), hitRadius: 4 },
+      { id: "second", isEnemy: true, hitCenter: createPixelPoint(500, 225), hitRadius: 4 },
+    ];
+
+    const options = {
+      boundaryExpansion: 0,
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      boundsRect,
+      buildDagEdges: async (request) => ({
+        routes: request.jobs
+          .filter(isStepStatefulJob)
+          .map((job) => createSuccessfulStepRoute(job, [job.startPoint, job.targetPoint])),
+        timings: [],
+      }),
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "y",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+        steepness: 67,
+      }),
+      hitCandidates: candidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+      validateStepRoute: () => true,
+      wasmRequestNonce: 31,
+      wasmRuntime: runtime,
+    } satisfies GraphwarOneClickClearBuildOptions;
+
+    try {
+      await expect(buildGraphwarOneClickClearPath(options)).rejects.toThrow(
+        "stateful one-click composition changed Step node evidence",
+      );
+    } finally {
+      runRouteTaskSpy.mockRestore();
+    }
+  });
 });
 
 function isStatelessJob(

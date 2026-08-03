@@ -2093,6 +2093,9 @@ function packOneClickTargetAssignmentInput(
       new Float64Array(candidates.map(({ radius }) => radius)),
       runtime.arenaBase,
     ),
+    candidateGeometryBySourceIndex: new Map(
+      candidates.map(({ point, radius, sourceIndex }) => [sourceIndex, { center: point, radius }]),
+    ),
     flags: input.isMirrored ? oneClickTargetAssignmentMirroredFlag : 0,
     pathTail,
     usableRect,
@@ -2213,6 +2216,21 @@ function copyOneClickTargetAssignmentResult(
     sourceIndexSet.add(sourceIndex);
     const routeX = validateGraphwarWasmFiniteNumber(routeXs[index], `assignment[${index}].routePoint.x`, "output");
     const routeY = validateGraphwarWasmFiniteNumber(routeYs[index], `assignment[${index}].routePoint.y`, "output");
+    const candidate = packed.candidateGeometryBySourceIndex.get(sourceIndex);
+    if (!candidate) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `assignment[${index}] source index has no retained candidate geometry`,
+        "output",
+      );
+    }
+    if (routeY !== candidate.center.y || (routeX - candidate.center.x) ** 2 >= candidate.radius ** 2) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-point-data",
+        `assignment[${index}].routePoint is not inside its source candidate hit circle`,
+        "output",
+      );
+    }
     if (
       routeX < packed.usableRect.x ||
       routeX >= packed.usableRect.x + packed.usableRect.width ||

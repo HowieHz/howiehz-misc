@@ -1281,6 +1281,16 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
   ) {
     let index: u32 = sourceCount < 1 ? 1 : sourceCount;
     while (index < currentCount - 1 && currentCount > 2) {
+      if (
+        isStepGlitchTargetControlPoint(
+          finalValidationPointer,
+          load<f64>(currentXPointer + index * sizeof<f64>()),
+          load<f64>(currentYPointer + index * sizeof<f64>()),
+        )
+      ) {
+        index += 1;
+        continue;
+      }
       const candidateCount = currentCount - 1;
       let readIndex: u32 = 0;
       let writeIndex: u32 = 0;
@@ -1417,6 +1427,29 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
     0,
     0,
   );
+}
+
+/** Route target anchors are protected independently of hit-circle centers. */
+function isStepGlitchTargetControlPoint(finalValidationPointer: u32, pointX: f64, pointY: f64): bool {
+  if (finalValidationPointer == 0) return false;
+  const targetCount = load<u32>(finalValidationPointer + Layout.STEP_GLITCH_FINAL_VALIDATION_TARGET_CONTROL_COUNT_OFFSET);
+  const targetXPointer = load<u32>(
+    finalValidationPointer + Layout.STEP_GLITCH_FINAL_VALIDATION_TARGET_CONTROL_X_POINTER_OFFSET,
+  );
+  const targetYPointer = load<u32>(
+    finalValidationPointer + Layout.STEP_GLITCH_FINAL_VALIDATION_TARGET_CONTROL_Y_POINTER_OFFSET,
+  );
+  let index: u32 = 0;
+  while (index < targetCount) {
+    if (
+      pointX == load<f64>(targetXPointer + index * sizeof<f64>()) &&
+      pointY == load<f64>(targetYPointer + index * sizeof<f64>())
+    ) {
+      return true;
+    }
+    index += 1;
+  }
+  return false;
 }
 
 /** Candidate deletion must preserve the same strict image-space x+ rule as the Worker path validator. */

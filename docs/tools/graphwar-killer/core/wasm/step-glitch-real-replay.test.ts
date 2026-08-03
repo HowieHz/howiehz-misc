@@ -138,6 +138,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       initialEvidence: evidence,
       initialPath: fixture.pixelPath,
       isDeleteOptimizationEnabled: true,
+      targetControlPoints: [fixture.pixelPath[2]],
       scanner: context,
       simulationMask: fixture.mask,
       sourcePointCount: 2,
@@ -158,6 +159,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         initialEvidence: evidence,
         initialPath: fixture.pixelPath,
         isDeleteOptimizationEnabled: true,
+        targetControlPoints: [fixture.pixelPath[2]],
         scanner: context,
         simulationMask: mismatchedMask,
         sourcePointCount: 2,
@@ -177,6 +179,101 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     });
     expect(stale.status).toBe("invalid-input");
     context.dispose();
+  });
+
+  it("retains required target order for multi-target command-20 composition", async () => {
+    const fixture = createFixture("dy");
+    const requiredPoint = fixture.pixelPath[1];
+    const targetPoint = fixture.pixelPath[2];
+    if (!requiredPoint || !targetPoint) throw new Error("expected a three-point fixture path");
+    const requiredTarget = { center: requiredPoint, radius: 12 };
+    const target = { center: targetPoint, radius: 12 };
+    const { context } = await createContext({ ...fixture, requiredTargets: [requiredTarget] });
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint: target.center }),
+    );
+    expect(scan.status).toBe("hit");
+    const evidence = scan.evidence?.owned;
+    if (!evidence) throw new Error("expected multi-target scan evidence");
+    expect(evidence.requiredTargets).toEqual([requiredTarget]);
+
+    const composed = composeGraphwarWasmStepGlitchSmartPath({
+      controlX: imageToGraphPoint(target.center, bounds, boundsRect).x,
+      formulaSettings: fixture.formulaMode.settings,
+      initialEvidence: evidence,
+      initialPath: evidence.path,
+      isDeleteOptimizationEnabled: true,
+      targetControlPoints: [requiredPoint, targetPoint],
+      scanner: context,
+      simulationMask: fixture.mask,
+      sourcePointCount: 2,
+      targetSequence: [requiredTarget, target],
+    });
+    expect(composed.status).toBe("success");
+    if (composed.status === "success") {
+      expect(composed.evidence.requiredTargets).toEqual([requiredTarget]);
+      expect(composed.evidence.trajectory.reachedRequiredTargetCount).toBe(1);
+      expect(composed.evidence.trajectory.reachedTargetCount).toBe(1);
+      expect(composed.evidence.trajectory.requiredTargetsHitIndex).toBeGreaterThanOrEqual(0);
+      expect(composed.evidence.trajectory.targetHitIndex).toBeGreaterThanOrEqual(0);
+      expect(composed.path.at(-1)).toEqual(target.center);
+    }
+
+    expect(() =>
+      composeGraphwarWasmStepGlitchSmartPath({
+        controlX: imageToGraphPoint(target.center, bounds, boundsRect).x,
+        formulaSettings: fixture.formulaMode.settings,
+        initialEvidence: evidence,
+        initialPath: evidence.path,
+        isDeleteOptimizationEnabled: true,
+        targetControlPoints: [targetPoint],
+        scanner: context,
+        simulationMask: fixture.mask,
+        sourcePointCount: 2,
+        targetSequence: [target],
+      }),
+    ).toThrow("source identity");
+    context.dispose();
+  });
+
+  it("rejects composition when scanner and evidence required-target identities differ", async () => {
+    const fixture = createFixture("dy");
+    const requiredPoint = fixture.pixelPath[1];
+    const targetPoint = fixture.pixelPath[2];
+    if (!requiredPoint || !targetPoint) throw new Error("expected a three-point fixture path");
+    const requiredTarget = { center: requiredPoint, radius: 12 };
+    const target = { center: targetPoint, radius: 12 };
+    const evidenceContext = await createContext({ ...fixture, requiredTargets: [requiredTarget] });
+    const scan = evidenceContext.context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint: target.center }),
+    );
+    expect(scan.status).toBe("hit");
+    if (scan.status !== "hit" || !scan.evidence) throw new Error("expected scan evidence");
+    const evidence = scan.evidence.owned;
+    const scannerContext = await createContext({
+      ...fixture,
+      requiredTargets: [{ center: createPixelPoint(requiredPoint.x + 1, requiredPoint.y), radius: 12 }],
+    });
+
+    try {
+      expect(() =>
+        composeGraphwarWasmStepGlitchSmartPath({
+          controlX: imageToGraphPoint(target.center, bounds, boundsRect).x,
+          formulaSettings: fixture.formulaMode.settings,
+          initialEvidence: evidence,
+          initialPath: evidence.path,
+          isDeleteOptimizationEnabled: true,
+          targetControlPoints: [requiredPoint, targetPoint],
+          scanner: scannerContext.context,
+          simulationMask: fixture.mask,
+          sourcePointCount: 2,
+          targetSequence: [requiredTarget, target],
+        }),
+      ).toThrow("source identity");
+    } finally {
+      evidenceContext.context.dispose();
+      scannerContext.context.dispose();
+    }
   });
 
   it("runs command 19 final validation with tracked targets and owned hit indexes", async () => {
@@ -290,6 +387,43 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     expect(composed.status).toBe("hit");
     expect(composed.evidence?.owned.path.length).toBeLessThan(path.length);
     expect(composed.evidence?.owned.path.slice(0, 2)).toEqual(path.slice(0, 2));
+    context.dispose();
+  });
+
+  it("protects route control points independently of target hit-circle centers", async () => {
+    const fixture = createFixture("dy");
+    const routePoint = fixture.pixelPath[2];
+    if (!routePoint) throw new Error("expected a route control point");
+    const tailPoint = graphToImagePoint(createGraphPoint(-22.83714285714286, 1.7532467532467528), bounds, boundsRect);
+    const terminalPoint = graphToImagePoint(createGraphPoint(-22.8, 1.7532467532467528), bounds, boundsRect);
+    const path = [...fixture.pixelPath, tailPoint, terminalPoint];
+    const target = { center: createPixelPoint(routePoint.x, routePoint.y + 1), radius: 2 };
+    const { context } = await createContext(fixture);
+
+    const composed = context.composeRaw({
+      controlX: imageToGraphPoint(routePoint, bounds, boundsRect).x,
+      finalValidation: {
+        simulationMaskCacheId: 29,
+        targetControlPoints: [routePoint],
+        trackedTargets: [target],
+        type: "validate",
+      },
+      isDeleteOptimizationEnabled: true,
+      path,
+      sourcePointCount: 2,
+      targetSequence: [target],
+      windows: { type: "automatic" },
+      type: "compose",
+    });
+
+    expect(composed.status).toBe("hit");
+    expect(composed.evidence?.owned.path.length).toBeLessThan(path.length);
+    expect(composed.evidence?.owned.path).toContainEqual(routePoint);
+    expect(composed.evidence?.owned.finalValidation).toMatchObject({
+      simulationMaskCacheId: 29,
+      targetControlPoints: [routePoint],
+      type: "validated",
+    });
     context.dispose();
   });
 
@@ -847,6 +981,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     const emptyFixture = createFixture("dy");
     const targetPoint = graphToImagePoint(createGraphPoint(10, 0), bounds, boundsRect);
     const hitTarget = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const requiredTarget = { center: emptyFixture.pixelPath[1], radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
     const directPath = [...emptyFixture.pixelPath.slice(0, 2), targetPoint];
     const directControlX = imageToGraphPoint(targetPoint, bounds, boundsRect).x;
     const { context: baselineContext } = await createContext(emptyFixture);
@@ -869,7 +1004,7 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     }
     const mask = new Uint8Array(planeCellCount);
     mask[Math.trunc(obstaclePixel.y) * GRAPHWAR_PLANE_LENGTH + Math.trunc(obstaclePixel.x)] = 1;
-    const fixture = createFixture("dy", mask);
+    const fixture = { ...createFixture("dy", mask), requiredTargets: [requiredTarget] };
     const { context, runtime } = await createContext(fixture);
     const retainedCursor = runtime.arenaCursor;
 
@@ -939,10 +1074,11 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       initialEvidence: productionScan.evidence.owned,
       initialPath: productionScan.evidence.owned.path,
       isDeleteOptimizationEnabled: true,
+      targetControlPoints: [targetPoint],
       scanner: context,
       simulationMask: fixture.mask,
       sourcePointCount: emptyFixture.pixelPath.slice(0, 2).length,
-      targetSequence: [hitTarget],
+      targetSequence: [requiredTarget, hitTarget],
     });
     expect(composed.status).toBe("success");
     if (composed.status !== "success") {

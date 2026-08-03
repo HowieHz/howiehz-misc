@@ -1127,7 +1127,7 @@ interface OneClickClearStepGlitchWasmOptimizationResult {
   workUnits: number;
 }
 
-/** Uses command 19 for every accepted/rejected deletion while retaining one source-prefix context. */
+/** Uses command 20 for every accepted/rejected deletion while retaining one source-prefix context. */
 async function optimizeOneClickClearStepGlitchPathWithWasm(
   context: OneClickClearSearchContext,
   route: OneClickClearRoute,
@@ -1151,12 +1151,31 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
   ) {
     throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization lost its scan path evidence");
   }
+  const actualTargetSequence = route.targetSequence.map((target) => target.hitCircle);
+  const scanTarget = initialEvidence.scanTarget ?? actualTargetSequence.at(-1);
+  if (!scanTarget) {
+    throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization has no target identity");
+  }
+  const requiredTargets =
+    initialEvidence.scanTarget === undefined && initialEvidence.requiredTargets.length === 0
+      ? actualTargetSequence.slice(0, -1)
+      : initialEvidence.requiredTargets;
+  const expectedTargetSequence = [...requiredTargets, scanTarget];
+  if (
+    actualTargetSequence.length !== expectedTargetSequence.length ||
+    actualTargetSequence.some((target, index) => {
+      const expectedTarget = expectedTargetSequence[index];
+      return expectedTarget === undefined || !pixelCirclesEqual(target, expectedTarget);
+    })
+  ) {
+    throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization target evidence is stale");
+  }
   const created = createOneClickClearStepGlitchWasmScanner(
     options,
     options.formulaMode,
     simulationMask,
     options.pathPoints,
-    [],
+    requiredTargets,
     options.stepGlitchPrefixEvidence,
     options.prefixTarget,
   );
@@ -1167,7 +1186,6 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
   const scanner = created.context;
   let optimized = route;
   let evidence: GraphwarWasmStepGlitchOwnedEvidence | undefined;
-  const targetSequence = route.targetSequence.map((target) => target.hitCircle);
   const controlPoint = route.pathPoints.at(-1) ?? options.pathPoints.at(-1);
   if (!controlPoint) {
     scanner.dispose();
@@ -1175,66 +1193,6 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
   }
   const controlX = imageToGraphPoint(controlPoint, options.bounds, options.boundsRect).x;
   const windows = createGraphwarWasmStepGlitchWindowsFromEvidence(initialEvidence);
-  // Command 20 currently owns a single target sequence. Preserve the existing
-  // multi-target replay path until the ABI carries the full deletion frontier;
-  // this keeps the production WASM path correct without feeding a larger
-  // sequence to a single-target composition contract.
-  if (targetSequence.length > 1) {
-    const protectedTargetPoints = route.targetSequence.map((target) => target.routePoint);
-    try {
-      for (let index = options.pathPoints.length; index < optimized.pathPoints.length;) {
-        if (options.isCancelled?.()) {
-          break;
-        }
-        const point = optimized.pathPoints[index];
-        if (point && protectedTargetPoints.some((protectedPoint) => pixelPointsEqual(protectedPoint, point))) {
-          index += 1;
-          continue;
-        }
-        const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
-        if (!oneClickClearPathFollowsGraphRule(options, candidatePath)) {
-          index += 1;
-          continue;
-        }
-        workUnits += 1;
-        const candidateRoute = { ...optimized, pathPoints: candidatePath };
-        const replay = scanner.replayRaw({
-          controlX,
-          finalValidation: {
-            simulationMaskCacheId: options.simulationMaskCacheId,
-            targetControlPoints: createOneClickClearTargetControlPoints(options, candidateRoute.targetSequence),
-            trackedTargets: createOneClickClearTrackedTargets(options, candidateRoute).map(
-              (trackedTarget) => trackedTarget.hitCircle,
-            ),
-            type: "validate",
-          },
-          path: candidatePath,
-          targetSequence,
-          type: "replay",
-          windows,
-        });
-        if (replay.status === "invalid-input") {
-          return { route: optimized, status: "invalid-input", workUnits };
-        }
-        if (replay.status === "unsupported") {
-          return { route: optimized, status: "unsupported", workUnits };
-        }
-        if (replay.status === "hit" && !replay.evidence) {
-          throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization returned no replay evidence");
-        }
-        if (replay.status === "hit" && replay.evidence) {
-          optimized = candidateRoute;
-          evidence = replay.evidence.owned;
-          continue;
-        }
-        index += 1;
-        await yieldOneClickClearControl(options);
-      }
-    } finally {
-      scanner.dispose();
-    }
-    return { ...(evidence ? { evidence } : {}), route: optimized, status: "ready", workUnits };
-  }
   try {
     if (options.isCancelled?.()) {
       return { route, status: "ready", workUnits };
@@ -1252,7 +1210,7 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
       isDeleteOptimizationEnabled: true,
       path: route.pathPoints,
       sourcePointCount: options.pathPoints.length,
-      targetSequence,
+      targetSequence: [scanTarget],
       type: "compose",
       windows,
     });
@@ -1283,12 +1241,17 @@ function runOneClickClearStepGlitchWasmReplay(
   simulationMask: Uint8Array,
   route: OneClickClearRoute,
 ) {
+  const orderedTarget = route.targetSequence.at(-1)?.hitCircle;
+  const requiredTargets = createOneClickClearPreviousTargets(route.targetSequence.slice(0, -1));
+  if (!orderedTarget) {
+    return { expandedStates: 0, status: "miss" as const };
+  }
   const created = createOneClickClearStepGlitchWasmScanner(
     options,
     formulaMode,
     simulationMask,
     options.pathPoints,
-    [],
+    requiredTargets,
     options.stepGlitchPrefixEvidence,
     options.prefixTarget,
   );
@@ -1312,7 +1275,7 @@ function runOneClickClearStepGlitchWasmReplay(
         type: "validate",
       },
       path: route.pathPoints,
-      targetSequence: route.targetSequence.map((target) => target.hitCircle),
+      targetSequence: [orderedTarget],
       type: "replay",
       windows: { type: "automatic" },
     });
@@ -2622,6 +2585,7 @@ async function selectOneClickClearStepDagPathWithWasm(
   if (activeEdges.length === 0) {
     return [];
   }
+  assertOneClickClearWasmStepNodeEvidence(wasmRuntime, dag.nodes, "stateful one-click retry");
 
   const edgesByJobId = new Map<number, OneClickClearDagEdge>();
   const dagJobs = activeEdges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
@@ -2726,6 +2690,7 @@ async function applyWasmPreferredStepDagPath(
   if (!options.wasmRuntime || dag.edges.length === 0) {
     return dag;
   }
+  assertOneClickClearWasmStepNodeEvidence(options.wasmRuntime, dag.nodes, "stateful one-click composition");
   const dagJobs = dag.edges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
     const fromNode = edge.from === START_NODE_INDEX ? undefined : dag.nodes[edge.from];
     const toNode = dag.nodes[edge.to];
@@ -2828,6 +2793,32 @@ async function applyWasmPreferredStepDagPath(
     return { ...dag, wasmSelection: { type: "failure" } };
   } finally {
     session.cancel();
+  }
+}
+
+/**
+ * Re-proves that stateful DAG node ids still describe the exact Step evidence used to build their edges before handing
+ * the explicit jobs to the retained WASM composition session. This keeps node identity and formula state atomic across
+ * the TypeScript DAG builder and the session boundary.
+ */
+function assertOneClickClearWasmStepNodeEvidence(
+  runtime: GraphwarWasmKernelRuntime,
+  nodes: readonly OneClickClearDagNode[],
+  phase: string,
+): void {
+  const evidence = nodes.map((node, index) => {
+    if (node.type !== "step-stateful" || node.id !== index) {
+      throw new GraphwarWasmFault("abi", `${phase} lost a stateful DAG node identity`);
+    }
+    return {
+      resolvedStateKey: node.stepRouteState.resolvedStateKey,
+      resolvedY: node.stepRouteState.resolvedY,
+      targetIndex: node.targetIndex,
+    } satisfies GraphwarWasmOneClickStepStateEvidence;
+  });
+  const interned = internGraphwarWasmOneClickStepStates(runtime, evidence);
+  if (interned.nodeCount !== nodes.length || interned.nodeIds.some((nodeId, index) => nodeId !== index)) {
+    throw new GraphwarWasmFault("abi", `${phase} changed Step node evidence`);
   }
 }
 

@@ -596,7 +596,7 @@ describe("Step glitch smart-path validation", () => {
       dispose: vi.fn(),
       replayRaw: vi.fn().mockReturnValue({ status: "hit" }),
       scanRaw: vi.fn().mockReturnValue({
-        evidence: { owned: { path: wasmPath } },
+        evidence: { owned: { path: wasmPath, requiredTargets: [] } },
         status: "hit",
       }),
     };
@@ -645,7 +645,10 @@ describe("Step glitch smart-path validation", () => {
     const scanner = {
       dispose: vi.fn(),
       replayRaw: vi.fn(),
-      scanRaw: vi.fn().mockReturnValue({ evidence: { owned: { path: scannedPath } }, status: "hit" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
     };
     mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
     mocks.validateTrajectory.mockReturnValue({ reachesTargetBeforeObstacle: false, visiblePixels: [] });
@@ -687,7 +690,10 @@ describe("Step glitch smart-path validation", () => {
     const scanner = {
       dispose: vi.fn(),
       replayRaw: vi.fn(),
-      scanRaw: vi.fn().mockReturnValue({ evidence: { owned: { path: scannedPath } }, status: "hit" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
     };
     mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
     mocks.composeStepGlitchSmartPath.mockImplementation(() => {
@@ -719,7 +725,10 @@ describe("Step glitch smart-path validation", () => {
     const scanner = {
       dispose: vi.fn(),
       replayRaw: vi.fn(),
-      scanRaw: vi.fn().mockReturnValue({ evidence: { owned: { path: scannedPath } }, status: "hit" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
     };
     mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
     mocks.composeStepGlitchSmartPath.mockReturnValue({
@@ -758,7 +767,10 @@ describe("Step glitch smart-path validation", () => {
     const scanner = {
       dispose: vi.fn(),
       replayRaw: vi.fn().mockReturnValue({ status: "miss" }),
-      scanRaw: vi.fn().mockReturnValue({ evidence: { owned: { path: scannedPath } }, status: "hit" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
     };
     mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
     mocks.composeStepGlitchSmartPath.mockReturnValue({

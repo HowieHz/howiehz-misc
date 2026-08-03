@@ -242,71 +242,86 @@ vi.mock("../routing/step-glitch-scan", async (importOriginal) => {
 });
 
 vi.mock("../../core/wasm/step-glitch-adapter", () => ({
-  createGraphwarWasmStepGlitchContext: vi.fn((_runtime: unknown, input: { sourcePath: PixelPoint[] }) => {
-    const context = {
-      dispose: vi.fn(),
-      composeRaw: vi
-        .fn()
-        .mockImplementation(
-          ({
-            path,
-            targetSequence,
-          }: {
-            path: readonly PixelPoint[];
-            targetSequence: readonly { center: PixelPoint; radius: number }[];
-          }) => {
-            const outcome = wasmMockState.outcomes.shift() ?? "miss";
-            const composedPath = wasmMockState.gatePoint
-              ? path.filter((point) => point.x !== wasmMockState.gatePoint?.x || point.y !== wasmMockState.gatePoint?.y)
-              : path;
-            return outcome === "hit"
-              ? {
-                  expandedStates: 1,
-                  evidence: createMockWasmEvidence(composedPath, targetSequence.at(-1)),
-                  status: "hit",
-                }
-              : { expandedStates: 1, status: outcome };
-          },
-        ),
-      replayRaw: vi.fn().mockImplementation(({ path }: { path: readonly PixelPoint[] }) => {
-        const outcome = wasmMockState.outcomes.shift() ?? "miss";
-        return outcome === "hit"
-          ? {
-              expandedStates: 1,
-              evidence: createMockWasmEvidence(path, { center: path.at(-1) ?? createPixelPoint(0, 0), radius: 1 }),
-              status: "hit",
-            }
-          : { expandedStates: 1, status: outcome };
-      }),
-      scanRaw: vi
-        .fn()
-        .mockImplementation(
-          ({
-            hitTarget,
-            targetPoint,
-          }: {
-            hitTarget: { center: PixelPoint; radius: number };
-            targetPoint: PixelPoint;
-          }) => {
-            const outcome = wasmMockState.outcomes.shift() ?? "no-path";
-            const path = [
-              ...input.sourcePath,
-              ...(wasmMockState.gatePoint ? [wasmMockState.gatePoint] : []),
+  createGraphwarWasmStepGlitchContext: vi.fn(
+    (
+      _runtime: unknown,
+      input: {
+        requiredTargets?: readonly { center: PixelPoint; radius: number }[];
+        sourcePath: PixelPoint[];
+      },
+    ) => {
+      const requiredTargets = input.requiredTargets ?? [];
+      const context = {
+        dispose: vi.fn(),
+        composeRaw: vi
+          .fn()
+          .mockImplementation(
+            ({
+              path,
+              targetSequence,
+            }: {
+              path: readonly PixelPoint[];
+              targetSequence: readonly { center: PixelPoint; radius: number }[];
+            }) => {
+              const outcome = wasmMockState.outcomes.shift() ?? "miss";
+              const composedPath = wasmMockState.gatePoint
+                ? path.filter(
+                    (point) => point.x !== wasmMockState.gatePoint?.x || point.y !== wasmMockState.gatePoint?.y,
+                  )
+                : path;
+              return outcome === "hit"
+                ? {
+                    expandedStates: 1,
+                    evidence: createMockWasmEvidence(composedPath, targetSequence.at(-1), requiredTargets),
+                    status: "hit",
+                  }
+                : { expandedStates: 1, status: outcome };
+            },
+          ),
+        replayRaw: vi.fn().mockImplementation(({ path }: { path: readonly PixelPoint[] }) => {
+          const outcome = wasmMockState.outcomes.shift() ?? "miss";
+          return outcome === "hit"
+            ? {
+                expandedStates: 1,
+                evidence: createMockWasmEvidence(
+                  path,
+                  { center: path.at(-1) ?? createPixelPoint(0, 0), radius: 1 },
+                  requiredTargets,
+                ),
+                status: "hit",
+              }
+            : { expandedStates: 1, status: outcome };
+        }),
+        scanRaw: vi
+          .fn()
+          .mockImplementation(
+            ({
+              hitTarget,
               targetPoint,
-            ];
-            return outcome === "hit"
-              ? {
-                  expandedStates: 1,
-                  evidence: createMockWasmEvidence(path, hitTarget),
-                  status: "hit",
-                }
-              : { expandedStates: 1, status: outcome };
-          },
-        ),
-    };
-    wasmMockState.contexts.push(context);
-    return { context, status: "ready" };
-  }),
+            }: {
+              hitTarget: { center: PixelPoint; radius: number };
+              targetPoint: PixelPoint;
+            }) => {
+              const outcome = wasmMockState.outcomes.shift() ?? "no-path";
+              const path = [
+                ...input.sourcePath,
+                ...(wasmMockState.gatePoint ? [wasmMockState.gatePoint] : []),
+                targetPoint,
+              ];
+              return outcome === "hit"
+                ? {
+                    expandedStates: 1,
+                    evidence: createMockWasmEvidence(path, hitTarget, requiredTargets),
+                    status: "hit",
+                  }
+                : { expandedStates: 1, status: outcome };
+            },
+          ),
+      };
+      wasmMockState.contexts.push(context);
+      return { context, status: "ready" };
+    },
+  ),
   createGraphwarWasmStepGlitchContextInput: vi.fn((input: unknown) => input),
   createGraphwarWasmStepGlitchScanCommandInput: vi.fn((input: unknown) => input),
   createGraphwarWasmStepGlitchWindowsFromEvidence: vi.fn(() => {
@@ -394,6 +409,32 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(result).toMatchObject({ targetIds: ["first"], type: "success" });
     expect(wasmMockState.windowsFromEvidenceCalls).toBe(1);
     expect(wasmMockState.contexts.some((context) => context.composeRaw.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("uses command 20 for multi-target deletion without a TypeScript replay loop", async () => {
+    wasmMockState.outcomes.push("hit", "hit", "hit");
+    const start = toPixel(-11, 0);
+    const first = toPixel(-9, 0);
+    const second = toPixel(-6, 0);
+    const candidates = [
+      { isEnemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { isEnemy: true, hitCenter: second, hitRadius: 12, id: "second" },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(start, candidates, createEmptyMask(), "visibility-graph", true),
+      wasmRuntime: {} as GraphwarWasmKernelRuntime,
+    });
+
+    expect(result.type).toBe("success");
+    const optimizationContext = wasmMockState.contexts.at(-1);
+    expect(optimizationContext?.composeRaw).toHaveBeenCalledOnce();
+    expect(optimizationContext?.replayRaw).not.toHaveBeenCalled();
+    expect(optimizationContext?.composeRaw.mock.calls[0]?.[0].targetSequence).toEqual([{ center: second, radius: 12 }]);
+    expect(optimizationContext?.composeRaw.mock.calls[0]?.[0].finalValidation).toMatchObject({
+      targetControlPoints: expect.arrayContaining([expect.any(Object), expect.any(Object)]),
+      type: "validate",
+    });
   });
 
   it("does not turn a command-20 invalid input into a final replay success", async () => {
@@ -956,7 +997,11 @@ function createEmptyMask() {
   return new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
 }
 
-function createMockWasmEvidence(path: readonly PixelPoint[], hitTarget?: { center: PixelPoint; radius: number }) {
+function createMockWasmEvidence(
+  path: readonly PixelPoint[],
+  hitTarget?: { center: PixelPoint; radius: number },
+  requiredTargets: readonly { center: PixelPoint; radius: number }[] = [],
+) {
   const settings = {
     algorithm: "step" as const,
     decimalPlaces: 4,
@@ -975,6 +1020,10 @@ function createMockWasmEvidence(path: readonly PixelPoint[], hitTarget?: { cente
     owned: {
       formulaContext,
       path: path.map((point) => ({ ...point })),
+      requiredTargets: requiredTargets.map((target) => ({
+        center: { ...target.center },
+        radius: target.radius,
+      })),
       trajectory: {
         trackedTargetHitIndexes: hitTarget ? [0] : [],
         visiblePixels: path.map((point) => ({ ...point })),

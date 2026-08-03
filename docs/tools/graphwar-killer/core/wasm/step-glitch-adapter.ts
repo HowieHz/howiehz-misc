@@ -369,6 +369,8 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   copyFarthestFreeX: () => Int16Array;
   dispose: () => void;
   isMirrored: boolean;
+  /** Retained target identity used to reject evidence/context splicing at composition boundaries. */
+  readonly requiredTargets?: readonly GraphwarTrajectoryTargetCircle[];
   prepareCandidateFormulaForTest: (
     input: GraphwarWasmStepGlitchFormulaCandidateTestInput,
   ) => GraphwarWasmFormulaLaunchResult;
@@ -737,6 +739,8 @@ export interface GraphwarWasmStepGlitchOwnedEvidence {
   readonly path: readonly PixelPoint[];
   readonly pointerEncoding: "relative-to-evidence";
   readonly protection: readonly number[];
+  /** Required target order retained by the scan context for multi-target composition provenance. */
+  readonly requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
   /** Scan-only target identity retained for smart composition provenance checks. */
   readonly scanTarget?: GraphwarTrajectoryTargetCircle;
   readonly trackedTargetHitIndexes: readonly number[];
@@ -774,6 +778,8 @@ export interface GraphwarWasmStepGlitchSmartCompositionInput {
   readonly initialEvidence: GraphwarWasmStepGlitchOwnedEvidence;
   readonly initialPath: readonly PixelPoint[];
   readonly isDeleteOptimizationEnabled: boolean;
+  /** Route anchors that deletion must preserve; hit-circle centers are not sufficient evidence. */
+  readonly targetControlPoints: readonly PixelPoint[];
   readonly scanner: GraphwarWasmStepGlitchGeometryTestContext;
   readonly simulationMask: Uint8Array;
   readonly sourcePointCount: number;
@@ -798,15 +804,24 @@ export type GraphwarWasmStepGlitchSmartCompositionResult =
 export function composeGraphwarWasmStepGlitchSmartPath(
   input: GraphwarWasmStepGlitchSmartCompositionInput,
 ): GraphwarWasmStepGlitchSmartCompositionResult {
+  const scanTarget = input.initialEvidence.scanTarget;
+  if (!scanTarget) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch smart composition source identity is invalid",
+      "input",
+    );
+  }
   if (
     !Number.isFinite(input.controlX) ||
     !Number.isInteger(input.sourcePointCount) ||
     input.sourcePointCount < 1 ||
     input.sourcePointCount > input.initialPath.length ||
     input.targetSequence.length === 0 ||
-    !input.initialEvidence.scanTarget ||
-    input.targetSequence.length !== 1 ||
-    !productionEvidenceTargetSequencesEqual([input.initialEvidence.scanTarget], input.targetSequence) ||
+    !productionEvidenceTargetSequencesEqual(
+      [...input.initialEvidence.requiredTargets, scanTarget],
+      input.targetSequence,
+    ) ||
     !graphwarByteArraysEqual(input.initialEvidence.formulaInput.mask, input.simulationMask) ||
     !graphwarTrajectoryFormulaSettingsAreEquivalent(
       input.initialEvidence.formulaInput.settings,
@@ -816,7 +831,11 @@ export function composeGraphwarWasmStepGlitchSmartPath(
     input.initialEvidence.path.some((point, index) => {
       const expectedPoint = input.initialPath[index];
       return expectedPoint === undefined || !pixelPointsEqual(point, expectedPoint);
-    })
+    }) ||
+    input.targetControlPoints.length === 0 ||
+    !input.targetControlPoints.every(isGraphwarTrajectoryPoint) ||
+    (input.scanner.requiredTargets !== undefined &&
+      !productionEvidenceTargetSequencesEqual(input.scanner.requiredTargets, input.initialEvidence.requiredTargets))
   ) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
@@ -825,17 +844,23 @@ export function composeGraphwarWasmStepGlitchSmartPath(
     );
   }
 
+  const compositionTargetSequence = orderedTargetSequence(input.initialEvidence.requiredTargets, scanTarget);
   const optimizedPath = input.initialPath.map(({ x, y }) => createPixelPoint(x, y));
   if (!input.isDeleteOptimizationEnabled) {
     return { evidence: input.initialEvidence, path: optimizedPath, replayCount: 0, status: "success" };
   }
   const composed = input.scanner.composeRaw({
     controlX: input.controlX,
-    finalValidation: { type: "none" },
+    finalValidation: {
+      simulationMaskCacheId: 0,
+      targetControlPoints: input.targetControlPoints,
+      trackedTargets: [],
+      type: "validate",
+    },
     isDeleteOptimizationEnabled: true,
     path: optimizedPath,
     sourcePointCount: input.sourcePointCount,
-    targetSequence: input.targetSequence,
+    targetSequence: compositionTargetSequence,
     windows: createGraphwarWasmStepGlitchWindowsFromEvidence(input.initialEvidence),
     type: "compose",
   });
@@ -2081,6 +2106,10 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     path,
     pointerEncoding: "relative-to-evidence",
     protection,
+    requiredTargets: context.requiredTargets.map((target) => ({
+      center: createPixelPoint(target.center.x, target.center.y),
+      radius: target.radius,
+    })),
     ...(continuation ? { continuation } : {}),
     ...(command.type === "scan"
       ? {
@@ -2960,6 +2989,7 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
           isDisposed = true;
         },
         isMirrored,
+        requiredTargets: requiredTargetsSnapshot,
         prepareCandidateFormulaForTest(candidateInput) {
           assertActive();
           return prepareGraphwarWasmStepGlitchCandidateFormula(
@@ -4958,7 +4988,7 @@ export function packGraphwarWasmStepGlitchCommandInput(
       command.path.length < command.sourcePointCount ||
       !command.path.every(isGraphwarTrajectoryPoint) ||
       !context.sourcePath.every((point, index) => pixelPointsEqual(point, command.path[index])) ||
-      command.targetSequence.length === 0 ||
+      (command.targetSequence.length === 0 && context.requiredTargets.length === 0) ||
       !targetsAreValid(command.targetSequence)
     ) {
       return { status: "invalid-input" };

@@ -14,6 +14,12 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
 
 describe("Graphwar WASM composition adapter", () => {
+  it("returns an empty Step state mapping without crossing the raw ABI", async () => {
+    const runtime = await createRuntime();
+    expect(internGraphwarWasmOneClickStepStates(runtime, [])).toEqual({ nodeCount: 0, nodeIds: [] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("interns canonical Step state identities without truncating large keys", async () => {
     const runtime = await createRuntime();
     const result = internGraphwarWasmOneClickStepStates(runtime, [

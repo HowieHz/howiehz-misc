@@ -1164,6 +1164,10 @@ export function internGraphwarWasmOneClickStepStates(
 ): GraphwarWasmOneClickStepStateInternResult {
   const mark = runtime.markArena();
   try {
+    if (evidence.length === 0) {
+      runtime.resetArena(mark);
+      return { nodeCount: 0, nodeIds: [] };
+    }
     const targetIndexes = evidence.map((entry, index) => {
       const targetIndex = validateGraphwarWasmU32(entry.targetIndex, `stepStates[${index}].targetIndex`, "input");
       const resolvedY = validateGraphwarWasmFiniteNumber(entry.resolvedY, `stepStates[${index}].resolvedY`, "input");

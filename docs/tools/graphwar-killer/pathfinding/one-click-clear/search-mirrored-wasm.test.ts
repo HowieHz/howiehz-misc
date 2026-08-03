@@ -780,34 +780,24 @@ describe("one-click-clear mirrored WASM guard", () => {
     runRouteTask.mockRestore();
   });
 
-  it("rejects stateful composition when WASM re-interning changes node identity", async () => {
+  it("rejects stateful composition when WASM node evidence changes identity", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
-    const runRouteTask = runtime.runRouteTask.bind(runtime);
-    let stateDedupCallCount = 0;
-    const runRouteTaskSpy = vi
-      .spyOn(runtime, "runRouteTask")
-      .mockImplementation((command, inputPointer, inputByteLength) => {
-        const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
-        if (command === 21 && ++stateDedupCallCount === 3) {
-          const result = new DataView(
-            runtime.buffer,
-            resultPointer,
-            graphwarWasmCompositionLayout.oneClickStepStateDedupResultByteLength,
-          );
-          const nodePointer = result.getUint32(8, true);
-          const nodeCount = result.getUint32(12, true);
-          if (nodeCount !== 2) {
-            throw new Error(`expected two stateful DAG nodes, received ${nodeCount}`);
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        if (inputByteLength === graphwarWasmCompositionLayout.oneClickInputEvidenceByteLength) {
+          const input = new DataView(runtime.buffer, inputPointer, inputByteLength);
+          const nodeTargetsPointer = input.getUint32(92, true);
+          const nodeTargets = new Uint32Array(runtime.buffer, nodeTargetsPointer, 2);
+          const firstTarget = nodeTargets[0];
+          const secondTarget = nodeTargets[1];
+          if (firstTarget === undefined || secondTarget === undefined) {
+            throw new Error("expected two stateful DAG target bindings");
           }
-          const nodeIds = new Uint32Array(runtime.buffer, nodePointer, nodeCount);
-          const firstNodeId = nodeIds[0];
-          const secondNodeId = nodeIds[1];
-          if (firstNodeId === undefined || secondNodeId === undefined) {
-            throw new Error("expected two stateful DAG node identities");
-          }
-          [nodeIds[0], nodeIds[1]] = [secondNodeId, firstNodeId];
+          [nodeTargets[0], nodeTargets[1]] = [secondTarget, firstTarget];
         }
-        return resultPointer;
+        return beginOneClickClear(inputPointer, inputByteLength);
       });
 
     const start = createPixelPoint(100, 225);
@@ -815,7 +805,6 @@ describe("one-click-clear mirrored WASM guard", () => {
       { id: "first", isEnemy: true, hitCenter: createPixelPoint(300, 225), hitRadius: 4 },
       { id: "second", isEnemy: true, hitCenter: createPixelPoint(500, 225), hitRadius: 4 },
     ];
-
     const options = {
       boundaryExpansion: 0,
       bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
@@ -849,11 +838,9 @@ describe("one-click-clear mirrored WASM guard", () => {
     } satisfies GraphwarOneClickClearBuildOptions;
 
     try {
-      await expect(buildGraphwarOneClickClearPath(options)).rejects.toThrow(
-        "stateful one-click composition changed Step node evidence",
-      );
+      await expect(buildGraphwarOneClickClearPath(options)).rejects.toThrow();
     } finally {
-      runRouteTaskSpy.mockRestore();
+      beginOneClickClearSpy.mockRestore();
     }
   });
 });

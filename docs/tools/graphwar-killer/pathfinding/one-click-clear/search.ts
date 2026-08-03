@@ -2585,7 +2585,7 @@ async function selectOneClickClearStepDagPathWithWasm(
   if (activeEdges.length === 0) {
     return [];
   }
-  assertOneClickClearWasmStepNodeEvidence(wasmRuntime, dag.nodes, "stateful one-click retry");
+  const dagNodeEvidence = createOneClickClearWasmStepNodeEvidence(dag.nodes, "stateful one-click retry");
 
   const edgesByJobId = new Map<number, OneClickClearDagEdge>();
   const dagJobs = activeEdges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
@@ -2632,6 +2632,8 @@ async function selectOneClickClearStepDagPathWithWasm(
       isEnemy: true,
     })),
     dagJobs,
+    dagNodeEvidence,
+    dagNodeCount: dag.nodes.length,
     isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
     isStepStateful: true,
     isTargetOrderDescending: !xPlusGoesRight(options.bounds),
@@ -2690,7 +2692,7 @@ async function applyWasmPreferredStepDagPath(
   if (!options.wasmRuntime || dag.edges.length === 0) {
     return dag;
   }
-  assertOneClickClearWasmStepNodeEvidence(options.wasmRuntime, dag.nodes, "stateful one-click composition");
+  const dagNodeEvidence = createOneClickClearWasmStepNodeEvidence(dag.nodes, "stateful one-click composition");
   const dagJobs = dag.edges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
     const fromNode = edge.from === START_NODE_INDEX ? undefined : dag.nodes[edge.from];
     const toNode = dag.nodes[edge.to];
@@ -2737,6 +2739,8 @@ async function applyWasmPreferredStepDagPath(
     targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
     verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
     dagJobs,
+    dagNodeEvidence,
+    dagNodeCount: dag.nodes.length,
   });
   if (composition.status !== "waiting-edge-batch") {
     return { ...dag, wasmSelection: { type: "failure" } };
@@ -2801,12 +2805,11 @@ async function applyWasmPreferredStepDagPath(
  * the explicit jobs to the retained WASM composition session. This keeps node identity and formula state atomic across
  * the TypeScript DAG builder and the session boundary.
  */
-function assertOneClickClearWasmStepNodeEvidence(
-  runtime: GraphwarWasmKernelRuntime,
+function createOneClickClearWasmStepNodeEvidence(
   nodes: readonly OneClickClearDagNode[],
   phase: string,
-): void {
-  const evidence = nodes.map((node, index) => {
+): GraphwarWasmOneClickStepStateEvidence[] {
+  return nodes.map((node, index) => {
     if (node.type !== "step-stateful" || node.id !== index) {
       throw new GraphwarWasmFault("abi", `${phase} lost a stateful DAG node identity`);
     }
@@ -2816,10 +2819,6 @@ function assertOneClickClearWasmStepNodeEvidence(
       targetIndex: node.targetIndex,
     } satisfies GraphwarWasmOneClickStepStateEvidence;
   });
-  const interned = internGraphwarWasmOneClickStepStates(runtime, evidence);
-  if (interned.nodeCount !== nodes.length || interned.nodeIds.some((nodeId, index) => nodeId !== index)) {
-    throw new GraphwarWasmFault("abi", `${phase} changed Step node evidence`);
-  }
 }
 
 /** 目标分配已经按该统一 forward 列排序；把相同量化列身份显式带入 WASM。 */

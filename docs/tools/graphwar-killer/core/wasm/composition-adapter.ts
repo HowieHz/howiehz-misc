@@ -27,6 +27,7 @@ export const graphwarWasmCompositionLayout = {
   oneClickEdgeJobByteLength: 56,
   oneClickEdgeResultByteLength: 28,
   oneClickInputByteLength: 96,
+  oneClickInputEvidenceByteLength: 120,
   oneClickResultByteLength: 56,
   oneClickResumeByteLength: 16,
   oneClickSessionByteLength: 112,
@@ -140,6 +141,13 @@ const oneClickInput = {
   dagNodeIds: 80,
   dagNodeIdCount: 84,
   dagNodeCount: 88,
+  dagNodeTargets: 92,
+  dagNodeResolvedY: 96,
+  dagNodeKeyOffsets: 100,
+  dagNodeKeyLengths: 104,
+  dagNodeKeyBytes: 108,
+  dagNodeKeyByteLength: 112,
+  dagNodeEvidenceCount: 116,
 } as const;
 
 const oneClickResult = {
@@ -361,6 +369,8 @@ export interface GraphwarWasmOneClickClearInput {
   readonly candidates: readonly GraphwarWasmOneClickCandidate[];
   /** Optional full DAG descriptor; when present WASM consumes these jobs verbatim. */
   readonly dagJobs?: readonly GraphwarWasmOneClickDagJob[];
+  /** Atomic Step node evidence paired by node id with an explicit stateful DAG. */
+  readonly dagNodeEvidence?: readonly GraphwarWasmOneClickStepStateEvidence[];
   /** Optional legacy upper bound for interned DAG nodes; omitted values are derived from job identities. */
   readonly dagNodeCount?: number;
   readonly isDeleteOptimizationEnabled: boolean;
@@ -1347,16 +1357,13 @@ export function beginGraphwarWasmOneClickClear(
   let beginArenaCursor = 0;
   try {
     const packed = packOneClickInput(runtime, input);
-    const commandPointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickInputByteLength, 8);
+    const commandPointer = runtime.reserveArena(packed.inputByteLength, 8);
     writeOneClickInput(runtime, commandPointer, packed);
     // begin may publish a retained session before a later runtime/result-boundary failure reaches this adapter.
     // Mark the command as started before crossing the boundary so the catch path always releases that session.
     hasBegunSessionCommand = true;
     beginArenaCursor = runtime.arenaCursor;
-    const resultPointer = runtime.beginOneClickClear(
-      commandPointer,
-      graphwarWasmCompositionLayout.oneClickInputByteLength,
-    );
+    const resultPointer = runtime.beginOneClickClear(commandPointer, packed.inputByteLength);
     const decoded = copyOneClickResult(
       runtime,
       resultPointer,
@@ -1939,8 +1946,55 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     );
   }
   const dagNodeCount = declaredDagNodeCount ?? derivedDagNodeCount;
+  const dagNodeEvidence = input.dagNodeEvidence
+    ? input.dagNodeEvidence.map((entry, index) => {
+        const targetIndex = validateGraphwarWasmU32(
+          entry.targetIndex,
+          `dagNodeEvidence[${index}].targetIndex`,
+          "input",
+        );
+        const resolvedY = validateGraphwarWasmFiniteNumber(
+          entry.resolvedY,
+          `dagNodeEvidence[${index}].resolvedY`,
+          "input",
+        );
+        if (targetIndex >= candidates.length) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-index",
+            `dagNodeEvidence[${index}] references an unknown target`,
+            "input",
+          );
+        }
+        try {
+          if (BigInt(entry.resolvedStateKey).toString() !== entry.resolvedStateKey) {
+            throw new Error("non-canonical");
+          }
+        } catch {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `dagNodeEvidence[${index}].resolvedStateKey is not canonical`,
+            "input",
+          );
+        }
+        return { resolvedStateKey: entry.resolvedStateKey, resolvedY, targetIndex };
+      })
+    : [];
+  if (dagNodeEvidence.length > 0 && (!input.dagJobs || !input.isStepStateful)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "dagNodeEvidence requires an explicit stateful DAG",
+      "input",
+    );
+  }
+  if (input.isStepStateful && input.dagJobs && dagNodeEvidence.length !== dagNodeCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "stateful DAG node evidence count does not match dagNodeCount",
+      "input",
+    );
+  }
   const dagEdgeIdentities = new Set<string>();
-  const dagNodeTargets = new Map<number, number>();
+  const dagNodeTargetBindings = new Map<number, number>();
   for (const [index, job] of dagJobs.entries()) {
     if (
       job.toNodeId >= dagNodeCount ||
@@ -1957,13 +2011,40 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
       );
     }
     dagEdgeIdentities.add(identity);
-    bindDagNodeTarget(dagNodeTargets, job.fromNodeId, job.from, index);
-    bindDagNodeTarget(dagNodeTargets, job.toNodeId, job.to, index);
+    bindDagNodeTarget(dagNodeTargetBindings, job.fromNodeId, job.from, index);
+    bindDagNodeTarget(dagNodeTargetBindings, job.toNodeId, job.to, index);
   }
   validateDagNodeAcyclic(dagJobs);
   if (!input.dagJobs && input.dagNodeCount !== undefined) {
     throw new GraphwarWasmAdapterError("invalid-session-state", "dagNodeCount requires dagJobs", "input");
   }
+  const dagNodeTargetEvidence = new Uint32Array(dagNodeEvidence.map(({ targetIndex }) => targetIndex));
+  const dagNodeResolvedY = new Float64Array(dagNodeEvidence.map(({ resolvedY }) => resolvedY));
+  const dagNodeKeyOffsets = new Uint32Array(dagNodeEvidence.length + 1);
+  const dagNodeKeyLengths = new Uint32Array(dagNodeEvidence.length);
+  const dagNodeKeyByteLength = dagNodeEvidence.reduce(
+    (length, { resolvedStateKey }) => length + resolvedStateKey.length,
+    0,
+  );
+  const dagNodeKeyBytes = new Uint8Array(dagNodeKeyByteLength);
+  let dagNodeKeyOffset = 0;
+  for (const [index, { resolvedStateKey }] of dagNodeEvidence.entries()) {
+    dagNodeKeyOffsets[index] = dagNodeKeyOffset;
+    dagNodeKeyLengths[index] = resolvedStateKey.length;
+    for (let characterIndex = 0; characterIndex < resolvedStateKey.length; characterIndex += 1) {
+      const code = resolvedStateKey.charCodeAt(characterIndex);
+      if (code > 0x7f) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `dagNodeEvidence[${index}].resolvedStateKey is not ASCII`,
+          "input",
+        );
+      }
+      dagNodeKeyBytes[dagNodeKeyOffset + characterIndex] = code;
+    }
+    dagNodeKeyOffset += resolvedStateKey.length;
+  }
+  dagNodeKeyOffsets[dagNodeEvidence.length] = dagNodeKeyOffset;
   const dagNodeIds = new Uint32Array(dagJobs.length * 2);
   dagJobs.forEach((job, index) => {
     dagNodeIds[index * 2] = job.fromNodeId;
@@ -1977,7 +2058,14 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     ),
     dagJobs: writeOneClickDagJobs(runtime, dagJobs),
     dagNodeCount,
+    dagNodeEvidenceCount: dagNodeEvidence.length,
+    dagNodeKeyByteLength,
+    dagNodeKeyBytes: writeGraphwarWasmBytes(runtime, dagNodeKeyBytes, runtime.arenaBase),
+    dagNodeKeyLengths: writeGraphwarWasmUint32Values(runtime, dagNodeKeyLengths, runtime.arenaBase),
+    dagNodeKeyOffsets: writeGraphwarWasmUint32Values(runtime, dagNodeKeyOffsets, runtime.arenaBase),
     dagNodeIds: writeGraphwarWasmUint32Values(runtime, dagNodeIds, runtime.arenaBase),
+    dagNodeResolvedY: writeGraphwarWasmFloat64Values(runtime, dagNodeResolvedY, runtime.arenaBase),
+    dagNodeTargets: writeGraphwarWasmUint32Values(runtime, dagNodeTargetEvidence, runtime.arenaBase),
     candidateX: writeGraphwarWasmFloat64Values(
       runtime,
       new Float64Array(candidates.map(({ point }) => point.x)),
@@ -2006,6 +2094,10 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     routeContextPointer: validateOptionalPointer(input.routeContextPointer, "routeContextPointer"),
     targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
+    inputByteLength:
+      dagNodeEvidence.length === 0
+        ? graphwarWasmCompositionLayout.oneClickInputByteLength
+        : graphwarWasmCompositionLayout.oneClickInputEvidenceByteLength,
   };
 }
 
@@ -2357,7 +2449,7 @@ function writeOneClickInput(
   pointer: number,
   packed: ReturnType<typeof packOneClickInput>,
 ) {
-  const view = new DataView(runtime.buffer, pointer, graphwarWasmCompositionLayout.oneClickInputByteLength);
+  const view = new DataView(runtime.buffer, pointer, packed.inputByteLength);
   view.setUint32(0, oneClickInputMagic, true);
   view.setUint32(4, oneClickInputVersion, true);
   view.setUint32(oneClickInput.flags, packed.flags, true);
@@ -2379,6 +2471,15 @@ function writeOneClickInput(
   view.setUint32(oneClickInput.dagNodeIds, packed.dagNodeIds.pointer, true);
   view.setUint32(oneClickInput.dagNodeIdCount, packed.dagNodeIds.length, true);
   view.setUint32(oneClickInput.dagNodeCount, packed.dagNodeCount, true);
+  if (packed.inputByteLength === graphwarWasmCompositionLayout.oneClickInputEvidenceByteLength) {
+    view.setUint32(oneClickInput.dagNodeTargets, packed.dagNodeTargets.pointer, true);
+    view.setUint32(oneClickInput.dagNodeResolvedY, packed.dagNodeResolvedY.pointer, true);
+    view.setUint32(oneClickInput.dagNodeKeyOffsets, packed.dagNodeKeyOffsets.pointer, true);
+    view.setUint32(oneClickInput.dagNodeKeyLengths, packed.dagNodeKeyLengths.pointer, true);
+    view.setUint32(oneClickInput.dagNodeKeyBytes, packed.dagNodeKeyBytes.pointer, true);
+    view.setUint32(oneClickInput.dagNodeKeyByteLength, packed.dagNodeKeyByteLength, true);
+    view.setUint32(oneClickInput.dagNodeEvidenceCount, packed.dagNodeEvidenceCount, true);
+  }
 }
 
 function copyOneClickResult(

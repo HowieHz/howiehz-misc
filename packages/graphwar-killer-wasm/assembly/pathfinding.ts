@@ -7244,8 +7244,12 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   requireGraphwarGameConstantsInitialized();
   const isLegacyInput = inputByteLength == Layout.ONE_CLICK_INPUT_LEGACY_BYTE_LENGTH;
   const hasTargetOrderKeys =
-    inputByteLength == Layout.ONE_CLICK_INPUT_COLUMNS_BYTE_LENGTH || inputByteLength == Layout.ONE_CLICK_INPUT_BYTE_LENGTH;
-  const hasDagDescriptor = inputByteLength == Layout.ONE_CLICK_INPUT_BYTE_LENGTH;
+    inputByteLength == Layout.ONE_CLICK_INPUT_COLUMNS_BYTE_LENGTH ||
+    inputByteLength == Layout.ONE_CLICK_INPUT_BYTE_LENGTH ||
+    inputByteLength == Layout.ONE_CLICK_INPUT_EVIDENCE_BYTE_LENGTH;
+  const hasDagDescriptor =
+    inputByteLength == Layout.ONE_CLICK_INPUT_BYTE_LENGTH || inputByteLength == Layout.ONE_CLICK_INPUT_EVIDENCE_BYTE_LENGTH;
+  const hasNodeEvidence = inputByteLength == Layout.ONE_CLICK_INPUT_EVIDENCE_BYTE_LENGTH;
   if (!isLegacyInput && !hasTargetOrderKeys)
     trap();
   requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
@@ -7267,7 +7271,9 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   )
     trap();
   const isExplicitDag = (flags & Layout.ONE_CLICK_INPUT_FLAG_EXPLICIT_DAG) != 0;
+  const isStepStateful = (flags & Layout.ONE_CLICK_INPUT_FLAG_STEP_STATEFUL) != 0;
   if (isExplicitDag && !hasDagDescriptor) trap();
+  if (isExplicitDag && isStepStateful && !hasNodeEvidence) trap();
   const isTargetOrderDescending = (flags & Layout.ONE_CLICK_INPUT_FLAG_TARGET_ORDER_DESCENDING) != 0;
   const candidateCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_COUNT_OFFSET);
   const candidateXPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_CANDIDATE_X_POINTER_OFFSET);
@@ -7297,6 +7303,13 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   let dagNodeIdsPointer: u32 = 0;
   let dagNodeIdsCount: u32 = 0;
   let dagNodeCount: u32 = 0;
+  let dagNodeTargetsPointer: u32 = 0;
+  let dagNodeResolvedYPointer: u32 = 0;
+  let dagNodeKeyOffsetsPointer: u32 = 0;
+  let dagNodeKeyLengthsPointer: u32 = 0;
+  let dagNodeKeyBytesPointer: u32 = 0;
+  let dagNodeKeyByteLength: u32 = 0;
+  let dagNodeEvidenceCount: u32 = 0;
   if (hasDagDescriptor) {
     dagJobPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_JOB_POINTER_OFFSET);
     dagJobCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_JOB_COUNT_OFFSET);
@@ -7323,6 +7336,54 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   } else if (isExplicitDag) {
     trap();
   }
+  if (hasNodeEvidence) {
+    dagNodeTargetsPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_TARGETS_POINTER_OFFSET);
+    dagNodeResolvedYPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_RESOLVED_Y_POINTER_OFFSET);
+    dagNodeKeyOffsetsPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_KEY_OFFSETS_POINTER_OFFSET);
+    dagNodeKeyLengthsPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_KEY_LENGTHS_POINTER_OFFSET);
+    dagNodeKeyBytesPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_KEY_BYTES_POINTER_OFFSET);
+    dagNodeKeyByteLength = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_KEY_BYTE_LENGTH_OFFSET);
+    dagNodeEvidenceCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_DAG_NODE_EVIDENCE_COUNT_OFFSET);
+    if (
+      (!isExplicitDag && dagNodeEvidenceCount != 0) ||
+      (isExplicitDag && isStepStateful && dagNodeEvidenceCount != dagNodeCount) ||
+      (isExplicitDag && !isStepStateful && dagNodeEvidenceCount != 0)
+    )
+      trap();
+    if (dagNodeEvidenceCount == 0) {
+      if (
+        dagNodeTargetsPointer != 0 ||
+        dagNodeResolvedYPointer != 0 ||
+        dagNodeKeyOffsetsPointer != 0 ||
+        dagNodeKeyLengthsPointer != 0 ||
+        dagNodeKeyBytesPointer != 0 ||
+        dagNodeKeyByteLength != 0
+      )
+        trap();
+    } else {
+      if (
+        dagNodeEvidenceCount > u32.MAX_VALUE / sizeof<u32>() ||
+        dagNodeEvidenceCount > u32.MAX_VALUE / sizeof<f64>() ||
+        dagNodeEvidenceCount == u32.MAX_VALUE
+      )
+        trap();
+      requireArenaRange(dagNodeTargetsPointer, dagNodeEvidenceCount * sizeof<u32>(), sizeof<u32>());
+      requireArenaRange(dagNodeResolvedYPointer, dagNodeEvidenceCount * sizeof<f64>(), sizeof<f64>());
+      requireArenaRange(dagNodeKeyOffsetsPointer, (dagNodeEvidenceCount + 1) * sizeof<u32>(), sizeof<u32>());
+      requireArenaRange(dagNodeKeyLengthsPointer, dagNodeEvidenceCount * sizeof<u32>(), sizeof<u32>());
+      requireArenaRange(dagNodeKeyBytesPointer, dagNodeKeyByteLength, 1);
+      let evidenceIndex: u32 = 0;
+      while (evidenceIndex < dagNodeEvidenceCount) {
+        const keyStart = load<u32>(dagNodeKeyOffsetsPointer + evidenceIndex * sizeof<u32>());
+        const keyEnd = load<u32>(dagNodeKeyOffsetsPointer + (evidenceIndex + 1) * sizeof<u32>());
+        const keyLength = load<u32>(dagNodeKeyLengthsPointer + evidenceIndex * sizeof<u32>());
+        if (keyStart > keyEnd || keyEnd > dagNodeKeyByteLength || keyEnd - keyStart != keyLength) trap();
+        if (!isCanonicalStepStateKey(dagNodeKeyBytesPointer + keyStart, keyLength)) trap();
+        compositionRequireFinite(load<f64>(dagNodeResolvedYPointer + evidenceIndex * sizeof<f64>()));
+        evidenceIndex += 1;
+      }
+    }
+  }
   if (isExplicitDag && dagJobCount != 0) {
     let dagIndex: u32 = 0;
     while (dagIndex < dagJobCount) {
@@ -7346,6 +7407,10 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
         load<u32>(dagNodeIdsPointer + (dagIndex * 2 + 1) * sizeof<u32>()) != toNodeId
       )
         trap();
+      if (hasNodeEvidence) {
+        if (load<u32>(dagNodeTargetsPointer + toNodeId * sizeof<u32>()) != to) trap();
+        if (fromNodeId != u32.MAX_VALUE && load<u32>(dagNodeTargetsPointer + fromNodeId * sizeof<u32>()) != from) trap();
+      }
       compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_START_X_OFFSET));
       compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_START_Y_OFFSET));
       compositionRequireFinite(load<f64>(job + ONE_CLICK_EDGE_TARGET_X_OFFSET));

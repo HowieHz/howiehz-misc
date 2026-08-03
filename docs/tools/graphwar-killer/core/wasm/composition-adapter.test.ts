@@ -978,6 +978,11 @@ describe("Graphwar WASM composition adapter", () => {
           toNodeId: 2,
         },
       ],
+      dagNodeEvidence: [
+        { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        { resolvedStateKey: "1", resolvedY: 0, targetIndex: 1 },
+        { resolvedStateKey: "2", resolvedY: 0, targetIndex: 0 },
+      ],
       isStepStateful: true,
     });
     expect(started.status).toBe("waiting-edge-batch");
@@ -985,6 +990,123 @@ describe("Graphwar WASM composition adapter", () => {
       expect(started.handle.dagNodeCount).toBe(3);
       started.handle.cancel();
     }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("transfers stateful DAG node evidence through the begin ABI", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      isStepStateful: true,
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") started.handle.cancel();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a stateful DAG that omits its atomic node evidence", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+        ],
+      }),
+    ).toThrow(/stateful DAG node evidence count/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects stateful DAG evidence whose target binding differs at begin", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+        ],
+        dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 1 }],
+      }),
+    ).toThrow(/unreachable/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each(["01", "-0", "+1", "1.0"])(
+    "rejects non-canonical stateful DAG evidence key %s before begin",
+    async (resolvedStateKey) => {
+      const runtime = await createRuntime();
+      expect(() =>
+        beginGraphwarWasmOneClickClear(runtime, {
+          ...createOneClickInput(),
+          isStepStateful: true,
+          dagJobs: [
+            {
+              from: -1,
+              fromNodeId: 0xffff_ffff,
+              id: 0,
+              startPoint: { x: 0, y: 0 },
+              targetPoint: { x: 10, y: 0 },
+              to: 0,
+              toNodeId: 0,
+            },
+          ],
+          dagNodeEvidence: [{ resolvedStateKey, resolvedY: 0, targetIndex: 0 }],
+        }),
+      ).toThrow(/canonical/u);
+      expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+    },
+  );
+
+  it("rejects stateful DAG evidence whose count differs from the node table", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+        ],
+        dagNodeEvidence: [],
+      }),
+    ).toThrow(/evidence count/u);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -1148,6 +1270,11 @@ describe("Graphwar WASM composition adapter", () => {
             to: 2,
             toNodeId: 2,
           },
+        ],
+        dagNodeEvidence: [
+          { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+          { resolvedStateKey: "1", resolvedY: 0, targetIndex: 1 },
+          { resolvedStateKey: "2", resolvedY: 0, targetIndex: 2 },
         ],
         dagNodeCount: 3,
       }),

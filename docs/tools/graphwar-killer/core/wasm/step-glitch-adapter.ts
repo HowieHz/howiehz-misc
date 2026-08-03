@@ -858,7 +858,7 @@ export function composeGraphwarWasmStepGlitchSmartPath(
   return { evidence, path: evidence.path, replayCount: composed.expandedStates, status: "success" };
 }
 
-function createGraphwarWasmStepGlitchWindowsFromEvidence(
+export function createGraphwarWasmStepGlitchWindowsFromEvidence(
   evidence: GraphwarWasmStepGlitchOwnedEvidence,
 ): GraphwarWasmStepGlitchWindows {
   if ((evidence.formulaInput.flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) === 0) {

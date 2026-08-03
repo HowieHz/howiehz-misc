@@ -27,6 +27,7 @@ import {
   createGraphwarWasmStepGlitchContext,
   createGraphwarWasmStepGlitchContextInput,
   createGraphwarWasmStepGlitchScanCommandInput,
+  createGraphwarWasmStepGlitchWindowsFromEvidence,
 } from "../../core/wasm/step-glitch-adapter";
 import type {
   GraphwarWasmStepGlitchGeometryTestContext,
@@ -1031,7 +1032,7 @@ async function buildOneClickClearStepGlitchPathWithWasm(
     let optimizedRoute = route;
     if (options.isDeleteOptimizationEnabled) {
       const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
-        optimizeOneClickClearStepGlitchPathWithWasm(context, route, workUnits),
+        optimizeOneClickClearStepGlitchPathWithWasm(context, route, workUnits, finalEvidence),
       );
       workUnits = optimized.workUnits;
       if (optimized.status !== "ready") {
@@ -1111,11 +1112,24 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
   context: OneClickClearSearchContext,
   route: OneClickClearRoute,
   workUnits: number,
+  initialEvidence: GraphwarWasmStepGlitchOwnedEvidence | undefined,
 ): Promise<OneClickClearStepGlitchWasmOptimizationResult> {
   const options = context.options;
   const simulationMask = options.simulationMask;
   if (!simulationMask || !options.wasmRuntime) {
     return { route, status: "unsupported", workUnits };
+  }
+  if (!initialEvidence) {
+    return { route, status: "ready", workUnits };
+  }
+  if (
+    initialEvidence.path.length !== route.pathPoints.length ||
+    initialEvidence.path.some((point, index) => {
+      const expectedPoint = route.pathPoints[index];
+      return expectedPoint === undefined || !pixelPointsEqual(point, expectedPoint);
+    })
+  ) {
+    throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization lost its scan path evidence");
   }
   const created = createOneClickClearStepGlitchWasmScanner(
     options,
@@ -1133,7 +1147,6 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
   const scanner = created.context;
   let optimized = route;
   let evidence: GraphwarWasmStepGlitchOwnedEvidence | undefined;
-  const protectedTargetPoints = route.targetSequence.map((target) => target.routePoint);
   const targetSequence = route.targetSequence.map((target) => target.hitCircle);
   const controlPoint = route.pathPoints.at(-1) ?? options.pathPoints.at(-1);
   if (!controlPoint) {
@@ -1141,45 +1154,83 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
     return { route, status: "ready", workUnits };
   }
   const controlX = imageToGraphPoint(controlPoint, options.bounds, options.boundsRect).x;
+  // Command 20 currently owns a single target sequence. Preserve the existing
+  // multi-target replay path until the ABI carries the full deletion frontier;
+  // this keeps the production WASM path correct without feeding a larger
+  // sequence to a single-target composition contract.
+  if (targetSequence.length > 1) {
+    const protectedTargetPoints = route.targetSequence.map((target) => target.routePoint);
+    try {
+      for (let index = options.pathPoints.length; index < optimized.pathPoints.length;) {
+        if (options.isCancelled?.()) {
+          break;
+        }
+        const point = optimized.pathPoints[index];
+        if (point && protectedTargetPoints.some((protectedPoint) => pixelPointsEqual(protectedPoint, point))) {
+          index += 1;
+          continue;
+        }
+        const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
+        if (!oneClickClearPathFollowsGraphRule(options, candidatePath)) {
+          index += 1;
+          continue;
+        }
+        workUnits += 1;
+        const candidateRoute = { ...optimized, pathPoints: candidatePath };
+        const replay = scanner.replayRaw({
+          controlX,
+          finalValidation: {
+            simulationMaskCacheId: options.simulationMaskCacheId,
+            targetControlPoints: createOneClickClearTargetControlPoints(options, candidateRoute.targetSequence),
+            trackedTargets: createOneClickClearTrackedTargets(options, candidateRoute).map(
+              (trackedTarget) => trackedTarget.hitCircle,
+            ),
+            type: "validate",
+          },
+          path: candidatePath,
+          targetSequence,
+          type: "replay",
+          windows: { type: "automatic" },
+        });
+        if (replay.status === "hit" && replay.evidence) {
+          optimized = candidateRoute;
+          evidence = replay.evidence.owned;
+          continue;
+        }
+        index += 1;
+        await yieldOneClickClearControl(options);
+      }
+    } finally {
+      scanner.dispose();
+    }
+    return { ...(evidence ? { evidence } : {}), route: optimized, status: "ready", workUnits };
+  }
+  const windows = createGraphwarWasmStepGlitchWindowsFromEvidence(initialEvidence);
   try {
-    for (let index = options.pathPoints.length; index < optimized.pathPoints.length;) {
-      if (options.isCancelled?.()) {
-        break;
-      }
-      const point = optimized.pathPoints[index];
-      if (point && protectedTargetPoints.some((protectedPoint) => pixelPointsEqual(protectedPoint, point))) {
-        index += 1;
-        continue;
-      }
-      const candidatePath = [...optimized.pathPoints.slice(0, index), ...optimized.pathPoints.slice(index + 1)];
-      if (!oneClickClearPathFollowsGraphRule(options, candidatePath)) {
-        index += 1;
-        continue;
-      }
-      workUnits += 1;
-      const candidateRoute = { ...optimized, pathPoints: candidatePath };
-      const replay = scanner.replayRaw({
-        controlX,
-        finalValidation: {
-          simulationMaskCacheId: options.simulationMaskCacheId,
-          targetControlPoints: createOneClickClearTargetControlPoints(options, candidateRoute.targetSequence),
-          trackedTargets: createOneClickClearTrackedTargets(options, candidateRoute).map(
-            (trackedTarget) => trackedTarget.hitCircle,
-          ),
-          type: "validate",
-        },
-        path: candidatePath,
-        targetSequence,
-        type: "replay",
-        windows: { type: "automatic" },
-      });
-      if (replay.status === "hit" && replay.evidence) {
-        optimized = candidateRoute;
-        evidence = replay.evidence.owned;
-        continue;
-      }
-      index += 1;
-      await yieldOneClickClearControl(options);
+    if (options.isCancelled?.()) {
+      return { route, status: "ready", workUnits };
+    }
+    const composed = scanner.composeRaw({
+      controlX,
+      finalValidation: {
+        simulationMaskCacheId: options.simulationMaskCacheId,
+        targetControlPoints: createOneClickClearTargetControlPoints(options, route.targetSequence),
+        trackedTargets: createOneClickClearTrackedTargets(options, route).map(
+          (trackedTarget) => trackedTarget.hitCircle,
+        ),
+        type: "validate",
+      },
+      isDeleteOptimizationEnabled: true,
+      path: route.pathPoints,
+      sourcePointCount: options.pathPoints.length,
+      targetSequence,
+      type: "compose",
+      windows,
+    });
+    workUnits += composed.expandedStates;
+    if (composed.status === "hit" && composed.evidence) {
+      optimized = { ...route, pathPoints: composed.evidence.owned.path.map(clonePixelPoint) };
+      evidence = composed.evidence.owned;
     }
   } finally {
     scanner.dispose();

@@ -45,6 +45,7 @@ const samplingMockState = vi.hoisted(() => ({
 const wasmMockState = vi.hoisted(() => ({
   contexts: [] as {
     dispose: ReturnType<typeof vi.fn>;
+    composeRaw: ReturnType<typeof vi.fn>;
     replayRaw: ReturnType<typeof vi.fn>;
     scanRaw: ReturnType<typeof vi.fn>;
   }[],
@@ -243,6 +244,29 @@ vi.mock("../../core/wasm/step-glitch-adapter", () => ({
   createGraphwarWasmStepGlitchContext: vi.fn((_runtime: unknown, input: { sourcePath: PixelPoint[] }) => {
     const context = {
       dispose: vi.fn(),
+      composeRaw: vi
+        .fn()
+        .mockImplementation(
+          ({
+            path,
+            targetSequence,
+          }: {
+            path: readonly PixelPoint[];
+            targetSequence: readonly { center: PixelPoint; radius: number }[];
+          }) => {
+            const outcome = wasmMockState.outcomes.shift() ?? "miss";
+            const composedPath = wasmMockState.gatePoint
+              ? path.filter((point) => point.x !== wasmMockState.gatePoint?.x || point.y !== wasmMockState.gatePoint?.y)
+              : path;
+            return outcome === "hit"
+              ? {
+                  expandedStates: 1,
+                  evidence: createMockWasmEvidence(composedPath, targetSequence.at(-1)),
+                  status: "hit",
+                }
+              : { expandedStates: 1, status: outcome };
+          },
+        ),
       replayRaw: vi.fn().mockImplementation(({ path }: { path: readonly PixelPoint[] }) => {
         const outcome = wasmMockState.outcomes.shift() ?? "miss";
         return outcome === "hit"
@@ -284,6 +308,7 @@ vi.mock("../../core/wasm/step-glitch-adapter", () => ({
   }),
   createGraphwarWasmStepGlitchContextInput: vi.fn((input: unknown) => input),
   createGraphwarWasmStepGlitchScanCommandInput: vi.fn((input: unknown) => input),
+  createGraphwarWasmStepGlitchWindowsFromEvidence: vi.fn(() => ({ type: "automatic" })),
 }));
 
 import {

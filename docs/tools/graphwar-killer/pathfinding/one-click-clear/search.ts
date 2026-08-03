@@ -1482,8 +1482,11 @@ async function selectOneClickClearStatelessDagPathWithWasm(
   const options = context.options;
   const wasmRuntime = options.wasmRuntime;
   const activeEdges = dag.edges.filter((edge) => edge.active);
-  if (!wasmRuntime || dag.nodes.some((node) => node.type !== "stateless")) {
+  if (!wasmRuntime) {
     return undefined;
+  }
+  if (dag.nodes.some((node) => node.type !== "stateless")) {
+    throw new GraphwarWasmFault("abi", "one-click stateless WASM retry received a stateful DAG");
   }
   if (activeEdges.length === 0) {
     return [];
@@ -2513,8 +2516,11 @@ async function selectOneClickClearStepDagPathWithWasm(
   const options = context.options;
   const wasmRuntime = options.wasmRuntime;
   const activeEdges = dag.edges.filter((edge) => edge.active);
-  if (!wasmRuntime || dag.nodes.some((node) => node.type !== "step-stateful")) {
+  if (!wasmRuntime) {
     return undefined;
+  }
+  if (dag.nodes.some((node) => node.type !== "step-stateful")) {
+    throw new GraphwarWasmFault("abi", "one-click Step WASM retry received a stateless DAG");
   }
   if (activeEdges.length === 0) {
     return [];
@@ -3380,11 +3386,57 @@ function validateOneClickClearStepRoute(
   if (options.formulaMode.contract.pathSearchPolicy.type !== "step-stateful") {
     return { ok: true };
   }
+  if (options.wasmRuntime) {
+    return validateOneClickClearStepRouteWithWasm(options, pathPoints);
+  }
   const validation = options.validateStepRoute?.(pathPoints.map(clonePixelPoint));
   if (validation === undefined) {
     return { ok: false };
   }
   return typeof validation === "boolean" ? { ok: validation } : validation;
+}
+
+/** Effective WASM Step one-click validation stays inside the retained route context. */
+function validateOneClickClearStepRouteWithWasm(
+  options: GraphwarOneClickClearSearchOptions,
+  pathPoints: readonly PixelPoint[],
+): GraphwarStepRoutePathValidation {
+  const firstPoint = pathPoints[0];
+  if (!firstPoint) {
+    return { ok: false, reason: "numeric" };
+  }
+  const firstGraphPoint = imageToGraphPoint(firstPoint, options.bounds, options.boundsRect);
+  const model = createGraphwarStepRouteModel(firstGraphPoint.y, options.formulaMode.settings);
+  if (!model) {
+    return { ok: false, reason: "numeric" };
+  }
+  const routeContext = createOneClickClearStepRouteContext(options, firstGraphPoint, model);
+  try {
+    const stepRoute = routeContext.stepRoute;
+    if (!stepRoute) {
+      throw new GraphwarWasmFault("abi", "one-click Step route context lost its model during validation");
+    }
+    let state = { resolvedY: firstGraphPoint.y, routeStateKey: "0" };
+    for (let index = 1; index < pathPoints.length; index += 1) {
+      const previousPoint = pathPoints[index - 1];
+      const nextPoint = pathPoints[index];
+      if (!previousPoint || !nextPoint) {
+        return { invalidSegmentIndex: index - 1, ok: false, reason: "numeric" };
+      }
+      const transition = stepRoute.evaluateTransition(
+        imageToGraphPoint(previousPoint, options.bounds, options.boundsRect),
+        imageToGraphPoint(nextPoint, options.bounds, options.boundsRect),
+        state,
+      );
+      if (transition.type !== "success") {
+        return { invalidSegmentIndex: index - 1, ok: false, reason: transition.reason };
+      }
+      state = transition.transition.routeState;
+    }
+    return { ok: true, resolvedEndY: state.resolvedY, routeStateKey: state.routeStateKey };
+  } finally {
+    routeContext.dispose();
+  }
 }
 
 /** Maps a final Step boundary failure back to the edge that introduced it. */

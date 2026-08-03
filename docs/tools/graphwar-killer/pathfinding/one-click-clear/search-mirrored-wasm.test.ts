@@ -201,6 +201,79 @@ describe("one-click-clear mirrored WASM guard", () => {
     }
   });
 
+  it("does not fall back to the TypeScript longest-path DP after a stateful WASM no-route result", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    const resumeSpy = vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((inputPointer, inputByteLength) => {
+      const input = new DataView(runtime.buffer, inputPointer, inputByteLength);
+      const sessionPointer = input.getUint32(0, true);
+      const session = new DataView(
+        runtime.buffer,
+        sessionPointer,
+        graphwarWasmCompositionLayout.oneClickSessionByteLength,
+      );
+      const sourcePathX = session.getUint32(32, true);
+      const sourcePathY = session.getUint32(36, true);
+      const sourcePathCount = session.getUint32(40, true);
+      const resultPointer = resume(inputPointer, inputByteLength);
+      const result = new DataView(
+        runtime.buffer,
+        resultPointer,
+        graphwarWasmCompositionLayout.oneClickResultByteLength,
+      );
+      result.setUint32(4, 2, true);
+      result.setUint32(28, sourcePathX, true);
+      result.setUint32(32, sourcePathY, true);
+      result.setUint32(36, sourcePathCount, true);
+      result.setUint32(40, 0, true);
+      result.setUint32(52, 0, true);
+      return resultPointer;
+    });
+
+    try {
+      const start = createPixelPoint(100, 225);
+      const target = createPixelPoint(400, 225);
+      const candidates = [{ id: "target", isEnemy: true, hitCenter: target, hitRadius: 30 }];
+      const stepSettings = {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "y" as const,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+        steepness: 67,
+      };
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs
+            .filter(isStepStatefulJob)
+            .map((job) => createSuccessfulStepRoute(job, [job.startPoint, job.targetPoint])),
+          timings: [],
+        }),
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode(stepSettings),
+        hitCandidates: candidates,
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start],
+        routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        simulationBoundaryExpansion: 0,
+        simulationMask: emptyMask,
+        simulationMaskCacheId: 1,
+        validateStepRoute: () => true,
+        wasmRequestNonce: 23,
+        wasmRuntime: runtime,
+      } satisfies GraphwarOneClickClearBuildOptions);
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+    } finally {
+      resumeSpy.mockRestore();
+    }
+  });
+
   it("keeps multi-target optimization on the exact WASM trajectory fallback", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
     const start = createPixelPoint(100, 225);
@@ -400,6 +473,7 @@ describe("one-click-clear mirrored WASM guard", () => {
 
     const candidate = { id: "target", isEnemy: true, hitCenter: target, hitRadius: 2 };
     let yieldCount = 0;
+    let typescriptValidationCount = 0;
     const result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: 0,
       bounds: forwardBounds,
@@ -420,7 +494,10 @@ describe("one-click-clear mirrored WASM guard", () => {
       routeMode: "visibility-graph",
       simulationBoundaryExpansion: 0,
       simulationMaskCacheId: 0,
-      validateStepRoute,
+      validateStepRoute: (points) => {
+        typescriptValidationCount += 1;
+        return validateStepRoute(points);
+      },
       wasmRuntime: await instantiateGraphwarWasmRuntime(kernelModule),
       yieldControl: () => {
         yieldCount += 1;
@@ -433,6 +510,7 @@ describe("one-click-clear mirrored WASM guard", () => {
       expect(result.targetIds).toEqual(["target"]);
     }
     expect(yieldCount).toBeGreaterThan(0);
+    expect(typescriptValidationCount).toBe(0);
   });
 
   it("removes the edge that owns an invalid Step segment before retrying the DAG", async () => {

@@ -1581,7 +1581,7 @@ async function buildOneClickClearPath(
       ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
       simulationMaskCacheId: input.simulationMaskCacheId,
       ...(wasmRuntime ? { wasmRuntime } : {}),
-      ...(pathSearchPolicy.type === "step-stateful"
+      ...(pathSearchPolicy.type === "step-stateful" && !wasmRuntime
         ? {
             validateStepRoute: (points) =>
               validateGraphwarStepRoutePath({

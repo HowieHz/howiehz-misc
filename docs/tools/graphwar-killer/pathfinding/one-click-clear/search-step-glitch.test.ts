@@ -50,7 +50,8 @@ const wasmMockState = vi.hoisted(() => ({
     scanRaw: ReturnType<typeof vi.fn>;
   }[],
   gatePoint: undefined as PixelPoint | undefined,
-  outcomes: [] as ("hit" | "miss" | "no-path")[],
+  outcomes: [] as ("hit" | "invalid-input" | "miss" | "no-path" | "unsupported")[],
+  windowsFromEvidenceCalls: 0,
 }));
 
 vi.mock("../../formula/trajectory/sampling", async (importOriginal) => {
@@ -308,7 +309,10 @@ vi.mock("../../core/wasm/step-glitch-adapter", () => ({
   }),
   createGraphwarWasmStepGlitchContextInput: vi.fn((input: unknown) => input),
   createGraphwarWasmStepGlitchScanCommandInput: vi.fn((input: unknown) => input),
-  createGraphwarWasmStepGlitchWindowsFromEvidence: vi.fn(() => ({ type: "automatic" })),
+  createGraphwarWasmStepGlitchWindowsFromEvidence: vi.fn(() => {
+    wasmMockState.windowsFromEvidenceCalls += 1;
+    return { type: "automatic" };
+  }),
 }));
 
 import {
@@ -336,6 +340,7 @@ describe("Step glitch one-click-clear target retries", () => {
     wasmMockState.contexts.length = 0;
     wasmMockState.gatePoint = undefined;
     wasmMockState.outcomes.length = 0;
+    wasmMockState.windowsFromEvidenceCalls = 0;
     samplingMockState.pathTargetSequenceCalls = 0;
     samplingMockState.resolvedContinuationCalls = 0;
     samplingMockState.candidateTargetSequences.length = 0;
@@ -369,6 +374,70 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(scanMockState.scanners).toHaveLength(0);
     expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
     expect(samplingMockState.formulaContextCalls).toBe(0);
+  });
+
+  it("retains the latest accepted evidence when a later target is unreachable", async () => {
+    wasmMockState.outcomes.push("hit", "no-path", "hit");
+    const start = toPixel(-11, 0);
+    const first = toPixel(-9, 0);
+    const missed = toPixel(-7, 8);
+    const candidates = [
+      { isEnemy: true, hitCenter: first, hitRadius: 12, id: "first" },
+      { isEnemy: true, hitCenter: missed, hitRadius: 2, id: "missed" },
+    ];
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(start, candidates, createEmptyMask(), "visibility-graph", true),
+      wasmRuntime: {} as GraphwarWasmKernelRuntime,
+    });
+
+    expect(result).toMatchObject({ targetIds: ["first"], type: "success" });
+    expect(wasmMockState.windowsFromEvidenceCalls).toBe(1);
+    expect(wasmMockState.contexts.some((context) => context.composeRaw.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("does not turn a command-20 invalid input into a final replay success", async () => {
+    wasmMockState.outcomes.push("hit", "invalid-input");
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }],
+        createEmptyMask(),
+        "visibility-graph",
+        true,
+      ),
+      wasmRuntime: {} as GraphwarWasmKernelRuntime,
+    });
+
+    expect(result).toMatchObject({ reason: "preflight-blocked", type: "failure" });
+    expect(wasmMockState.contexts.at(-1)?.replayRaw).not.toHaveBeenCalled();
+  });
+
+  it("does not publish after cancellation during the retained WASM attempt", async () => {
+    wasmMockState.outcomes.push("hit", "hit");
+    let isCancelled = false;
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }],
+        createEmptyMask(),
+        "visibility-graph",
+        true,
+      ),
+      isCancelled: () => isCancelled,
+      wasmRuntime: {} as GraphwarWasmKernelRuntime,
+      yieldControl: () => {
+        isCancelled = true;
+      },
+    });
+
+    expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
   });
 
   it.each([

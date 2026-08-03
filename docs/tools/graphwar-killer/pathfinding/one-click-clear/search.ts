@@ -1013,7 +1013,10 @@ async function buildOneClickClearStepGlitchPathWithWasm(
           targetSequence: nextTargetSequence,
         };
         publishOneClickClearValidatedRoute(context, route);
-        finalEvidence = isFinalTarget ? evidence : undefined;
+        // Keep the latest accepted evidence even when a later candidate is
+        // skipped or unreachable; it still proves the retained route and can
+        // seed command 20 optimization for that incumbent.
+        finalEvidence = evidence;
         // The source path and required target set changed. Drop all old state, including any stale prefix evidence.
         scanner.dispose();
         scanner = undefined;
@@ -1038,6 +1041,9 @@ async function buildOneClickClearStepGlitchPathWithWasm(
       if (optimized.status !== "ready") {
         return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
       }
+      if (options.isCancelled?.()) {
+        return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+      }
       optimizedRoute = optimized.route;
       finalEvidence = optimized.evidence;
     }
@@ -1051,6 +1057,10 @@ async function buildOneClickClearStepGlitchPathWithWasm(
         return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
       }
       finalEvidence = replay.evidence;
+    }
+
+    if (options.isCancelled?.()) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
     }
 
     const finalRoute: OneClickClearRoute = {
@@ -1154,6 +1164,7 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
     return { route, status: "ready", workUnits };
   }
   const controlX = imageToGraphPoint(controlPoint, options.bounds, options.boundsRect).x;
+  const windows = createGraphwarWasmStepGlitchWindowsFromEvidence(initialEvidence);
   // Command 20 currently owns a single target sequence. Preserve the existing
   // multi-target replay path until the ABI carries the full deletion frontier;
   // this keeps the production WASM path correct without feeding a larger
@@ -1190,8 +1201,17 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
           path: candidatePath,
           targetSequence,
           type: "replay",
-          windows: { type: "automatic" },
+          windows,
         });
+        if (replay.status === "invalid-input") {
+          return { route: optimized, status: "invalid-input", workUnits };
+        }
+        if (replay.status === "unsupported") {
+          return { route: optimized, status: "unsupported", workUnits };
+        }
+        if (replay.status === "hit" && !replay.evidence) {
+          throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization returned no replay evidence");
+        }
         if (replay.status === "hit" && replay.evidence) {
           optimized = candidateRoute;
           evidence = replay.evidence.owned;
@@ -1205,7 +1225,6 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
     }
     return { ...(evidence ? { evidence } : {}), route: optimized, status: "ready", workUnits };
   }
-  const windows = createGraphwarWasmStepGlitchWindowsFromEvidence(initialEvidence);
   try {
     if (options.isCancelled?.()) {
       return { route, status: "ready", workUnits };
@@ -1228,6 +1247,15 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
       windows,
     });
     workUnits += composed.expandedStates;
+    if (composed.status === "invalid-input") {
+      return { route: optimized, status: "invalid-input", workUnits };
+    }
+    if (composed.status === "unsupported") {
+      return { route: optimized, status: "unsupported", workUnits };
+    }
+    if (composed.status === "hit" && !composed.evidence) {
+      throw new GraphwarWasmFault("abi", "one-click Step-glitch composition returned no replay evidence");
+    }
     if (composed.status === "hit" && composed.evidence) {
       optimized = { ...route, pathPoints: composed.evidence.owned.path.map(clonePixelPoint) };
       evidence = composed.evidence.owned;

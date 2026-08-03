@@ -1369,6 +1369,7 @@ export function beginGraphwarWasmOneClickClear(
       resultPointer,
       packed.requestNonce,
       packed.verticalVariationScale,
+      input.dagJobs ? packed.dagNodeCount : undefined,
       createOneClickOutputBoundary(beginArenaCursor, undefined, [], [], undefined, packed.path),
     );
     if (decoded.status !== "waiting-edge-batch") {
@@ -1946,6 +1947,7 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     );
   }
   const dagNodeCount = declaredDagNodeCount ?? derivedDagNodeCount;
+  const dagNodeEvidenceIdentities = new Set<string>();
   const dagNodeEvidence = input.dagNodeEvidence
     ? input.dagNodeEvidence.map((entry, index) => {
         const targetIndex = validateGraphwarWasmU32(
@@ -1976,6 +1978,15 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
             "input",
           );
         }
+        const identity = `${targetIndex}:${entry.resolvedStateKey}`;
+        if (dagNodeEvidenceIdentities.has(identity)) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `dagNodeEvidence[${index}] duplicates a target/state identity`,
+            "input",
+          );
+        }
+        dagNodeEvidenceIdentities.add(identity);
         return { resolvedStateKey: entry.resolvedStateKey, resolvedY, targetIndex };
       })
     : [];
@@ -2095,9 +2106,9 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
     inputByteLength:
-      dagNodeEvidence.length === 0
-        ? graphwarWasmCompositionLayout.oneClickInputByteLength
-        : graphwarWasmCompositionLayout.oneClickInputEvidenceByteLength,
+      dagNodeEvidence.length > 0 || (input.dagJobs !== undefined && input.isStepStateful)
+        ? graphwarWasmCompositionLayout.oneClickInputEvidenceByteLength
+        : graphwarWasmCompositionLayout.oneClickInputByteLength,
   };
 }
 
@@ -2487,6 +2498,7 @@ function copyOneClickResult(
   resultPointer: number,
   expectedRequestNonce?: number,
   expectedVerticalVariationScale?: number,
+  expectedDagNodeCount?: number,
   boundary: OneClickOutputBoundary = createOneClickOutputBoundary(runtime.arenaBase),
 ): DecodedOneClickResult {
   const view = readOneClickRecord(
@@ -2577,6 +2589,7 @@ function copyOneClickResult(
       targetOrderPointer,
       resultRequestNonce,
       expectedVerticalVariationScale,
+      expectedDagNodeCount,
       createOneClickOutputBoundary(
         boundary.minimumPointer,
         boundary.retainedSession,
@@ -2850,6 +2863,7 @@ function createOneClickSession(
           resultPointer,
           requestNonce,
           verticalVariationScale,
+          undefined,
           createOneClickOutputBoundary(outputMinimumPointer, currentRetainedSession, work.ranges, [], work.results),
         );
         if (decodedResult.status === "waiting-edge-batch") {
@@ -3017,6 +3031,7 @@ function readOneClickSession(
   targetOrderPointer: number,
   expectedRequestNonce?: number,
   expectedVerticalVariationScale?: number,
+  expectedDagNodeCount?: number,
   boundary: OneClickOutputBoundary = createOneClickOutputBoundary(runtime.arenaBase),
 ) {
   const range = readOneClickRange(
@@ -3113,6 +3128,13 @@ function readOneClickSession(
     view.getUint32(oneClickSession.nodeCount, true),
     "session DAG node count",
   );
+  if (expectedDagNodeCount !== undefined && dagNodeCount !== expectedDagNodeCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click session DAG node count changed before publication",
+      "output",
+    );
+  }
   const targetOrderValue = validateGraphwarWasmU32(
     view.getUint32(oneClickSession.targetOrder, true),
     "session target order pointer",

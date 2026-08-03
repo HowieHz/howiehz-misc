@@ -7374,12 +7374,37 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
       requireArenaRange(dagNodeKeyBytesPointer, dagNodeKeyByteLength, 1);
       let evidenceIndex: u32 = 0;
       while (evidenceIndex < dagNodeEvidenceCount) {
+        const targetIndex = load<u32>(dagNodeTargetsPointer + evidenceIndex * sizeof<u32>());
+        if (targetIndex >= candidateCount) trap();
         const keyStart = load<u32>(dagNodeKeyOffsetsPointer + evidenceIndex * sizeof<u32>());
         const keyEnd = load<u32>(dagNodeKeyOffsetsPointer + (evidenceIndex + 1) * sizeof<u32>());
         const keyLength = load<u32>(dagNodeKeyLengthsPointer + evidenceIndex * sizeof<u32>());
         if (keyStart > keyEnd || keyEnd > dagNodeKeyByteLength || keyEnd - keyStart != keyLength) trap();
         if (!isCanonicalStepStateKey(dagNodeKeyBytesPointer + keyStart, keyLength)) trap();
         compositionRequireFinite(load<f64>(dagNodeResolvedYPointer + evidenceIndex * sizeof<f64>()));
+        let previousEvidenceIndex: u32 = 0;
+        while (previousEvidenceIndex < evidenceIndex) {
+          if (load<u32>(dagNodeTargetsPointer + previousEvidenceIndex * sizeof<u32>()) == targetIndex) {
+            const previousKeyStart = load<u32>(dagNodeKeyOffsetsPointer + previousEvidenceIndex * sizeof<u32>());
+            const previousKeyLength = load<u32>(dagNodeKeyLengthsPointer + previousEvidenceIndex * sizeof<u32>());
+            if (previousKeyLength == keyLength) {
+              let keyIndex: u32 = 0;
+              let matches = true;
+              while (keyIndex < keyLength) {
+                if (
+                  load<u8>(dagNodeKeyBytesPointer + previousKeyStart + keyIndex) !=
+                  load<u8>(dagNodeKeyBytesPointer + keyStart + keyIndex)
+                ) {
+                  matches = false;
+                  break;
+                }
+                keyIndex += 1;
+              }
+              if (matches) trap();
+            }
+          }
+          previousEvidenceIndex += 1;
+        }
         evidenceIndex += 1;
       }
     }

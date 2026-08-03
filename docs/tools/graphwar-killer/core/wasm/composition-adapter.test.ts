@@ -1016,6 +1016,182 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("rejects duplicate target/state identities in explicit stateful evidence", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 1,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 1,
+          },
+        ],
+        dagNodeCount: 2,
+        dagNodeEvidence: [
+          { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+          { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        ],
+        isStepStateful: true,
+      }),
+    ).toThrow(/duplicates a target\/state identity/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rechecks duplicate target/state identities at the raw begin boundary", async () => {
+    const runtime = await createRuntime();
+    const input = {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 1,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 1,
+        },
+      ],
+      dagNodeCount: 2,
+      dagNodeEvidence: [
+        { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        { resolvedStateKey: "1", resolvedY: 0, targetIndex: 0 },
+      ],
+      isStepStateful: true,
+    } as const;
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
+        const keyOffsets = new Uint32Array(runtime.buffer, inputView.getUint32(100, true), 3);
+        const keyBytes = new Uint8Array(runtime.buffer, inputView.getUint32(108, true), 2);
+        const firstOffset = keyOffsets[0];
+        const secondOffset = keyOffsets[1];
+        const firstByte = firstOffset === undefined ? undefined : keyBytes[firstOffset];
+        if (firstOffset === undefined || secondOffset === undefined || firstByte === undefined) {
+          throw new Error("expected two state evidence keys");
+        }
+        keyBytes[secondOffset] = firstByte;
+        return beginOneClickClear(inputPointer, inputByteLength);
+      });
+    try {
+      expect(() => beginGraphwarWasmOneClickClear(runtime, input)).toThrow();
+    } finally {
+      beginOneClickClearSpy.mockRestore();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rechecks target bounds for isolated stateful evidence at the raw begin boundary", async () => {
+    const runtime = await createRuntime();
+    const input = {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 2,
+      dagNodeEvidence: [
+        { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        { resolvedStateKey: "1", resolvedY: 0, targetIndex: 1 },
+      ],
+      isStepStateful: true,
+    } as const;
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
+        const targetPointer = inputView.getUint32(92, true);
+        new Uint32Array(runtime.buffer, targetPointer, 2)[1] = 2;
+        return beginOneClickClear(inputPointer, inputByteLength);
+      });
+    try {
+      expect(() => beginGraphwarWasmOneClickClear(runtime, input)).toThrow();
+    } finally {
+      beginOneClickClearSpy.mockRestore();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a mutated initial stateful session node count", async () => {
+    const runtime = await createRuntime();
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        const resultPointer = beginOneClickClear(inputPointer, inputByteLength);
+        const result = new DataView(
+          runtime.buffer,
+          resultPointer,
+          graphwarWasmCompositionLayout.oneClickResultByteLength,
+        );
+        const sessionPointer = result.getUint32(8, true);
+        new DataView(runtime.buffer, sessionPointer, graphwarWasmCompositionLayout.oneClickSessionByteLength).setUint32(
+          104,
+          2,
+          true,
+        );
+        return resultPointer;
+      });
+    try {
+      expect(() =>
+        beginGraphwarWasmOneClickClear(runtime, {
+          ...createOneClickInput(),
+          dagJobs: [
+            {
+              from: -1,
+              fromNodeId: 0xffff_ffff,
+              id: 0,
+              startPoint: { x: 0, y: 0 },
+              targetPoint: { x: 10, y: 0 },
+              to: 0,
+              toNodeId: 0,
+            },
+          ],
+          dagNodeCount: 1,
+          dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+          isStepStateful: true,
+        }),
+      ).toThrow(/DAG node count changed before publication/u);
+    } finally {
+      beginOneClickClearSpy.mockRestore();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("rejects a stateful DAG that omits its atomic node evidence", async () => {
     const runtime = await createRuntime();
     expect(() =>
@@ -1035,6 +1211,25 @@ describe("Graphwar WASM composition adapter", () => {
         ],
       }),
     ).toThrow(/stateful DAG node evidence count/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("returns a normal failure for an empty explicit stateful DAG", async () => {
+    const runtime = await createRuntime();
+    expect(
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [],
+        dagNodeCount: 0,
+        isStepStateful: true,
+      }),
+    ).toEqual({
+      path: [{ x: 0, y: 0 }],
+      selectedEdgeIds: [],
+      selectedEdgeCount: 0,
+      status: "failure",
+      targetOrder: [0, 1],
+    });
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 

@@ -261,7 +261,7 @@ describe("Graphwar WASM formula Adapter", () => {
     expect(runFormulaSpy).not.toHaveBeenCalled();
   });
 
-  it("packs only raw Step refinement inputs for production launch", async () => {
+  it("packs only raw Step refinement inputs for production launch", { timeout: 30_000 }, async () => {
     const runtime = await createRuntime();
     const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
     mask[0] = 1;

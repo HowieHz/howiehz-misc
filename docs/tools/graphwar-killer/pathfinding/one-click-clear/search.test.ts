@@ -126,6 +126,52 @@ const splinePrefixInvalidationCases = [
 ] as const;
 
 describe("One-click clear optimization", () => {
+  it("keeps TypeScript Step fallback states distinct by resolved Y, including signed zero", async () => {
+    const start = createPixelPoint(100, 225);
+    const candidates = [100, 200, 300, 400].map((x, index) => ({
+      isEnemy: true,
+      hitCenter: createPixelPoint(x + 100, 225),
+      hitRadius: 4,
+      id: `target-${index}`,
+    }));
+    const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
+    const simulationMask = new Uint8Array(770 * 450);
+
+    await buildGraphwarOneClickClearPath({
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      buildDagEdges: async (request) => {
+        requests.push(request);
+        return {
+          routes: request.jobs.map((job) => {
+            const resolvedY =
+              job.type === "step-stateful" && job.to === 2 ? (job.from === -1 ? 1 : job.from === 0 ? 0 : -0) : 0;
+            return createSuccessfulDagEdgeRoute(job, [job.startPoint, job.targetPoint], {
+              resolvedStateKey: "0",
+              resolvedY,
+            });
+          }),
+          timings: [],
+        };
+      },
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      hitCandidates: candidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      simulationBoundaryExpansion: 0,
+      simulationMask,
+      simulationMaskCacheId: 1,
+    });
+
+    const targetThreeJobs = requests.flatMap(({ jobs }) => jobs.filter((job) => job.to === 3));
+    expect(targetThreeJobs.filter(({ from }) => from >= 2)).toHaveLength(3);
+  });
+
   it("builds an ordinary DAG target at the next legal native column when the center does not advance", async () => {
     const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
     const start = createPixelPoint(200, 225);

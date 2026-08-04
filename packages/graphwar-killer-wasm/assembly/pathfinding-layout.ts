@@ -437,7 +437,12 @@ export const ONE_CLICK_RESULT_NONCE_OFFSET: u32 = 44;
 export const ONE_CLICK_RESULT_REQUEST_NONCE_OFFSET: u32 = 48;
 /** Ordered selected edge ids, from the retained source path to the final target. */
 export const ONE_CLICK_RESULT_SELECTED_EDGE_IDS_POINTER_OFFSET: u32 = 52;
-export const ONE_CLICK_RESULT_BYTE_LENGTH: u32 = 56;
+/** Route-context validation status is explicit; zero means no route evidence. */
+export const ONE_CLICK_RESULT_ROUTE_VALIDATION_OFFSET: u32 = 56;
+export const ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE: u32 = 0;
+export const ONE_CLICK_RESULT_ROUTE_VALIDATION_VALIDATED: u32 = 1;
+export const ONE_CLICK_RESULT_REMOVED_POINT_COUNT_OFFSET: u32 = 60;
+export const ONE_CLICK_RESULT_BYTE_LENGTH: u32 = 64;
 
 // Edge jobs are flat records: three leading u32 fields for id/from/to, four f64
 // endpoint fields, then two u32 node identities. Results carry the same id plus
@@ -474,7 +479,8 @@ export const ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET: u32 = 84;
 export const ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET: u32 = 88;
 export const ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET: u32 = 96;
 export const ONE_CLICK_SESSION_NODE_COUNT_OFFSET: u32 = 104;
-export const ONE_CLICK_SESSION_BYTE_LENGTH: u32 = 112;
+export const ONE_CLICK_SESSION_ROUTE_CONTEXT_POINTER_OFFSET: u32 = 108;
+export const ONE_CLICK_SESSION_BYTE_LENGTH: u32 = 120;
 export const ONE_CLICK_SESSION_PHASE_WAITING_EDGE_BATCH: u32 = 1;
 export const ONE_CLICK_SESSION_PHASE_COMPLETE: u32 = 2;
 export const ONE_CLICK_RESUME_SESSION_POINTER_OFFSET: u32 = 0;

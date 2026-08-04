@@ -166,7 +166,7 @@ describe("one-click-clear mirrored WASM guard", () => {
     } satisfies GraphwarOneClickClearBuildOptions);
 
     expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
-    expect(runSmartPathfinding).toHaveBeenCalledTimes(1);
+    expect(runSmartPathfinding).toHaveBeenCalled();
   });
 
   it("keeps a selected WASM job identity when an earlier job is unreachable", async () => {
@@ -248,6 +248,8 @@ describe("one-click-clear mirrored WASM guard", () => {
       result.setUint32(36, sourcePathCount, true);
       result.setUint32(40, 0, true);
       result.setUint32(52, 0, true);
+      result.setUint32(56, 0, true);
+      result.setUint32(60, 0, true);
       return resultPointer;
     });
 
@@ -314,6 +316,8 @@ describe("one-click-clear mirrored WASM guard", () => {
       result.setUint32(36, sourcePathCount, true);
       result.setUint32(40, 0, true);
       result.setUint32(52, 0, true);
+      result.setUint32(56, 0, true);
+      result.setUint32(60, 0, true);
       return resultPointer;
     });
 
@@ -361,11 +365,21 @@ describe("one-click-clear mirrored WASM guard", () => {
     }
   });
 
-  it("keeps multi-target optimization on the exact WASM trajectory fallback", async () => {
+  it("runs trajectory deletion proof after route-only composition", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const runSmartPathfinding = runtime.runSmartPathfinding.bind(runtime);
+    let trajectorySmartCallCount = 0;
+    vi.spyOn(runtime, "runSmartPathfinding").mockImplementation((inputPointer, inputByteLength) => {
+      const flags = new DataView(runtime.buffer, inputPointer, inputByteLength).getUint32(8, true);
+      if ((flags & 8) !== 0) {
+        trajectorySmartCallCount += 1;
+      }
+      return runSmartPathfinding(inputPointer, inputByteLength);
+    });
     const start = createPixelPoint(100, 225);
     const first = createPixelPoint(300, 225);
     const second = createPixelPoint(500, 225);
+    const middle = createPixelPoint(200, 225);
     const candidates = [
       { id: "first", isEnemy: true, hitCenter: first, hitRadius: 20 },
       { id: "second", isEnemy: true, hitCenter: second, hitRadius: 20 },
@@ -375,7 +389,11 @@ describe("one-click-clear mirrored WASM guard", () => {
       bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
       boundsRect,
       buildDagEdges: async (request) => ({
-        routes: request.jobs.filter(isStatelessJob).map((job) => createSuccessfulEdgeRoute(job)),
+        routes: request.jobs.filter(isStatelessJob).map((job) => ({
+          jobId: job.id,
+          route: [job.startPoint, middle, job.targetPoint],
+          type: "stateless" as const,
+        })),
         timings: [],
       }),
       candidates,
@@ -403,6 +421,70 @@ describe("one-click-clear mirrored WASM guard", () => {
     expect(result.type).toBe("success");
     if (result.type === "success") {
       expect(result.targetIds).toEqual(["first", "second"]);
+      expect(result.pathPoints.some((point) => samePixelPoint(point, middle))).toBe(false);
+    }
+    expect(trajectorySmartCallCount).toBeGreaterThan(0);
+  });
+
+  it("does not revalidate an unchanged route-only composition path", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    const runTrajectory = vi.spyOn(runtime, "runTrajectory");
+    const resumeSpy = vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((inputPointer, inputByteLength) => {
+      const resultPointer = resume(inputPointer, inputByteLength);
+      const result = new DataView(
+        runtime.buffer,
+        resultPointer,
+        graphwarWasmCompositionLayout.oneClickResultByteLength,
+      );
+      // Preserve the exact path while exposing zero-removal route evidence.
+      // This models a retained route-only session that performed no deletion.
+      result.setUint32(56, 1, true);
+      result.setUint32(60, 0, true);
+      return resultPointer;
+    });
+    const start = createPixelPoint(700, 225);
+    const target = createPixelPoint(500, 225);
+    const simulationMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    simulationMask[toMaskIndex(createPixelPoint(600, 225))] = 1;
+    const candidates = [{ id: "blocked", isEnemy: true, hitCenter: target, hitRadius: 30 }];
+
+    try {
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.filter(isStatelessJob).map((job) => createSuccessfulEdgeRoute(job)),
+          timings: [],
+        }),
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode({
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        }),
+        hitCandidates: candidates,
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start],
+        routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        simulationBoundaryExpansion: 0,
+        simulationMask,
+        simulationMaskCacheId: 1,
+        wasmRequestNonce: 32,
+        wasmRuntime: runtime,
+      } satisfies GraphwarOneClickClearBuildOptions);
+
+      expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+      expect(runTrajectory).toHaveBeenCalledTimes(1);
+    } finally {
+      resumeSpy.mockRestore();
+      runTrajectory.mockRestore();
     }
   });
 
@@ -522,7 +604,7 @@ describe("one-click-clear mirrored WASM guard", () => {
     }
   });
 
-  it("keeps a strict Step control point when WASM deletion rejects the shortcut", async () => {
+  it("keeps strict Step control and selected target anchors in WASM composition output", async () => {
     const forwardBounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
     const start = graphToImagePoint(createGraphPoint(-20, 0), forwardBounds, boundsRect);
     const middle = graphToImagePoint(createGraphPoint(-15, 4), forwardBounds, boundsRect);

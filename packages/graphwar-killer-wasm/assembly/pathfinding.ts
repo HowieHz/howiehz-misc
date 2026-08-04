@@ -167,6 +167,15 @@ function internOneClickStepStateKeys(inputPointer: u32, inputByteLength: u32): u
             byteIndex += 1;
           }
           if (matches) {
+            // The state key and target bind one atomic terminal state. A
+            // duplicate identity with a different Y is a forged splice,
+            // including signed-zero differences that ordinary equality loses.
+            if (
+              reinterpret<u64>(load<f64>(resolvedYPointer + previousIndex * sizeof<f64>())) !=
+              reinterpret<u64>(load<f64>(resolvedYPointer + recordIndex * sizeof<f64>()))
+            ) {
+              trap();
+            }
             matchingNode = load<u32>(nodeIdsPointer + previousIndex * sizeof<u32>());
             break;
           }
@@ -6367,6 +6376,91 @@ function compositionPointIsCollinear(
   return cross == 0 && dot >= 0;
 }
 
+/** Checks the image-space path against the retained Graphwar direction identity. */
+function oneClickRouteGraphOrderIsValid(
+  contextPointer: u32,
+  pathXPointer: u32,
+  pathCount: u32,
+  sourcePathCount: u32,
+  jobsPointer: u32,
+  selectedEdgeIdsPointer: u32,
+  selectedEdgeCount: u32,
+): bool {
+  if (contextPointer == 0 || selectedEdgeCount == 0) return true;
+  requireRouteContext(contextPointer);
+  if (pathXPointer == 0 || pathCount == 0 || sourcePathCount > pathCount || jobsPointer == 0 || selectedEdgeIdsPointer == 0)
+    trap();
+  const isMirrored =
+    (load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET) & Layout.ROUTE_CONTEXT_FLAG_MIRRORED) != 0;
+  let previousX = load<f64>(pathXPointer + (sourcePathCount == 0 ? 0 : sourcePathCount - 1) * sizeof<f64>());
+  let selectedIndex: u32 = 0;
+  while (selectedIndex < selectedEdgeCount) {
+    const selectedJob = load<u32>(selectedEdgeIdsPointer + selectedIndex * sizeof<u32>());
+    const currentX = load<f64>(jobsPointer + selectedJob * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH + ONE_CLICK_EDGE_TARGET_X_OFFSET);
+    if (isMirrored ? !(currentX < previousX) : !(currentX > previousX)) return false;
+    previousX = currentX;
+    selectedIndex += 1;
+  }
+  return true;
+}
+
+/** Deletes the first eligible collinear point repeatedly; target endpoints stay anchored. */
+function optimizeOneClickRoutePath(
+  outputXPointer: u32,
+  outputYPointer: u32,
+  outputCount: u32,
+  sourcePathCount: u32,
+  jobsPointer: u32,
+  selectedEdgeIdsPointer: u32,
+  selectedEdgeCount: u32,
+): u64 {
+  let removedCount: u32 = 0;
+  let index: u32 = sourcePathCount < 1 ? 1 : sourcePathCount;
+  while (index + 1 < outputCount) {
+    const currentX = load<f64>(outputXPointer + index * sizeof<f64>());
+    const currentY = load<f64>(outputYPointer + index * sizeof<f64>());
+    let isTargetAnchor = false;
+    let selectedIndex: u32 = 0;
+    while (selectedIndex < selectedEdgeCount) {
+      const selectedJob = load<u32>(selectedEdgeIdsPointer + selectedIndex * sizeof<u32>());
+      const targetX = load<f64>(jobsPointer + selectedJob * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH + ONE_CLICK_EDGE_TARGET_X_OFFSET);
+      const targetY = load<f64>(jobsPointer + selectedJob * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH + ONE_CLICK_EDGE_TARGET_Y_OFFSET);
+      if (currentX == targetX && currentY == targetY) {
+        isTargetAnchor = true;
+        break;
+      }
+      selectedIndex += 1;
+    }
+    if (isTargetAnchor) {
+      index += 1;
+      continue;
+    }
+    const previousX = load<f64>(outputXPointer + (index - 1) * sizeof<f64>());
+    const previousY = load<f64>(outputYPointer + (index - 1) * sizeof<f64>());
+    const nextX = load<f64>(outputXPointer + (index + 1) * sizeof<f64>());
+    const nextY = load<f64>(outputYPointer + (index + 1) * sizeof<f64>());
+    if (!compositionPointIsCollinear(previousX, previousY, currentX, currentY, nextX, nextY)) {
+      index += 1;
+      continue;
+    }
+    let shiftIndex = index;
+    while (shiftIndex + 1 < outputCount) {
+      store<f64>(
+        outputXPointer + shiftIndex * sizeof<f64>(),
+        load<f64>(outputXPointer + (shiftIndex + 1) * sizeof<f64>()),
+      );
+      store<f64>(
+        outputYPointer + shiftIndex * sizeof<f64>(),
+        load<f64>(outputYPointer + (shiftIndex + 1) * sizeof<f64>()),
+      );
+      shiftIndex += 1;
+    }
+    outputCount -= 1;
+    removedCount += 1;
+  }
+  return (<u64>removedCount << 32) | <u64>outputCount;
+}
+
 @inline
 function writeSmartFailure(
   resultPointer: u32,
@@ -7394,6 +7488,8 @@ function writeOneClickResult(
   pathCount: u32,
   selectedEdgeCount: u32,
   selectedEdgeIdsPointer: u32,
+  routeValidation: u32,
+  removedPointCount: u32,
 ): u32 {
   const resultPointer = reserveArena(Layout.ONE_CLICK_RESULT_BYTE_LENGTH, sizeof<u64>());
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_RESULT_MAGIC);
@@ -7410,6 +7506,8 @@ function writeOneClickResult(
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_NONCE_OFFSET, nonce);
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_REQUEST_NONCE_OFFSET, requestNonce);
   store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_SELECTED_EDGE_IDS_POINTER_OFFSET, selectedEdgeIdsPointer);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_OFFSET, routeValidation);
+  store<u32>(resultPointer + Layout.ONE_CLICK_RESULT_REMOVED_POINT_COUNT_OFFSET, removedPointCount);
   return resultPointer;
 }
 
@@ -7657,7 +7755,11 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   const pathCount = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_PATH_COUNT_OFFSET);
   compositionValidatePointArrays(pathXPointer, pathYPointer, pathCount);
   const routeContextPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_ROUTE_CONTEXT_POINTER_OFFSET);
-  if (routeContextPointer != 0) requireArenaRange(routeContextPointer, Layout.ROUTE_CONTEXT_BYTE_LENGTH, sizeof<u64>());
+  if (routeContextPointer != 0) requireRouteContext(routeContextPointer);
+  // One-click route contexts prove graph/mask geometry only. Point deletion
+  // requires the trajectory command's formula and stop evidence, which this
+  // session ABI does not carry.
+  if (routeContextPointer != 0 && (flags & Layout.ONE_CLICK_INPUT_FLAG_DELETE_OPTIMIZATION) != 0) trap();
   const requestedNonce = load<u32>(inputPointer + Layout.ONE_CLICK_INPUT_REQUEST_NONCE_OFFSET);
   const verticalVariationScale = load<f64>(inputPointer + Layout.ONE_CLICK_INPUT_VERTICAL_VARIATION_SCALE_OFFSET);
   compositionRequireFinite(verticalVariationScale);
@@ -7822,6 +7924,7 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET, requestedNonce);
   store<f64>(sessionPointer + Layout.ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET, verticalVariationScale);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET, nodeCount);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CONTEXT_POINTER_OFFSET, routeContextPointer);
   if (jobCount == 0) {
     store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
     activeOneClickSessionPointer = 0;
@@ -7839,6 +7942,8 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
       pathCount,
       0,
       0,
+      Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE,
+      0,
     );
   }
   const resultPointer = writeOneClickResult(
@@ -7854,6 +7959,8 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
     0,
     0,
     0,
+    0,
+    Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE,
     0,
   );
   // Publish the session only after the result record has been reserved and written. A
@@ -7985,6 +8092,8 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
       0,
       0,
       0,
+      Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE,
+      0,
     );
   }
 
@@ -8114,6 +8223,8 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
       load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_COUNT_OFFSET),
       0,
       0,
+      Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE,
+      0,
     );
   }
 
@@ -8169,6 +8280,94 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
       routeIndex += 1;
     }
   }
+  const routeContextPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CONTEXT_POINTER_OFFSET);
+  let routeValidation = Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE;
+  let removedPointCount: u32 = 0;
+  if (routeContextPointer != 0) {
+    requireRouteContext(routeContextPointer);
+    if (
+      !oneClickRouteGraphOrderIsValid(
+        routeContextPointer,
+        outputXPointer,
+        outputCount,
+        sourcePathCount,
+        jobsPointer,
+        selectedEdgeIdsPointer,
+        chainCount,
+      )
+    ) {
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_X_POINTER_OFFSET, load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET));
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_Y_POINTER_OFFSET, load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET));
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_COUNT_OFFSET, sourcePathCount);
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
+      activeOneClickSessionPointer = 0;
+      return writeOneClickResult(
+        Layout.ONE_CLICK_RESULT_STATUS_FAILURE,
+        nonce,
+        requestNonce,
+        0,
+        0,
+        0,
+        load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET),
+        targetCount,
+        load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET),
+        load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET),
+        sourcePathCount,
+        0,
+        0,
+        Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE,
+        0,
+      );
+    }
+    if ((load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_FLAGS_OFFSET) & Layout.ONE_CLICK_INPUT_FLAG_DELETE_OPTIMIZATION) != 0) {
+      const optimized = optimizeOneClickRoutePath(
+        outputXPointer,
+        outputYPointer,
+        outputCount,
+        sourcePathCount,
+        jobsPointer,
+        selectedEdgeIdsPointer,
+        chainCount,
+      );
+      removedPointCount = <u32>(optimized >> 32);
+      outputCount = <u32>optimized;
+    }
+    if (
+      !oneClickRouteGraphOrderIsValid(
+        routeContextPointer,
+        outputXPointer,
+        outputCount,
+        sourcePathCount,
+        jobsPointer,
+        selectedEdgeIdsPointer,
+        chainCount,
+      )
+    ) {
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_X_POINTER_OFFSET, load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET));
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_Y_POINTER_OFFSET, load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET));
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_COUNT_OFFSET, sourcePathCount);
+      store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
+      activeOneClickSessionPointer = 0;
+      return writeOneClickResult(
+        Layout.ONE_CLICK_RESULT_STATUS_FAILURE,
+        nonce,
+        requestNonce,
+        0,
+        0,
+        0,
+        load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_TARGET_ORDER_POINTER_OFFSET),
+        targetCount,
+        load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_X_POINTER_OFFSET),
+        load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PATH_Y_POINTER_OFFSET),
+        sourcePathCount,
+        0,
+        0,
+        Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_NONE,
+        0,
+      );
+    }
+    routeValidation = Layout.ONE_CLICK_RESULT_ROUTE_VALIDATION_VALIDATED;
+  }
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_X_POINTER_OFFSET, outputXPointer);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_Y_POINTER_OFFSET, outputYPointer);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_RESULT_PATH_COUNT_OFFSET, outputCount);
@@ -8188,5 +8387,7 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
     outputCount,
     chainCount,
     selectedEdgeIdsPointer,
+    routeValidation,
+    removedPointCount,
   );
 }

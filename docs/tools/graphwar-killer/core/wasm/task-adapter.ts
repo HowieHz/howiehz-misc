@@ -18,6 +18,9 @@ import {
 } from "../../pathfinding/routing/canonical-data";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { AlgorithmMode, EquationMode, GraphBounds } from "../types";
+
+/** Route context record size shared by route and composition adapters. */
+export const graphwarWasmRouteContextByteLength = 264;
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmFloat64Values,

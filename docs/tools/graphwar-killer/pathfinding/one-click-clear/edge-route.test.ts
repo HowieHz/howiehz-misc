@@ -424,6 +424,7 @@ function createWasmRouteContext(
 ): GraphwarWasmRouteContext {
   const noRoute = () => ({ expansionCount: 0, previews: [], type: "no-route" as const });
   return {
+    contextPointer: 1,
     countPlaneRegionObstacles: () => 0,
     dispose: () => undefined,
     findThetaStarPath: noRoute,

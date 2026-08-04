@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
   graphwarWasmCompositionLayout,
   internGraphwarWasmOneClickStepStates,
+  mergeGraphwarWasmOneClickStepStateEvidence,
   runGraphwarWasmOneClickTrajectoryValidation,
   runGraphwarWasmSmartPathfinding,
   type GraphwarWasmOneClickEdgeResult,
@@ -32,6 +34,87 @@ describe("Graphwar WASM composition adapter", () => {
     ]);
 
     expect(result).toEqual({ nodeCount: 3, nodeIds: [0, 1, 0, 2] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("merges terminal evidence without re-owning canonical node ids in TypeScript", async () => {
+    const runtime = await createRuntime();
+    const existing = [{ resolvedStateKey: "18446744073709551616", resolvedY: 3, targetIndex: 2 }];
+    const merged = mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+      batch: [
+        { resolvedStateKey: "18446744073709551616", resolvedY: 3, targetIndex: 2 },
+        { resolvedStateKey: "18446744073709551617", resolvedY: 4, targetIndex: 0 },
+        { resolvedStateKey: "18446744073709551617", resolvedY: 4, targetIndex: 0 },
+      ],
+      existing,
+      targetCount: 3,
+    });
+
+    expect(merged).toEqual({
+      batchNodeIds: [0, 1, 1],
+      newNodes: [
+        {
+          evidence: { resolvedStateKey: "18446744073709551617", resolvedY: 4, targetIndex: 0 },
+          id: 1,
+        },
+      ],
+      nodeCount: 2,
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a terminal evidence splice that changes the retained state's Y", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+        batch: [{ resolvedStateKey: "0", resolvedY: -0, targetIndex: 1 }],
+        existing: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 1 }],
+        targetCount: 2,
+      }),
+    ).toThrow();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects terminal evidence outside the mirrored target index table", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+        batch: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 3 }],
+        existing: [{ resolvedStateKey: "1", resolvedY: 0, targetIndex: 2 }],
+        targetCount: 3,
+      }),
+    ).toThrow(/target table/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("retains Step evidence and returns copies across incremental batches", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 3 });
+    const firstEntry = { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 };
+    const firstBatch = [firstEntry];
+    expect(table.append(firstBatch)).toEqual({
+      batchNodeIds: [0],
+      newNodes: [{ evidence: firstEntry, id: 0 }],
+      nodeCount: 1,
+    });
+    firstEntry.resolvedY = 99;
+    expect(table.evidence).toEqual([{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }]);
+
+    const secondBatch = [{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }];
+    expect(table.append(secondBatch)).toEqual({ batchNodeIds: [0], newNodes: [], nodeCount: 1 });
+    expect(table.nodeCount).toBe(1);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("does not mutate retained Step evidence when a later batch conflicts", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, {
+      initial: [{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }],
+      targetCount: 1,
+    });
+    expect(() => table.append([{ resolvedStateKey: "0", resolvedY: 2, targetIndex: 0 }])).toThrow();
+    expect(table.evidence).toEqual([{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }]);
+    expect(table.nodeCount).toBe(1);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -312,6 +395,21 @@ describe("Graphwar WASM composition adapter", () => {
         trajectoryValidation: { type: "route-only" },
       }),
     ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
+  });
+
+  it("rejects one-click route-only deletion when a retained route context is present", async () => {
+    const runtime = await createRuntime();
+    const mark = runtime.markArena();
+    const contextPointer = runtime.reserveArena(8, 8);
+
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        routeContextPointer: contextPointer,
+      }),
+    ).toThrow(/route-context composition cannot enable deletion/u);
+    runtime.resetArena(mark);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
   it("keeps route-only positive target radii closed while reserving zero for exact identity", async () => {
@@ -1970,8 +2068,8 @@ describe("Graphwar WASM composition adapter", () => {
   it("rejects a complete result whose selected edge count exceeds its target count", async () => {
     const runtime = await createRuntime();
     vi.spyOn(runtime, "beginOneClickClear").mockImplementation(() => {
-      const pointer = runtime.reserveArena(56, 8);
-      const view = new DataView(runtime.buffer, pointer, 56);
+      const pointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickResultByteLength, 8);
+      const view = new DataView(runtime.buffer, pointer, graphwarWasmCompositionLayout.oneClickResultByteLength);
       view.setUint32(0, 0x4f43_5253, true);
       view.setUint32(4, 0, true);
       view.setUint32(8, 0, true);

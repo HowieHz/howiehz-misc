@@ -20,7 +20,12 @@ import {
   type GraphwarWasmTrajectoryResult,
 } from "./formula-adapter";
 import type { GraphwarWasmKernelRuntime } from "./runtime";
-import type { GraphwarWasmFormulaInputDescriptor, GraphwarWasmPoint, GraphwarWasmStopPolicy } from "./task-adapter";
+import {
+  graphwarWasmRouteContextByteLength,
+  type GraphwarWasmFormulaInputDescriptor,
+  type GraphwarWasmPoint,
+  type GraphwarWasmStopPolicy,
+} from "./task-adapter";
 
 /** Versioned flat records shared by the AssemblyScript composition exports. */
 export const graphwarWasmCompositionLayout = {
@@ -28,9 +33,9 @@ export const graphwarWasmCompositionLayout = {
   oneClickEdgeResultByteLength: 28,
   oneClickInputByteLength: 96,
   oneClickInputEvidenceByteLength: 120,
-  oneClickResultByteLength: 56,
+  oneClickResultByteLength: 64,
   oneClickResumeByteLength: 16,
-  oneClickSessionByteLength: 112,
+  oneClickSessionByteLength: 120,
   oneClickTargetAssignmentInputByteLength: 120,
   oneClickTargetAssignmentResultByteLength: 24,
   smartInputByteLength: 80,
@@ -60,6 +65,8 @@ const oneClickResultMagic = 0x4f_4352_53;
 const oneClickSessionMagic = 0x4f_4353_53;
 const oneClickSessionWaitingPhase = 1;
 const oneClickEdgeStartSentinel = 0xffff_ffff;
+const oneClickRouteValidationNone = 0;
+const oneClickRouteValidationValidated = 1;
 const oneClickTargetAssignmentInputMagic = 0x4f_4341_53;
 const oneClickTargetAssignmentInputVersion = 1;
 const oneClickTargetAssignmentMirroredFlag = 1;
@@ -172,6 +179,8 @@ const oneClickResult = {
   nonce: 44,
   requestNonce: 48,
   selectedEdgeIds: 52,
+  routeValidation: 56,
+  removedPointCount: 60,
 } as const;
 
 const oneClickEdgeJob = {
@@ -222,6 +231,7 @@ const oneClickSession = {
   requestNonce: 88,
   verticalVariationScale: 96,
   nodeCount: 104,
+  routeContext: 108,
 } as const;
 
 const oneClickResume = {
@@ -463,6 +473,29 @@ export interface GraphwarWasmOneClickStepStateInternResult {
   readonly nodeCount: number;
 }
 
+/**
+ * Incremental terminal-state merge owned by the WASM composition boundary. `batchNodeIds` is aligned with the newly
+ * completed edge routes; `newNodes` contains only first occurrences that extend the retained evidence table.
+ */
+export interface GraphwarWasmOneClickStepStateMergeResult {
+  readonly batchNodeIds: readonly number[];
+  readonly newNodes: readonly {
+    readonly evidence: GraphwarWasmOneClickStepStateEvidence;
+    readonly id: number;
+  }[];
+  readonly nodeCount: number;
+}
+
+/**
+ * Adapter-retained Step evidence validated by WASM interning. Callers receive copies only; node identity and evidence
+ * cannot be spliced by mutating a previously completed edge batch.
+ */
+export interface GraphwarWasmOneClickStepStateTable {
+  readonly evidence: readonly GraphwarWasmOneClickStepStateEvidence[];
+  readonly nodeCount: number;
+  append(batch: readonly GraphwarWasmOneClickStepStateEvidence[]): GraphwarWasmOneClickStepStateMergeResult;
+}
+
 export interface GraphwarWasmOneClickEdgeJob {
   readonly from: number;
   readonly id: number;
@@ -493,9 +526,17 @@ export interface GraphwarWasmOneClickEdgeResult {
 export type GraphwarWasmOneClickClearResult =
   | {
       readonly path: readonly GraphwarWasmPoint[];
+      readonly routeValidation?: { readonly removedPointCount: number; readonly type: "route-only" };
       readonly selectedEdgeIds: readonly number[];
       readonly selectedEdgeCount: number;
-      readonly status: "complete" | "failure";
+      readonly status: "complete";
+      readonly targetOrder: readonly number[];
+    }
+  | {
+      readonly path: readonly GraphwarWasmPoint[];
+      readonly selectedEdgeIds: readonly number[];
+      readonly selectedEdgeCount: number;
+      readonly status: "failure";
       readonly targetOrder: readonly number[];
     }
   | {
@@ -560,6 +601,7 @@ interface OneClickRetainedSession {
   readonly ranges: readonly OneClickMemoryRange[];
   readonly path: readonly GraphwarWasmPoint[];
   readonly requestNonce: number;
+  readonly routeContextPointer: number;
   readonly routeCountByJob: readonly number[];
   readonly routesByJob: readonly (OneClickRetainedRoute | undefined)[];
   readonly routeCountPointer: number;
@@ -582,6 +624,7 @@ interface OneClickOutputBoundary {
   readonly expectedPath?: readonly GraphwarWasmPoint[];
   readonly expectedWork?: readonly GraphwarWasmOneClickEdgeResult[];
   readonly retainedSession?: OneClickRetainedSession;
+  readonly expectedRouteContextPointer?: number;
 }
 
 type OneClickRangeSource = "fresh" | "session" | "session-array";
@@ -593,8 +636,17 @@ function createOneClickOutputBoundary(
   forbiddenRanges: readonly OneClickMemoryRange[] = [],
   expectedWork?: readonly GraphwarWasmOneClickEdgeResult[],
   expectedPath?: readonly GraphwarWasmPoint[],
+  expectedRouteContextPointer?: number,
 ): OneClickOutputBoundary {
-  return { additionalRanges, expectedPath, expectedWork, forbiddenRanges, minimumPointer, retainedSession };
+  return {
+    additionalRanges,
+    expectedPath,
+    expectedRouteContextPointer,
+    expectedWork,
+    forbiddenRanges,
+    minimumPointer,
+    retainedSession,
+  };
 }
 
 function oneClickRangeMatches(left: OneClickMemoryRange, right: OneClickMemoryRange) {
@@ -621,6 +673,23 @@ function oneClickPointsArraysEqual(left: readonly GraphwarWasmPoint[], right: re
       return other !== undefined && pointsEqual(point, other);
     })
   );
+}
+
+function oneClickPointsOrderedSubsequence(
+  source: readonly GraphwarWasmPoint[],
+  candidate: readonly GraphwarWasmPoint[],
+) {
+  if (candidate.length === 0 || source.length === 0 || !pointsEqual(candidate[0], source[0])) return false;
+  if (!pointsEqual(candidate.at(-1) ?? { x: 0, y: 0 }, source.at(-1) ?? { x: 0, y: 0 })) return false;
+  let sourceIndex = 0;
+  for (const point of candidate) {
+    while (sourceIndex < source.length && !pointsEqual(source[sourceIndex] ?? { x: 0, y: 0 }, point)) {
+      sourceIndex += 1;
+    }
+    if (sourceIndex >= source.length) return false;
+    sourceIndex += 1;
+  }
+  return true;
 }
 
 function oneClickJobsEqual(
@@ -672,6 +741,7 @@ function validateOneClickTerminalEvidence(
   targetOrder: readonly number[],
   status: "complete" | "failure",
   expectedWork: readonly GraphwarWasmOneClickEdgeResult[] = [],
+  routeValidationRemovedPointCount?: number,
 ) {
   assertOneClickArrayEqual(targetOrder, retainedSession.targetOrder, "terminal target order");
   validateOneClickWorkEvidence(retainedSession, expectedWork);
@@ -789,12 +859,43 @@ function validateOneClickTerminalEvidence(
     }
     expectedPath.push(...route.slice(routeStart));
   }
-  if (!oneClickPointsArraysEqual(path, expectedPath)) {
+  const isRouteOnlyOptimized =
+    retainedSession.routeContextPointer !== 0 && (retainedSession.flags & oneClickDeleteOptimizationFlag) !== 0;
+  if (
+    !oneClickPointsArraysEqual(path, expectedPath) &&
+    (!isRouteOnlyOptimized || !oneClickPointsOrderedSubsequence(expectedPath, path))
+  ) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
       "terminal path does not match the retained prefix",
       "output",
     );
+  }
+  if (isRouteOnlyOptimized) {
+    if (
+      routeValidationRemovedPointCount === undefined ||
+      routeValidationRemovedPointCount !== expectedPath.length - path.length
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "route-only optimized path has inconsistent removed-point evidence",
+        "output",
+      );
+    }
+    let searchStart = retainedSession.path.length > 0 ? retainedSession.path.length - 1 : 0;
+    for (const jobId of selectedEdgeIds) {
+      const job = jobsById.get(jobId);
+      if (!job) continue;
+      const targetIndex = path.findIndex((point, index) => index >= searchStart && pointsEqual(point, job.targetPoint));
+      if (targetIndex < 0) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "route-only optimized path dropped a selected target anchor",
+          "output",
+        );
+      }
+      searchStart = targetIndex + 1;
+    }
   }
   const terminalPoint = path.at(-1);
   if (!terminalPoint || !lastJob || !pointsEqual(terminalPoint, lastJob.targetPoint)) {
@@ -1378,6 +1479,168 @@ export function internGraphwarWasmOneClickStepStates(
   }
 }
 
+/**
+ * Merges one completed edge batch into the retained Step evidence table.
+ *
+ * The full prefix is sent through the existing raw command so WASM remains authoritative for identity interning. A
+ * valid retained table must already be canonical (`nodeId === evidence index`); any splice, sparse id, target range
+ * mismatch, or duplicate key with a different Y is rejected before the caller can construct a DAG node.
+ */
+export function mergeGraphwarWasmOneClickStepStateEvidence(
+  runtime: GraphwarWasmKernelRuntime,
+  input: {
+    readonly batch: readonly GraphwarWasmOneClickStepStateEvidence[];
+    readonly existing: readonly GraphwarWasmOneClickStepStateEvidence[];
+    readonly targetCount: number;
+  },
+): GraphwarWasmOneClickStepStateMergeResult {
+  const targetCount = validateGraphwarWasmU32(input.targetCount, "step state target count", "input");
+  const existingCount = input.existing.length;
+  const allEvidence = [...input.existing, ...input.batch];
+  for (const [index, entry] of allEvidence.entries()) {
+    if (entry.targetIndex >= targetCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `stepStates[${index}].targetIndex is outside the retained target table`,
+        "input",
+      );
+    }
+  }
+  if (allEvidence.length === 0) {
+    return { batchNodeIds: [], newNodes: [], nodeCount: 0 };
+  }
+
+  const interned = internGraphwarWasmOneClickStepStates(runtime, allEvidence);
+  if (interned.nodeIds.length !== allEvidence.length) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step state merge returned an incomplete identity mapping",
+      "output",
+    );
+  }
+  for (let index = 0; index < existingCount; index += 1) {
+    if (interned.nodeIds[index] !== index) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Step state merge changed a retained node identity",
+        "output",
+      );
+    }
+  }
+
+  const newNodes: {
+    evidence: GraphwarWasmOneClickStepStateEvidence;
+    id: number;
+  }[] = [];
+  for (const [index, evidence] of input.batch.entries()) {
+    const nodeId = interned.nodeIds[existingCount + index];
+    if (nodeId === undefined || nodeId >= interned.nodeCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step state merge returned an invalid batch node id",
+        "output",
+      );
+    }
+    if (nodeId === existingCount + newNodes.length) {
+      newNodes.push({
+        evidence: {
+          resolvedStateKey: evidence.resolvedStateKey,
+          resolvedY: evidence.resolvedY,
+          targetIndex: evidence.targetIndex,
+        },
+        id: nodeId,
+      });
+    } else if (nodeId >= existingCount + newNodes.length) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step state merge returned a sparse node id",
+        "output",
+      );
+    }
+  }
+  if (interned.nodeCount !== existingCount + newNodes.length) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step state merge returned an inconsistent node count",
+      "output",
+    );
+  }
+  return {
+    batchNodeIds: interned.nodeIds.slice(existingCount),
+    newNodes,
+    nodeCount: interned.nodeCount,
+  };
+}
+
+/** Creates a retained evidence table so production callers do not own a parallel identity array. */
+export function createGraphwarWasmOneClickStepStateTable(
+  runtime: GraphwarWasmKernelRuntime,
+  input: {
+    readonly initial?: readonly GraphwarWasmOneClickStepStateEvidence[];
+    readonly targetCount: number;
+  },
+): GraphwarWasmOneClickStepStateTable {
+  const targetCount = validateGraphwarWasmU32(input.targetCount, "step state target count", "input");
+  let retainedEvidence = input.initial?.map((entry) => ({ ...entry })) ?? [];
+  if (retainedEvidence.length > 0) {
+    const initialMerge = mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+      batch: retainedEvidence,
+      existing: [],
+      targetCount,
+    });
+    if (
+      initialMerge.nodeCount !== retainedEvidence.length ||
+      initialMerge.batchNodeIds.some((nodeId, index) => nodeId !== index)
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "initial Step state evidence is not canonical",
+        "output",
+      );
+    }
+  }
+
+  return {
+    get evidence() {
+      return retainedEvidence.map((entry) => ({ ...entry }));
+    },
+    get nodeCount() {
+      return retainedEvidence.length;
+    },
+    append(batch) {
+      const copiedBatch = batch.map((entry) => ({ ...entry }));
+      if (copiedBatch.length === 0) {
+        return { batchNodeIds: [], newNodes: [], nodeCount: retainedEvidence.length };
+      }
+      const merged = mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+        batch: copiedBatch,
+        existing: retainedEvidence,
+        targetCount,
+      });
+      if (merged.nodeCount < retainedEvidence.length) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Step state table lost retained evidence",
+          "output",
+        );
+      }
+      retainedEvidence = [...retainedEvidence, ...merged.newNodes.map(({ evidence }) => ({ ...evidence }))];
+      if (retainedEvidence.length !== merged.nodeCount) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Step state table returned an inconsistent node count",
+          "output",
+        );
+      }
+      return {
+        batchNodeIds: [...merged.batchNodeIds],
+        newNodes: merged.newNodes.map(({ evidence, id }) => ({ evidence: { ...evidence }, id })),
+        nodeCount: merged.nodeCount,
+      };
+    },
+  };
+}
+
 /** Expands one stateful Step DAG layer in WASM; edge route execution stays with the existing Worker boundary. */
 export function expandGraphwarWasmOneClickStepDagJobs(
   runtime: GraphwarWasmKernelRuntime,
@@ -1700,7 +1963,15 @@ export function beginGraphwarWasmOneClickClear(
       packed.requestNonce,
       packed.verticalVariationScale,
       input.dagJobs ? packed.dagNodeCount : undefined,
-      createOneClickOutputBoundary(beginArenaCursor, undefined, [], [], undefined, packed.path),
+      createOneClickOutputBoundary(
+        beginArenaCursor,
+        undefined,
+        [],
+        [],
+        undefined,
+        packed.path,
+        packed.routeContextPointer,
+      ),
     );
     if (decoded.status !== "waiting-edge-batch") {
       runtime.resetArena(mark);
@@ -2253,6 +2524,14 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     throw new GraphwarWasmAdapterError("invalid-session-identity", "requestNonce must be non-zero", "input");
   }
   const verticalVariationScale = validateNonNegativeFinite(input.verticalVariationScale ?? 1, "verticalVariationScale");
+  const routeContextPointer = validateOptionalPointer(input.routeContextPointer, "routeContextPointer");
+  if (routeContextPointer !== 0 && input.isDeleteOptimizationEnabled) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "one-click route-context composition cannot enable deletion without trajectory evidence",
+      "input",
+    );
+  }
   const targetOrderKeys = input.targetOrderKeys
     ? input.targetOrderKeys.map((value, index) => validateGraphwarWasmU32(value, `targetOrderKeys[${index}]`, "input"))
     : [];
@@ -2432,7 +2711,7 @@ function packOneClickInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWa
     pathY: writeGraphwarWasmFloat64Values(runtime, new Float64Array(path.map(({ y }) => y)), runtime.arenaBase),
     pathCount: path.length,
     requestNonce,
-    routeContextPointer: validateOptionalPointer(input.routeContextPointer, "routeContextPointer"),
+    routeContextPointer,
     targetOrderKeys: writeGraphwarWasmUint32Values(runtime, Uint32Array.from(targetOrderKeys), runtime.arenaBase),
     verticalVariationScale,
     inputByteLength:
@@ -2878,6 +3157,45 @@ function copyOneClickResult(
     view.getUint32(oneClickResult.selectedEdgeIds, true),
     "selected edge ids pointer",
   );
+  const routeValidation = validateGraphwarWasmEnumValue(
+    view.getUint32(oneClickResult.routeValidation, true),
+    [oneClickRouteValidationNone, oneClickRouteValidationValidated] as const,
+    "one-click route validation",
+  );
+  const removedPointCount = validateGraphwarWasmU32(
+    view.getUint32(oneClickResult.removedPointCount, true),
+    "one-click removed point count",
+  );
+  const expectedRouteContextPointer =
+    boundary.retainedSession?.routeContextPointer ?? boundary.expectedRouteContextPointer ?? 0;
+  if (routeValidation === oneClickRouteValidationValidated && expectedRouteContextPointer === 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click route validation has no retained route context",
+      "output",
+    );
+  }
+  if (status === 0 && expectedRouteContextPointer !== 0 && routeValidation !== oneClickRouteValidationValidated) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "complete one-click result is missing route validation evidence",
+      "output",
+    );
+  }
+  if (status !== 0 && (routeValidation !== oneClickRouteValidationNone || removedPointCount !== 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "non-terminal one-click result carries route validation evidence",
+      "output",
+    );
+  }
+  if (status === 2 && (routeValidation !== oneClickRouteValidationNone || removedPointCount !== 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "failed one-click result carries route validation evidence",
+      "output",
+    );
+  }
   if (selectedEdgeCount === 0 && selectedEdgeIdsPointer !== 0) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-state",
@@ -3118,10 +3436,14 @@ function copyOneClickResult(
       targetOrder,
       status === 0 ? "complete" : "failure",
       boundary.expectedWork,
+      routeValidation === oneClickRouteValidationValidated ? removedPointCount : undefined,
     );
   }
   return {
     path,
+    ...(routeValidation === oneClickRouteValidationValidated
+      ? { routeValidation: { removedPointCount, type: "route-only" as const } }
+      : {}),
     selectedEdgeIds: Array.from(selectedEdgeIds),
     selectedEdgeCount,
     status: status === 0 ? "complete" : "failure",
@@ -3404,6 +3726,7 @@ function readOneClickSession(
     view.getUint32(oneClickSession.requestNonce, true),
     "session request nonce",
   );
+  const routeContextPointer = readPointer(oneClickSession.routeContext, "session route context pointer");
   const flags = view.getUint32(oneClickSession.flags, true);
   if (
     nonce === 0 ||
@@ -3421,6 +3744,23 @@ function readOneClickSession(
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
       "one-click session request nonce is stale",
+      "output",
+    );
+  }
+  if (
+    boundary.expectedRouteContextPointer !== undefined &&
+    routeContextPointer !== boundary.expectedRouteContextPointer
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click session route context identity changed",
+      "output",
+    );
+  }
+  if (retainedSession && retainedSession.routeContextPointer !== routeContextPointer) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click retained route context identity changed",
       "output",
     );
   }
@@ -3618,6 +3958,9 @@ function readOneClickSession(
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeXPointer },
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeCountPointer },
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeYPointer },
+    ...(routeContextPointer === 0
+      ? []
+      : [{ alignment: 8, length: graphwarWasmRouteContextByteLength, pointer: routeContextPointer }]),
   ].filter(({ length }) => length > 0);
   assertOneClickRangesDisjoint(currentSessionRanges, "one-click session arrays", false);
   assertOneClickRangesDisjoint(
@@ -3850,6 +4193,9 @@ function readOneClickSession(
   }
   const retainedRanges: OneClickMemoryRange[] = [
     { alignment: 8, length: graphwarWasmCompositionLayout.oneClickSessionByteLength, pointer },
+    ...(routeContextPointer === 0
+      ? []
+      : [{ alignment: 8, length: graphwarWasmRouteContextByteLength, pointer: routeContextPointer }]),
     {
       alignment: 8,
       length: sessionJobCount * graphwarWasmCompositionLayout.oneClickEdgeJobByteLength,
@@ -3933,6 +4279,7 @@ function readOneClickSession(
       ranges: retainedRanges,
       path,
       requestNonce,
+      routeContextPointer,
       routeCountByJob: Array.from(routeCountByJob),
       routesByJob,
       routeCountPointer,

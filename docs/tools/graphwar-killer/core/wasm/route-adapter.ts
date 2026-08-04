@@ -37,6 +37,7 @@ import {
 import type { GraphwarWasmKernelRuntime } from "./runtime";
 import {
   copyGraphwarWasmPathfindingPreviewEvent,
+  graphwarWasmRouteContextByteLength,
   packGraphwarWasmRouteContextInput,
   type GraphwarWasmPathfindingPreviewEvent,
   type GraphwarWasmRouteContextInput,
@@ -57,7 +58,7 @@ const routeCommand = {
   stepVisibilityGraph: 10,
 } as const;
 const routeCreateInputByteLength = 52;
-const routeContextByteLength = 264;
+const routeContextByteLength = graphwarWasmRouteContextByteLength;
 const routeContextMagic = 0x524f_5554;
 const routeContextMirroredFlag = 1;
 const routeContextStepModelFlag = 2;
@@ -105,6 +106,8 @@ function imagePointToSmartRouteValidationPoint(
 
 /** Owned route-context result and collision surface; no WASM memory view escapes this object. */
 export interface GraphwarWasmRouteContext {
+  /** Raw context identity may be passed only to another bounded WASM command while this context is active. */
+  readonly contextPointer: number;
   readonly isMirrored: boolean;
   readonly routeBoundaryEdgeCount: number;
   readonly routeComponentCount: number;
@@ -740,6 +743,7 @@ export function createGraphwarWasmRouteContext(
       : undefined;
 
     return {
+      contextPointer,
       countPlaneRegionObstacles(region) {
         return runRegionQuery(routeCommand.planeRegionCount, region);
       },

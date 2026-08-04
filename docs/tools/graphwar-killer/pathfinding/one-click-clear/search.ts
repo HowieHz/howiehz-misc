@@ -12,13 +12,14 @@ import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
-  internGraphwarWasmOneClickStepStates,
   runGraphwarWasmSmartPathfinding,
   runGraphwarWasmOneClickTrajectoryValidation,
   type GraphwarWasmOneClickEdgeJob,
   type GraphwarWasmOneClickDagJob,
   type GraphwarWasmOneClickEdgeResult,
+  type GraphwarWasmOneClickClearResult,
   type GraphwarWasmOneClickStepStateEvidence,
 } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
@@ -364,6 +365,8 @@ export type GraphwarOneClickClearResult =
 
 /** 一键清图内部统一的建路点、命中圈和排序信息。 */
 interface OneClickClearTarget extends GraphwarOneClickClearCandidate {
+  /** Stable candidate identity returned by the target-assignment boundary. */
+  sourceIndex: number;
   /** 几何建路目标点；共享分配器可在真实命中圆内调整 x。 */
   routePoint: PixelPoint;
   /** 弹道验证命中圆；和几何建路目标点是两个概念。 */
@@ -417,11 +420,23 @@ interface OneClickClearDag {
   outgoingEdges: Map<number, OneClickClearDagEdge[]>;
   /** 按建路目标 x 排序后的目标。 */
   targets: OneClickClearTarget[];
+  /** Effective-WASM state evidence retained atomically with node ids. */
+  stepStateEvidence?: readonly GraphwarWasmOneClickStepStateEvidence[];
   /**
    * Authoritative result of the retained WASM composition session. A normal no-route result is distinct from an absent
    * selection so the TypeScript DP cannot silently take ownership of the effective WASM path.
    */
-  wasmSelection?: { readonly edgeIds: readonly number[]; readonly type: "selected" } | { readonly type: "failure" };
+  wasmSelection?: OneClickClearWasmSelection | { readonly type: "failure" };
+}
+
+/** WASM composition choice and its path evidence stay bound to same edge chain. */
+interface OneClickClearWasmSelection {
+  readonly edgeIds: readonly number[];
+  readonly path: readonly PixelPoint[];
+  readonly routeValidation?: { readonly removedPointCount: number; readonly type: "route-only" };
+  /** Candidate identities in the retained composition target order. */
+  readonly targetSourceIndexes: readonly number[];
+  readonly type: "selected";
 }
 
 /** 到达某个 DAG 节点的当前最佳累计路径。 */
@@ -1344,15 +1359,29 @@ async function runOneClickClearSearchAttempt(
     dag.wasmSelection?.type === "selected" &&
     dag.wasmSelection.edgeIds.length > 0 &&
     dag.wasmSelection.edgeIds.every((edgeId) => dag.edges[edgeId]?.active === true);
-  const wasmSelectedEdges =
-    options.wasmRuntime && !canReuseWasmPreferredPath
-      ? dag.nodes.every((node) => node.type === "stateless")
-        ? await selectOneClickClearStatelessDagPathWithWasm(context, dag)
-        : await selectOneClickClearStepDagPathWithWasm(context, dag)
-      : undefined;
+  if (options.wasmRuntime && !canReuseWasmPreferredPath) {
+    const refreshedSelection = dag.nodes.every((node) => node.type === "stateless")
+      ? await selectOneClickClearStatelessDagPathWithWasm(context, dag)
+      : await selectOneClickClearStepDagPathWithWasm(context, dag);
+    if (!refreshedSelection) {
+      throw new GraphwarWasmFault("abi", "one-click WASM retry lost its selection result");
+    }
+    dag.wasmSelection = refreshedSelection;
+  }
+  if (dag.wasmSelection?.type === "failure") {
+    return {
+      reason: "no-usable-target",
+      type: "failure",
+      workUnits,
+    };
+  }
   const selectedEdges =
-    wasmSelectedEdges ??
-    measureOneClickClearDebugTiming(options, "dag-longest-path", () => findOneClickClearLongestPath(dag));
+    dag.wasmSelection?.type === "selected"
+      ? reconstructOneClickClearPreferredPath(dag)
+      : measureOneClickClearDebugTiming(options, "dag-longest-path", () => findOneClickClearLongestPath(dag));
+  if (!selectedEdges) {
+    throw new GraphwarWasmFault("abi", "one-click WASM composition lost its selected edge chain");
+  }
   if (selectedEdges.length === 0) {
     return {
       reason: "no-usable-target",
@@ -1442,7 +1471,7 @@ async function runOneClickClearSearchAttempt(
 async function selectOneClickClearStatelessDagPathWithWasm(
   context: OneClickClearSearchContext,
   dag: OneClickClearDag,
-): Promise<OneClickClearDagEdge[] | undefined> {
+): Promise<OneClickClearWasmSelection | { readonly type: "failure" } | undefined> {
   const options = context.options;
   const wasmRuntime = options.wasmRuntime;
   const activeEdges = dag.edges.filter((edge) => edge.active);
@@ -1453,7 +1482,7 @@ async function selectOneClickClearStatelessDagPathWithWasm(
     throw new GraphwarWasmFault("abi", "one-click stateless WASM retry received a stateful DAG");
   }
   if (activeEdges.length === 0) {
-    return [];
+    return { type: "failure" };
   }
   const edgesByJobId = new Map<number, OneClickClearDagEdge>();
   const dagJobs = activeEdges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
@@ -1477,23 +1506,33 @@ async function selectOneClickClearStatelessDagPathWithWasm(
       toNodeId: targetNode.id,
     };
   });
-  const composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
-    candidates: dag.targets.map((target) => ({
-      hitCenter: target.routePoint,
-      hitRadius: target.hitCircle.radius,
-      isEnemy: true,
-    })),
-    dagJobs,
-    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
-    isStepStateful: false,
-    isTargetOrderDescending: !xPlusGoesRight(options.bounds),
-    path: options.pathPoints,
-    requestNonce: options.wasmRequestNonce ?? 1,
-    targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
-    verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
-  });
+  const routeContext = createOneClickClearCompositionRouteContext(options, false);
+  let composition: ReturnType<typeof beginGraphwarWasmOneClickClear>;
+  try {
+    composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
+      candidates: dag.targets.map((target) => ({
+        hitCenter: target.routePoint,
+        hitRadius: target.hitCircle.radius,
+        isEnemy: true,
+      })),
+      dagJobs,
+      // Route context proves graph/mask validity only; trajectory core owns deletion proof.
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: false,
+      isTargetOrderDescending: !xPlusGoesRight(options.bounds),
+      path: options.pathPoints,
+      requestNonce: options.wasmRequestNonce ?? 1,
+      routeContextPointer: routeContext?.contextPointer,
+      targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
+      verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
+    });
+  } catch (error) {
+    routeContext?.dispose();
+    throw error;
+  }
   if (composition.status !== "waiting-edge-batch") {
-    return [];
+    routeContext?.dispose();
+    return { type: "failure" };
   }
   try {
     if (composition.targetOrder.some((targetIndex, index) => targetIndex !== index)) {
@@ -1523,15 +1562,12 @@ async function selectOneClickClearStatelessDagPathWithWasm(
       throw new GraphwarWasmFault("abi", "one-click stateless retry returned an unexpected pending batch");
     }
     if (result.status !== "complete") {
-      return [];
+      return { type: "failure" };
     }
-    const selectedEdgeIds = mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId);
-    return selectedEdgeIds.flatMap((edgeId) => {
-      const edge = dag.edges[edgeId];
-      return edge ? [edge] : [];
-    });
+    return createOneClickClearWasmSelection(result, edgesByJobId, dag.targets);
   } finally {
     composition.handle.cancel();
+    routeContext?.dispose();
   }
 }
 
@@ -1556,15 +1592,37 @@ async function runOneClickClearSearchAttemptWithWasm(
   if (options.isCancelled?.()) {
     return { reason: "no-usable-target", type: "failure", workUnits };
   }
-  const selectedRoute = createOneClickClearRouteFromEdges(options, dag, selectedEdges);
-  if (!selectedRoute) {
+  const wasmSelection = dag.wasmSelection?.type === "selected" ? dag.wasmSelection : undefined;
+  const initialSelectedRoute = wasmSelection
+    ? createOneClickClearRouteFromWasmSelection(options, dag, selectedEdges, wasmSelection)
+    : createOneClickClearRouteFromEdges(options, dag, selectedEdges);
+  if (!initialSelectedRoute) {
     return { reason: "no-usable-target", type: "failure", workUnits };
   }
+  let selectedRoute: OneClickClearRoute = initialSelectedRoute;
 
-  const validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
+  let validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
     runOneClickClearWasmRouteValidation(options, selectedRoute.pathPoints, selectedRoute.targetSequence, false),
   );
   const nextWorkUnits = workUnits + 1;
+  // A route-only session cannot prove formula/obstacle semantics. If such a
+  // result ever reaches this boundary, preserve the original edge chain when
+  // its geometry-only deletion fails trajectory validation.
+  if (
+    !validation?.reachesTargetSequenceBeforeObstacle &&
+    (wasmSelection?.routeValidation?.removedPointCount ?? 0) > 0
+  ) {
+    const originalRoute = createOneClickClearRouteFromEdges(options, dag, selectedEdges);
+    if (originalRoute) {
+      const originalValidation = measureOneClickClearDebugTiming(options, "validate-route", () =>
+        runOneClickClearWasmRouteValidation(options, originalRoute.pathPoints, originalRoute.targetSequence, false),
+      );
+      if (originalValidation?.reachesTargetSequenceBeforeObstacle) {
+        selectedRoute = originalRoute;
+        validation = originalValidation;
+      }
+    }
+  }
   if (!validation?.reachesTargetSequenceBeforeObstacle) {
     const reachedTargetCount = validation?.reachedTargetCount ?? 0;
     const failedEdge = selectedEdges[Math.min(reachedTargetCount, selectedEdges.length - 1)];
@@ -1661,6 +1719,77 @@ function createOneClickClearRouteFromEdges(
     targetSequence.push(target);
   }
   return { pathPoints, targetSequence };
+}
+
+/** Uses composition-owned path only after proving edge, source-prefix, and target-anchor identity. */
+function createOneClickClearRouteFromWasmSelection(
+  options: GraphwarOneClickClearSearchOptions,
+  dag: OneClickClearDag,
+  edges: readonly OneClickClearDagEdge[],
+  selection: OneClickClearWasmSelection,
+) {
+  if (
+    selection.targetSourceIndexes.length !== dag.targets.length ||
+    dag.targets.some((target, index) => target.sourceIndex !== selection.targetSourceIndexes[index])
+  ) {
+    throw new GraphwarWasmFault("abi", "one-click WASM selection changed target candidate identities");
+  }
+  const reconstructed = createOneClickClearRouteFromEdges(options, dag, edges);
+  if (!reconstructed) {
+    throw new GraphwarWasmFault("abi", "one-click WASM path lost selected edge identity");
+  }
+  const pathPoints = selection.path;
+  if (
+    pathPoints.length < options.pathPoints.length ||
+    options.pathPoints.some((point, index) => {
+      const selectedPoint = pathPoints[index];
+      return selectedPoint === undefined || !pixelPointsEqual(point, selectedPoint);
+    }) ||
+    !isOneClickClearPixelPointSubsequence(pathPoints, reconstructed.pathPoints)
+  ) {
+    throw new GraphwarWasmFault("abi", "one-click WASM path is not a selected-route subsequence");
+  }
+
+  let anchorSearchIndex = options.pathPoints.length;
+  for (const target of reconstructed.targetSequence) {
+    const anchorIndex = pathPoints.findIndex(
+      (point, index) => index >= anchorSearchIndex && pixelPointsEqual(point, target.routePoint),
+    );
+    if (anchorIndex < 0) {
+      throw new GraphwarWasmFault("abi", "one-click WASM path dropped a selected target anchor");
+    }
+    anchorSearchIndex = anchorIndex + 1;
+  }
+  const finalPoint = pathPoints.at(-1);
+  const finalTarget = reconstructed.targetSequence.at(-1);
+  if (!finalPoint || !finalTarget || !pixelPointsEqual(finalPoint, finalTarget.routePoint)) {
+    throw new GraphwarWasmFault("abi", "one-click WASM path has an invalid selected endpoint");
+  }
+  if (
+    selection.routeValidation &&
+    selection.routeValidation.removedPointCount !== reconstructed.pathPoints.length - pathPoints.length
+  ) {
+    throw new GraphwarWasmFault("abi", "one-click WASM route evidence has an invalid removed-point count");
+  }
+  return {
+    pathPoints: pathPoints.map(clonePixelPoint),
+    targetSequence: reconstructed.targetSequence,
+  } satisfies Pick<OneClickClearRoute, "pathPoints" | "targetSequence">;
+}
+
+/** Checks that every returned point came from the selected edge chain in stable order. */
+function isOneClickClearPixelPointSubsequence(candidate: readonly PixelPoint[], source: readonly PixelPoint[]) {
+  let sourceIndex = 0;
+  for (const point of candidate) {
+    while (sourceIndex < source.length && !pixelPointsEqual(point, source[sourceIndex])) {
+      sourceIndex += 1;
+    }
+    if (sourceIndex >= source.length) {
+      return false;
+    }
+    sourceIndex += 1;
+  }
+  return true;
 }
 
 /** Runs a complete path or deletion candidate through WASM's canonical trajectory core. */
@@ -2072,6 +2201,7 @@ function collectOneClickClearTargets(options: GraphwarOneClickClearSearchOptions
           radius: candidate.hitRadius,
         },
         routePoint,
+        sourceIndex: assigned.sourceIndex,
         sortGraphX: imageToGraphPoint(routePoint, options.bounds, options.boundsRect).x,
       },
     ];
@@ -2153,21 +2283,30 @@ async function buildOneClickClearStatelessDagWithWasm(
   if (!wasmRuntime) {
     throw new GraphwarWasmFault("abi", "one-click WASM runtime disappeared before stateless composition");
   }
-  const composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
-    candidates: targets.map((target) => ({
-      hitCenter: target.routePoint,
-      hitRadius: target.hitCircle.radius,
-      isEnemy: true,
-    })),
-    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
-    isStepStateful: false,
-    isTargetOrderDescending: !xPlusGoesRight(options.bounds),
-    path: options.pathPoints,
-    requestNonce: options.wasmRequestNonce ?? 1,
-    targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, targets),
-    verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
-  });
+  const routeContext = createOneClickClearCompositionRouteContext(options, false);
+  let composition: ReturnType<typeof beginGraphwarWasmOneClickClear>;
+  try {
+    composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
+      candidates: targets.map((target) => ({
+        hitCenter: target.routePoint,
+        hitRadius: target.hitCircle.radius,
+        isEnemy: true,
+      })),
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: false,
+      isTargetOrderDescending: !xPlusGoesRight(options.bounds),
+      path: options.pathPoints,
+      requestNonce: options.wasmRequestNonce ?? 1,
+      routeContextPointer: routeContext?.contextPointer,
+      targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, targets),
+      verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
+    });
+  } catch (error) {
+    routeContext?.dispose();
+    throw error;
+  }
   if (composition.status !== "waiting-edge-batch") {
+    routeContext?.dispose();
     return {
       edges: [],
       nodes: [],
@@ -2245,10 +2384,7 @@ async function buildOneClickClearStatelessDagWithWasm(
     }
     const wasmSelection =
       composed.status === "complete"
-        ? {
-            edgeIds: mapOneClickClearSelectedJobIdsToEdgeIds(composed.selectedEdgeIds, edgesByJobId),
-            type: "selected" as const,
-          }
+        ? createOneClickClearWasmSelection(composed, edgesByJobId, targets)
         : { type: "failure" as const };
     return {
       edges,
@@ -2260,6 +2396,7 @@ async function buildOneClickClearStatelessDagWithWasm(
     };
   } finally {
     composition.handle.cancel();
+    routeContext?.dispose();
   }
 }
 
@@ -2290,6 +2427,28 @@ function mapOneClickClearSelectedJobIdsToEdgeIds(
     previousNode = edge.to;
   }
   return selectedEdgeIds;
+}
+
+/** Copies terminal WASM path/evidence beside selected edge identities. */
+function createOneClickClearWasmSelection(
+  result: Extract<GraphwarWasmOneClickClearResult, { status: "complete" }>,
+  edgesByJobId: ReadonlyMap<number, OneClickClearDagEdge>,
+  inputTargets: readonly OneClickClearTarget[],
+): OneClickClearWasmSelection {
+  const targetSourceIndexes = result.targetOrder.map((targetIndex, index) => {
+    const target = inputTargets[targetIndex];
+    if (!target) {
+      throw new GraphwarWasmFault("abi", `one-click selected target order lost target ${index}`);
+    }
+    return target.sourceIndex;
+  });
+  return {
+    edgeIds: mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId),
+    path: result.path.map(({ x, y }) => createPixelPoint(x, y)),
+    ...(result.routeValidation ? { routeValidation: { ...result.routeValidation } } : {}),
+    targetSourceIndexes,
+    type: "selected",
+  };
 }
 
 /** Validates that a retained composition session still describes the caller's exact DAG jobs. */
@@ -2412,7 +2571,9 @@ async function buildOneClickClearStepDag(
   type StepDagNode = Extract<OneClickClearDagNode, { type: "step-stateful" }>;
   const nodes: StepDagNode[] = [];
   const nodesByTargetIndex = Array.from({ length: targets.length }, (): StepDagNode[] => []);
-  const wasmStateEvidence: GraphwarWasmOneClickStepStateEvidence[] = [];
+  const wasmStateTable = options.wasmRuntime
+    ? createGraphwarWasmOneClickStepStateTable(options.wasmRuntime, { targetCount: targets.length })
+    : undefined;
   const typescriptNodesByTargetState = options.wasmRuntime
     ? undefined
     : Array.from({ length: targets.length }, (): Map<string, StepDagNode> => new Map());
@@ -2420,7 +2581,14 @@ async function buildOneClickClearStepDag(
   const startPoint = options.pathPoints.at(-1) ?? options.pathPoints[0];
   const startState = resolveOneClickClearStepStartState(options);
   if (!startState) {
-    return { edges, nodes, nodesByTargetIndex, outgoingEdges, targets: [...targets] };
+    return {
+      edges,
+      nodes,
+      nodesByTargetIndex,
+      outgoingEdges,
+      stepStateEvidence: wasmStateTable?.evidence,
+      targets: [...targets],
+    };
   }
 
   let nextJobId = 0;
@@ -2443,44 +2611,52 @@ async function buildOneClickClearStepDag(
         resolvedY: builtRoute.stepRouteEndState.resolvedY,
         targetIndex: job.to,
       }));
-      const interned = internGraphwarWasmOneClickStepStates(options.wasmRuntime, [
-        ...wasmStateEvidence,
-        ...batchEvidence,
-      ]);
-      const previousEvidenceCount = wasmStateEvidence.length;
-      if (interned.nodeIds.length !== previousEvidenceCount + batchEvidence.length) {
-        throw new GraphwarWasmFault("abi", "one-click Step state dedup returned an incomplete mapping");
+      if (!wasmStateTable) {
+        throw new GraphwarWasmFault("abi", "one-click Step state table is unavailable");
+      }
+      const merged = wasmStateTable.append(batchEvidence);
+      if (merged.batchNodeIds.length !== batchEvidence.length) {
+        throw new GraphwarWasmFault("abi", "one-click Step state merge returned an incomplete mapping");
+      }
+      for (const node of merged.newNodes) {
+        if (node.id !== nodes.length) {
+          throw new GraphwarWasmFault("abi", "one-click Step state merge returned a sparse node id");
+        }
+        const targetNodes = nodesByTargetIndex[node.evidence.targetIndex];
+        if (!targetNodes) {
+          throw new GraphwarWasmFault("abi", "one-click Step state merge returned an invalid target binding");
+        }
+        const targetNode: StepDagNode = {
+          id: node.id,
+          stepRouteState: {
+            resolvedStateKey: node.evidence.resolvedStateKey,
+            resolvedY: node.evidence.resolvedY,
+          },
+          targetIndex: node.evidence.targetIndex,
+          type: "step-stateful",
+        };
+        nodes.push(targetNode);
+        targetNodes.push(targetNode);
       }
       for (const [index, evidence] of batchEvidence.entries()) {
-        const nodeId = interned.nodeIds[previousEvidenceCount + index];
+        const nodeId = merged.batchNodeIds[index];
         if (nodeId === undefined) {
-          throw new GraphwarWasmFault("abi", "one-click Step state dedup returned a missing node id");
+          throw new GraphwarWasmFault("abi", "one-click Step state merge returned a missing node id");
         }
-        let targetNode = nodes[nodeId];
-        if (!targetNode) {
-          if (nodeId !== nodes.length) {
-            throw new GraphwarWasmFault("abi", "one-click Step state dedup returned a sparse node id");
-          }
-          targetNode = {
-            id: nodeId,
-            stepRouteState: { resolvedStateKey: evidence.resolvedStateKey, resolvedY: evidence.resolvedY },
-            targetIndex: evidence.targetIndex,
-            type: "step-stateful",
-          };
-          nodes.push(targetNode);
-          nodesByTargetIndex[evidence.targetIndex]?.push(targetNode);
-          wasmStateEvidence.push(evidence);
-        } else if (
+        const targetNode = nodes[nodeId];
+        if (
+          !targetNode ||
+          targetNode.type !== "step-stateful" ||
           targetNode.targetIndex !== evidence.targetIndex ||
           targetNode.stepRouteState.resolvedStateKey !== evidence.resolvedStateKey ||
           !Object.is(targetNode.stepRouteState.resolvedY, evidence.resolvedY)
         ) {
-          throw new GraphwarWasmFault("abi", "one-click Step state dedup changed node evidence");
+          throw new GraphwarWasmFault("abi", "one-click Step state merge changed node evidence");
         }
         const route = successfulRoutes[index]?.builtRoute.route;
         const job = successfulRoutes[index]?.job;
         if (!route || !job) {
-          throw new GraphwarWasmFault("abi", "one-click Step state dedup lost route evidence");
+          throw new GraphwarWasmFault("abi", "one-click Step state merge lost route evidence");
         }
         addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, route);
       }
@@ -2493,7 +2669,8 @@ async function buildOneClickClearStepDag(
       if (!stateNodes || !targetNodes) {
         continue;
       }
-      let targetNode = stateNodes.get(stepRouteEndState.resolvedStateKey);
+      const stateIdentity = createOneClickClearStepStateIdentityKey(stepRouteEndState);
+      let targetNode = stateNodes.get(stateIdentity);
       if (!targetNode) {
         targetNode = {
           id: nodes.length,
@@ -2503,7 +2680,7 @@ async function buildOneClickClearStepDag(
         };
         nodes.push(targetNode);
         targetNodes.push(targetNode);
-        stateNodes.set(stepRouteEndState.resolvedStateKey, targetNode);
+        stateNodes.set(stateIdentity, targetNode);
       }
       addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, builtRoute.route);
     }
@@ -2563,7 +2740,7 @@ async function buildOneClickClearStepDag(
 
     const jobs: GraphwarOneClickClearDagEdgeBuildJob[] = [];
     if (options.wasmRuntime) {
-      if (wasmStateEvidence.length !== nodes.length) {
+      if (!wasmStateTable || wasmStateTable.nodeCount !== nodes.length) {
         throw new GraphwarWasmFault("abi", "one-click Step expansion lost atomic node evidence");
       }
       const sourceNodes = [];
@@ -2574,7 +2751,7 @@ async function buildOneClickClearStepDag(
       }
       const expandedJobs = expandGraphwarWasmOneClickStepDagJobs(options.wasmRuntime, {
         isStartExpansion: false,
-        nodeCount: wasmStateEvidence.length,
+        nodeCount: wasmStateTable.nodeCount,
         sourceNodes,
         startPoint,
         targets: targets.map((target) => ({ graphX: target.sortGraphX, routePoint: target.routePoint })),
@@ -2626,14 +2803,21 @@ async function buildOneClickClearStepDag(
     layerStart = layerEnd;
   }
 
-  return { edges, nodes, nodesByTargetIndex, outgoingEdges, targets: [...targets] };
+  return {
+    edges,
+    nodes,
+    nodesByTargetIndex,
+    outgoingEdges,
+    stepStateEvidence: wasmStateTable?.evidence,
+    targets: [...targets],
+  };
 }
 
 /** Re-selects an active stateful DAG after a formula-invalid edge is removed. */
 async function selectOneClickClearStepDagPathWithWasm(
   context: OneClickClearSearchContext,
   dag: OneClickClearDag,
-): Promise<OneClickClearDagEdge[] | undefined> {
+): Promise<OneClickClearWasmSelection | { readonly type: "failure" } | undefined> {
   const options = context.options;
   const wasmRuntime = options.wasmRuntime;
   const activeEdges = dag.edges.filter((edge) => edge.active);
@@ -2644,9 +2828,9 @@ async function selectOneClickClearStepDagPathWithWasm(
     throw new GraphwarWasmFault("abi", "one-click Step WASM retry received a stateless DAG");
   }
   if (activeEdges.length === 0) {
-    return [];
+    return { type: "failure" };
   }
-  const dagNodeEvidence = createOneClickClearWasmStepNodeEvidence(dag.nodes, "stateful one-click retry");
+  const dagNodeEvidence = getOneClickClearWasmStepNodeEvidence(dag, "stateful one-click retry");
 
   const edgesByJobId = new Map<number, OneClickClearDagEdge>();
   const dagJobs = activeEdges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
@@ -2686,25 +2870,34 @@ async function selectOneClickClearStepDagPathWithWasm(
     };
   });
 
-  const composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
-    candidates: dag.targets.map((target) => ({
-      hitCenter: target.routePoint,
-      hitRadius: target.hitCircle.radius,
-      isEnemy: true,
-    })),
-    dagJobs,
-    dagNodeEvidence,
-    dagNodeCount: dag.nodes.length,
-    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
-    isStepStateful: true,
-    isTargetOrderDescending: !xPlusGoesRight(options.bounds),
-    path: options.pathPoints,
-    requestNonce: options.wasmRequestNonce ?? 1,
-    targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
-    verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
-  });
+  const routeContext = createOneClickClearCompositionRouteContext(options, true);
+  let composition: ReturnType<typeof beginGraphwarWasmOneClickClear>;
+  try {
+    composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
+      candidates: dag.targets.map((target) => ({
+        hitCenter: target.routePoint,
+        hitRadius: target.hitCircle.radius,
+        isEnemy: true,
+      })),
+      dagJobs,
+      dagNodeEvidence,
+      dagNodeCount: dag.nodes.length,
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+      isTargetOrderDescending: !xPlusGoesRight(options.bounds),
+      path: options.pathPoints,
+      requestNonce: options.wasmRequestNonce ?? 1,
+      routeContextPointer: routeContext?.contextPointer,
+      targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
+      verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
+    });
+  } catch (error) {
+    routeContext?.dispose();
+    throw error;
+  }
   if (composition.status !== "waiting-edge-batch") {
-    return [];
+    routeContext?.dispose();
+    return { type: "failure" };
   }
   try {
     if (composition.targetOrder.some((targetIndex, index) => targetIndex !== index)) {
@@ -2734,13 +2927,12 @@ async function selectOneClickClearStepDagPathWithWasm(
       throw new GraphwarWasmFault("abi", "stateful one-click retry returned an unexpected edge batch");
     }
     if (result.status !== "complete") {
-      return [];
+      return { type: "failure" };
     }
-    return mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId).flatMap((edgeId) =>
-      dag.edges[edgeId] ? [dag.edges[edgeId]] : [],
-    );
+    return createOneClickClearWasmSelection(result, edgesByJobId, dag.targets);
   } finally {
     composition.handle.cancel();
+    routeContext?.dispose();
   }
 }
 
@@ -2753,7 +2945,7 @@ async function applyWasmPreferredStepDagPath(
   if (!options.wasmRuntime || dag.edges.length === 0) {
     return dag;
   }
-  const dagNodeEvidence = createOneClickClearWasmStepNodeEvidence(dag.nodes, "stateful one-click composition");
+  const dagNodeEvidence = getOneClickClearWasmStepNodeEvidence(dag, "stateful one-click composition");
   const dagJobs = dag.edges.map<GraphwarWasmOneClickDagJob>((edge, id) => {
     const fromNode = edge.from === START_NODE_INDEX ? undefined : dag.nodes[edge.from];
     const toNode = dag.nodes[edge.to];
@@ -2786,24 +2978,33 @@ async function applyWasmPreferredStepDagPath(
       toNodeId: toNode.id,
     };
   });
-  const composition = beginGraphwarWasmOneClickClear(options.wasmRuntime, {
-    candidates: dag.targets.map((target) => ({
-      hitCenter: target.routePoint,
-      hitRadius: target.hitCircle.radius,
-      isEnemy: true,
-    })),
-    isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
-    isStepStateful: true,
-    isTargetOrderDescending: !xPlusGoesRight(options.bounds),
-    path: options.pathPoints,
-    requestNonce: options.wasmRequestNonce ?? 1,
-    targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
-    verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
-    dagJobs,
-    dagNodeEvidence,
-    dagNodeCount: dag.nodes.length,
-  });
+  const routeContext = createOneClickClearCompositionRouteContext(options, true);
+  let composition: ReturnType<typeof beginGraphwarWasmOneClickClear>;
+  try {
+    composition = beginGraphwarWasmOneClickClear(options.wasmRuntime, {
+      candidates: dag.targets.map((target) => ({
+        hitCenter: target.routePoint,
+        hitRadius: target.hitCircle.radius,
+        isEnemy: true,
+      })),
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+      isTargetOrderDescending: !xPlusGoesRight(options.bounds),
+      path: options.pathPoints,
+      requestNonce: options.wasmRequestNonce ?? 1,
+      routeContextPointer: routeContext?.contextPointer,
+      targetOrderKeys: createOneClickClearWasmTargetOrderKeys(options, dag.targets),
+      verticalVariationScale: calculateOneClickClearVerticalVariationScale(options),
+      dagJobs,
+      dagNodeEvidence,
+      dagNodeCount: dag.nodes.length,
+    });
+  } catch (error) {
+    routeContext?.dispose();
+    throw error;
+  }
   if (composition.status !== "waiting-edge-batch") {
+    routeContext?.dispose();
     return { ...dag, wasmSelection: { type: "failure" } };
   }
 
@@ -2817,6 +3018,7 @@ async function applyWasmPreferredStepDagPath(
     assertOneClickClearWasmDagJobDescriptors(composition.edgeJobs, dagJobs, "stateful one-click composition");
   } catch (error) {
     composition.handle.cancel();
+    routeContext?.dispose();
     throw error;
   }
 
@@ -2852,12 +3054,12 @@ async function applyWasmPreferredStepDagPath(
       throw new GraphwarWasmFault("abi", "stateful one-click WASM session returned an unexpected edge batch");
     }
     if (result.status === "complete") {
-      const preferredEdgeIds = mapOneClickClearSelectedJobIdsToEdgeIds(result.selectedEdgeIds, edgesByJobId);
-      return { ...dag, wasmSelection: { edgeIds: preferredEdgeIds, type: "selected" } };
+      return { ...dag, wasmSelection: createOneClickClearWasmSelection(result, edgesByJobId, dag.targets) };
     }
     return { ...dag, wasmSelection: { type: "failure" } };
   } finally {
     session.cancel();
+    routeContext?.dispose();
   }
 }
 
@@ -2866,20 +3068,35 @@ async function applyWasmPreferredStepDagPath(
  * the explicit jobs to the retained WASM composition session. This keeps node identity and formula state atomic across
  * the TypeScript DAG builder and the session boundary.
  */
-function createOneClickClearWasmStepNodeEvidence(
-  nodes: readonly OneClickClearDagNode[],
-  phase: string,
-): GraphwarWasmOneClickStepStateEvidence[] {
-  return nodes.map((node, index) => {
-    if (node.type !== "step-stateful" || node.id !== index) {
-      throw new GraphwarWasmFault("abi", `${phase} lost a stateful DAG node identity`);
+/** Uses retained adapter-owned evidence and rechecks its node bindings before session transfer. */
+function getOneClickClearWasmStepNodeEvidence(dag: OneClickClearDag, phase: string) {
+  const retainedEvidence = dag.stepStateEvidence;
+  if (!retainedEvidence) {
+    throw new GraphwarWasmFault("abi", `${phase} lost adapter-retained Step state evidence`);
+  }
+  if (retainedEvidence.length !== dag.nodes.length) {
+    throw new GraphwarWasmFault("abi", `${phase} lost retained Step state evidence`);
+  }
+  return retainedEvidence.map((evidence, index) => {
+    const node = dag.nodes[index];
+    if (
+      !node ||
+      node.type !== "step-stateful" ||
+      node.id !== index ||
+      node.targetIndex !== evidence.targetIndex ||
+      node.stepRouteState.resolvedStateKey !== evidence.resolvedStateKey ||
+      !Object.is(node.stepRouteState.resolvedY, evidence.resolvedY)
+    ) {
+      throw new GraphwarWasmFault("abi", `${phase} changed retained Step state evidence`);
     }
-    return {
-      resolvedStateKey: node.stepRouteState.resolvedStateKey,
-      resolvedY: node.stepRouteState.resolvedY,
-      targetIndex: node.targetIndex,
-    } satisfies GraphwarWasmOneClickStepStateEvidence;
+    return { ...evidence };
   });
+}
+
+/** Step fallback identity keeps target, canonical key, and signed-zero height atomic. */
+function createOneClickClearStepStateIdentityKey(state: GraphwarOneClickClearStepRouteState) {
+  const resolvedYKey = Object.is(state.resolvedY, -0) ? "-0" : String(state.resolvedY);
+  return `${state.resolvedStateKey}:${resolvedYKey}`;
 }
 
 /** 目标分配已经按该统一 forward 列排序；把相同量化列身份显式带入 WASM。 */
@@ -2980,6 +3197,37 @@ function createOneClickClearStepRouteContext(
       originY: model.originY,
       qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
     },
+  });
+}
+
+/** Retains the route validator for the whole WASM one-click composition session. */
+function createOneClickClearCompositionRouteContext(
+  options: GraphwarOneClickClearSearchOptions,
+  isStepStateful: boolean,
+): GraphwarWasmRouteContext | undefined {
+  if (!options.wasmRuntime) {
+    throw new GraphwarWasmFault("abi", "one-click composition route context requires a WASM runtime");
+  }
+  const firstPoint = options.pathPoints[0] ?? options.pathPoints.at(-1);
+  if (!firstPoint) {
+    return undefined;
+  }
+  const routeOriginPoint = imageToGraphPoint(firstPoint, options.bounds, options.boundsRect);
+  if (isStepStateful) {
+    const model = createGraphwarStepRouteModel(routeOriginPoint.y, options.formulaMode.settings);
+    if (!model) {
+      throw new GraphwarWasmFault("abi", "one-click Step composition lost its route model");
+    }
+    return createOneClickClearStepRouteContext(options, routeOriginPoint, model);
+  }
+  return createGraphwarWasmRouteContext(options.wasmRuntime, {
+    boundaryExpansion: options.boundaryExpansion,
+    bounds: options.bounds,
+    boundsRect: options.boundsRect,
+    routeOriginPoint,
+    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
+    sourceMask: options.routeMask.mask,
+    sourceMaskType: "route",
   });
 }
 

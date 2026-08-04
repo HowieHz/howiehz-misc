@@ -39,6 +39,49 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     }
   });
 
+  it("publishes reusable prefix evidence after the WASM session completes", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    let publishedPath: readonly PixelPoint[] | undefined;
+    const result = await buildGraphwarOneClickClearPath(
+      createOptions(new Uint8Array(planeCellCount), runtime, (evidence) => {
+        publishedPath = evidence.path;
+      }),
+    );
+
+    expect(result.type).toBe("success");
+    if (result.type === "success") {
+      expect(publishedPath).toEqual(result.pathPoints);
+    }
+  });
+
+  it("accepts the published no-glitch prefix on the next request", async () => {
+    let published:
+      | Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0]
+      | undefined;
+    const firstRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const first = await buildGraphwarOneClickClearPath(
+      createOptions(new Uint8Array(planeCellCount), firstRuntime, (evidence) => {
+        published = evidence;
+      }),
+    );
+    expect(first.type).toBe("success");
+    expect(published).toBeDefined();
+    if (!published || first.type !== "success") return;
+
+    const nextTarget = graphToImagePoint(createGraphPoint(-21, 1), bounds, boundsRect);
+    const nextCandidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 2, id: "next" };
+    const secondRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const second = await buildGraphwarOneClickClearPath({
+      ...createOptions(new Uint8Array(planeCellCount), secondRuntime),
+      candidates: [nextCandidate],
+      hitCandidates: [nextCandidate],
+      pathPoints: first.pathPoints,
+      prefixTarget: published.targetSequence.at(-1),
+      stepGlitchPrefixEvidence: published.prefixEvidence,
+    });
+    expect(second.type).toBe("success");
+  });
+
   it("keeps a target hit but removes a later obstacle sample from the published trajectory", async () => {
     const baselineRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
     const baseline = await buildGraphwarOneClickClearPath(
@@ -68,6 +111,7 @@ const planeCellCount = GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT;
 function createOptions(
   simulationMask: Uint8Array,
   wasmRuntime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>,
+  onValidatedStepGlitchPath?: GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"],
 ): GraphwarOneClickClearBuildOptions {
   const candidate = { isEnemy: true, hitCenter: targetPoint, hitRadius: 2, id: "target" };
   return {
@@ -90,6 +134,7 @@ function createOptions(
     }),
     hitCandidates: [candidate],
     isDeleteOptimizationEnabled: false,
+    onValidatedStepGlitchPath,
     pathPoints: sourcePath,
     routeMask: { mask: simulationMask, routeTolerancePlanePixels: 2 },
     routeMode: "visibility-graph",

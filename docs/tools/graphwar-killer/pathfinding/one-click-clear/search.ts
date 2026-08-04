@@ -6,8 +6,8 @@ import { graphXAdvancesStrictly } from "../../core/numbers";
 import { imageXToNearestPlaneColumn, planeColumnToForwardColumn } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
-import { clonePixelPoint, createPixelPoint } from "../../core/types";
-import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import { clonePixelPoint, createGraphPoint, createPixelPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
@@ -1077,12 +1077,90 @@ async function buildOneClickClearStepGlitchPathWithWasm(
     if (options.isCancelled?.()) {
       return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
     }
+    publishOneClickClearWasmStepGlitchEvidence(options, finalRoute, finalEvidence);
     const trackedTargets = createOneClickClearTrackedTargets(options, finalRoute);
     const hitTargets = collectOneClickClearHitTargets(trackedTargets, finalEvidence.trajectory.trackedTargetHitIndexes);
     return createOneClickClearSuccessResult(options, finalRoute, hitTargets, startedAt, workUnits);
   } finally {
     scanner?.dispose();
   }
+}
+
+/** Publishes the exact final WASM replay as reusable prefix evidence for the next request. */
+function publishOneClickClearWasmStepGlitchEvidence(
+  options: GraphwarOneClickClearSearchOptions,
+  route: OneClickClearRoute,
+  evidence: GraphwarWasmStepGlitchOwnedEvidence,
+) {
+  const lastPathPoint = route.pathPoints.at(-1);
+  if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
+    return;
+  }
+  const formulaEvidence =
+    evidence.formulaContext.stepGlitchFormulaEvidence ?? createGraphwarWasmNoGlitchFormulaEvidence(options, evidence);
+  if (!formulaEvidence) {
+    return;
+  }
+  const acceptedPoint = findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
+    evidence.trajectory.points,
+    evidence.trajectory.obstacleHitIndex,
+    imageToGraphPoint(lastPathPoint, options.bounds, options.boundsRect).x,
+    Math.max(0, evidence.trajectory.targetHitIndex),
+  );
+  if (!acceptedPoint) {
+    return;
+  }
+  const simulationMask = options.simulationMask ?? options.formulaMode.settings.stepGlitchObstacleMask;
+  if (!simulationMask) {
+    throw new Error("Validated WASM Step-glitch path is missing its simulation mask.");
+  }
+  publishOneClickClearStepGlitchHitEvidence(
+    options,
+    route,
+    createGraphwarStepGlitchPrefixEvidence({
+      acceptedPoint,
+      formulaEvidence,
+      prefixTarget: createOneClickClearStepGlitchPrefixTarget(route, lastPathPoint),
+      requiredTargets: createOneClickClearPreviousTargets(route.targetSequence.slice(0, -1)),
+      simulationBoundaryExpansion: options.simulationBoundaryExpansion,
+      simulationMask,
+    }),
+  );
+}
+
+/** Rebuilds only the no-glitch prefix shape; selected WASM glitch segments need a richer ABI before reuse is safe. */
+function createGraphwarWasmNoGlitchFormulaEvidence(
+  options: GraphwarOneClickClearSearchOptions,
+  evidence: GraphwarWasmStepGlitchOwnedEvidence,
+): GraphwarStepGlitchFormulaEvidence | undefined {
+  if (evidence.formulaInput.stepGlitchWindows.some((window) => window !== undefined)) {
+    return undefined;
+  }
+  const points = evidence.formulaInput.points;
+  const formulaPoints = evidence.formulaLaunch.formulaPoints;
+  const segmentCount = Math.max(0, points.length - 1);
+  if (points.length !== formulaPoints.length || evidence.protection.length !== segmentCount) {
+    return undefined;
+  }
+  const prefix = {
+    bounds: { ...evidence.formulaInput.bounds },
+    initialFormulaPoints: points.map((point) => createGraphPoint(point.x, point.y)),
+    points: points.map((point) => createGraphPoint(point.x, point.y)),
+    refinedFormulaPoints: formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
+    segmentStartPoints: new Array<GraphPoint | undefined>(segmentCount).fill(undefined),
+    ...(evidence.formulaLaunch.launch.equation === "y"
+      ? {}
+      : { launchAngleRadians: evidence.formulaLaunch.launch.angleRadians }),
+    settings: {
+      ...evidence.formulaInput.settings,
+      ...(options.simulationMask ? { stepGlitchObstacleMask: options.simulationMask } : {}),
+    },
+    stepGlitchRequirements: new Array<boolean>(segmentCount).fill(false),
+    stepGlitchSegments: new Array<undefined>(segmentCount).fill(undefined),
+    stepSegmentDeltaYs: new Array<number | undefined>(segmentCount).fill(undefined),
+    signProtection: [...evidence.protection],
+  } satisfies GraphwarStepGlitchFormulaEvidence["prefix"];
+  return { prefix };
 }
 
 type OneClickClearStepGlitchWasmContextResult =

@@ -1092,61 +1092,90 @@ function publishOneClickClearWasmStepGlitchEvidence(
   route: OneClickClearRoute,
   evidence: GraphwarWasmStepGlitchOwnedEvidence,
 ) {
-  const lastPathPoint = route.pathPoints.at(-1);
-  if (!options.onValidatedStepGlitchPath || !lastPathPoint) {
-    return;
-  }
-  const formulaEvidence =
-    evidence.formulaContext.stepGlitchFormulaEvidence ?? createGraphwarWasmNoGlitchFormulaEvidence(options, evidence);
-  if (!formulaEvidence) {
-    return;
-  }
-  const acceptedPoint = findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
-    evidence.trajectory.points,
-    evidence.trajectory.obstacleHitIndex,
-    imageToGraphPoint(lastPathPoint, options.bounds, options.boundsRect).x,
-    Math.max(0, evidence.trajectory.targetHitIndex),
-  );
-  if (!acceptedPoint) {
+  if (!options.onValidatedStepGlitchPath || route.targetSequence.length === 0) {
     return;
   }
   const simulationMask = options.simulationMask ?? options.formulaMode.settings.stepGlitchObstacleMask;
   if (!simulationMask) {
     throw new Error("Validated WASM Step-glitch path is missing its simulation mask.");
   }
-  publishOneClickClearStepGlitchHitEvidence(
-    options,
-    route,
-    createGraphwarStepGlitchPrefixEvidence({
-      acceptedPoint,
-      formulaEvidence,
-      prefixTarget: createOneClickClearStepGlitchPrefixTarget(route, lastPathPoint),
-      requiredTargets: createOneClickClearPreviousTargets(route.targetSequence.slice(0, -1)),
-      simulationBoundaryExpansion: options.simulationBoundaryExpansion,
-      simulationMask,
-    }),
-  );
+  let pathStartIndex = 0;
+  for (const [targetIndex, target] of route.targetSequence.entries()) {
+    const targetPathIndex = route.pathPoints.findIndex(
+      (point, index) => index >= pathStartIndex && pixelPointsEqual(point, target.routePoint),
+    );
+    if (targetPathIndex < 0) {
+      continue;
+    }
+    pathStartIndex = targetPathIndex + 1;
+    const path = route.pathPoints.slice(0, targetPathIndex + 1);
+    const formulaEvidence =
+      path.length === evidence.path.length
+        ? (evidence.formulaContext.stepGlitchFormulaEvidence ??
+          createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, path.length))
+        : createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, path.length);
+    // Automatic selected glitch segments still lack a complete prefix ABI;
+    // skip publication rather than inventing a soft-only replacement.
+    if (!formulaEvidence) {
+      continue;
+    }
+    const acceptedPoint = findGraphwarStepGlitchAcceptedPointAtOrAfterControlX(
+      evidence.trajectory.points,
+      evidence.trajectory.obstacleHitIndex,
+      imageToGraphPoint(target.routePoint, options.bounds, options.boundsRect).x,
+    );
+    if (!acceptedPoint) {
+      continue;
+    }
+    const prefixRoute = { ...route, pathPoints: path, targetSequence: route.targetSequence.slice(0, targetIndex + 1) };
+    publishOneClickClearStepGlitchHitEvidence(
+      options,
+      prefixRoute,
+      createGraphwarStepGlitchPrefixEvidence({
+        acceptedPoint,
+        formulaEvidence,
+        prefixTarget: target.hitCircle,
+        requiredTargets: createOneClickClearPreviousTargets(route.targetSequence.slice(0, targetIndex)),
+        simulationBoundaryExpansion: options.simulationBoundaryExpansion,
+        simulationMask,
+      }),
+    );
+  }
 }
 
 /** Rebuilds only the no-glitch prefix shape; selected WASM glitch segments need a richer ABI before reuse is safe. */
 function createGraphwarWasmNoGlitchFormulaEvidence(
   options: GraphwarOneClickClearSearchOptions,
   evidence: GraphwarWasmStepGlitchOwnedEvidence,
+  pointCount = evidence.formulaInput.points.length,
 ): GraphwarStepGlitchFormulaEvidence | undefined {
-  if (evidence.formulaInput.stepGlitchWindows.some((window) => window !== undefined)) {
+  // Automatic scans leave window descriptors empty; compiled materials still
+  // carry the authoritative selected glitch segment. Never reconstruct a
+  // no-glitch prefix from evidence that contains one.
+  if (
+    evidence.formulaInput.stepGlitchWindows.some((window) => window !== undefined) ||
+    !evidence.formulaMaterials.stepFormula ||
+    evidence.formulaMaterials.stepFormula.terms.some((term) => term.glitchSegment !== undefined)
+  ) {
     return undefined;
   }
   const points = evidence.formulaInput.points;
   const formulaPoints = evidence.formulaLaunch.formulaPoints;
-  const segmentCount = Math.max(0, points.length - 1);
-  if (points.length !== formulaPoints.length || evidence.protection.length !== segmentCount) {
+  const segmentCount = Math.max(0, pointCount - 1);
+  if (
+    points.length !== formulaPoints.length ||
+    pointCount < 2 ||
+    pointCount > points.length ||
+    pointCount > formulaPoints.length ||
+    evidence.protection.length < segmentCount
+  ) {
     return undefined;
   }
   const prefix = {
     bounds: { ...evidence.formulaInput.bounds },
-    initialFormulaPoints: points.map((point) => createGraphPoint(point.x, point.y)),
-    points: points.map((point) => createGraphPoint(point.x, point.y)),
-    refinedFormulaPoints: formulaPoints.map((point) => createGraphPoint(point.x, point.y)),
+    initialFormulaPoints: points.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
+    points: points.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
+    refinedFormulaPoints: formulaPoints.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
     segmentStartPoints: new Array<GraphPoint | undefined>(segmentCount).fill(undefined),
     ...(evidence.formulaLaunch.launch.equation === "y"
       ? {}
@@ -1158,7 +1187,7 @@ function createGraphwarWasmNoGlitchFormulaEvidence(
     stepGlitchRequirements: new Array<boolean>(segmentCount).fill(false),
     stepGlitchSegments: new Array<undefined>(segmentCount).fill(undefined),
     stepSegmentDeltaYs: new Array<number | undefined>(segmentCount).fill(undefined),
-    signProtection: [...evidence.protection],
+    signProtection: evidence.protection.slice(0, segmentCount),
   } satisfies GraphwarStepGlitchFormulaEvidence["prefix"];
   return { prefix };
 }

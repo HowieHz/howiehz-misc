@@ -20,6 +20,10 @@ const sourcePath = [
   graphToImagePoint(createGraphPoint(-24, 12), bounds, boundsRect),
   graphToImagePoint(createGraphPoint(-22.857142857142858, 13.571428571428571), bounds, boundsRect),
 ];
+const noGlitchSourcePath = [
+  graphToImagePoint(createGraphPoint(-24, 12), bounds, boundsRect),
+  graphToImagePoint(createGraphPoint(-20, 10), bounds, boundsRect),
+];
 const targetPoint = graphToImagePoint(createGraphPoint(-22.84714285714286, 1.7532467532467528), bounds, boundsRect);
 let kernelModule: WebAssembly.Module;
 
@@ -39,7 +43,7 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     }
   });
 
-  it("publishes reusable prefix evidence after the WASM session completes", async () => {
+  it("does not publish fabricated evidence for an automatic glitch segment", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
     let publishedPath: readonly PixelPoint[] | undefined;
     const result = await buildGraphwarOneClickClearPath(
@@ -49,26 +53,27 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     );
 
     expect(result.type).toBe("success");
-    if (result.type === "success") {
-      expect(publishedPath).toEqual(result.pathPoints);
-    }
+    expect(publishedPath).toBeUndefined();
   });
 
-  it("accepts the published no-glitch prefix on the next request", async () => {
+  it("accepts a published no-glitch prefix on the next request", async () => {
     let published:
       | Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0]
       | undefined;
+    const firstTarget = graphToImagePoint(createGraphPoint(-10, 5), bounds, boundsRect);
+    const firstCandidate = { isEnemy: true, hitCenter: firstTarget, hitRadius: 2, id: "first" };
     const firstRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
-    const first = await buildGraphwarOneClickClearPath(
-      createOptions(new Uint8Array(planeCellCount), firstRuntime, (evidence) => {
-        published = evidence;
-      }),
-    );
+    const first = await buildGraphwarOneClickClearPath({
+      ...createOptions(new Uint8Array(planeCellCount), firstRuntime, (evidence) => (published = evidence)),
+      candidates: [firstCandidate],
+      hitCandidates: [firstCandidate],
+      pathPoints: noGlitchSourcePath,
+    });
     expect(first.type).toBe("success");
     expect(published).toBeDefined();
     if (!published || first.type !== "success") return;
 
-    const nextTarget = graphToImagePoint(createGraphPoint(-21, 1), bounds, boundsRect);
+    const nextTarget = graphToImagePoint(createGraphPoint(-5, 3), bounds, boundsRect);
     const nextCandidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 2, id: "next" };
     const secondRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
     const second = await buildGraphwarOneClickClearPath({
@@ -80,6 +85,26 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
       stepGlitchPrefixEvidence: published.prefixEvidence,
     });
     expect(second.type).toBe("success");
+  });
+
+  it("publishes each accepted no-glitch prefix checkpoint", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const firstTarget = graphToImagePoint(createGraphPoint(-10, 5), bounds, boundsRect);
+    const nextTarget = graphToImagePoint(createGraphPoint(-5, 3), bounds, boundsRect);
+    const firstCandidate = { isEnemy: true, hitCenter: firstTarget, hitRadius: 2, id: "first" };
+    const nextCandidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 2, id: "next" };
+    const published: Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0][] = [];
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(new Uint8Array(planeCellCount), runtime, (evidence) => published.push(evidence)),
+      candidates: [firstCandidate, nextCandidate],
+      hitCandidates: [firstCandidate, nextCandidate],
+      pathPoints: noGlitchSourcePath,
+    });
+
+    expect(result.type).toBe("success");
+    expect(published).toHaveLength(2);
+    expect(published[0]?.targetSequence).toHaveLength(1);
+    expect(published[1]?.targetSequence).toHaveLength(2);
   });
 
   it("keeps a target hit but removes a later obstacle sample from the published trajectory", async () => {

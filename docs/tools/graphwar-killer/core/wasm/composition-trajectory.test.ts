@@ -7,7 +7,11 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants"
 import { graphwarToolDefaults } from "../tool/defaults";
 import { createPixelPoint, type AlgorithmMode, type EquationMode } from "../types";
 import { GraphwarWasmAdapterError } from "./abi";
-import { runGraphwarWasmSmartPathfinding, type GraphwarWasmSmartPathfindingInput } from "./composition-adapter";
+import {
+  runGraphwarWasmOneClickTrajectoryComposition,
+  runGraphwarWasmSmartPathfinding,
+  type GraphwarWasmSmartPathfindingInput,
+} from "./composition-adapter";
 import { runGraphwarWasmTrajectory } from "./formula-adapter";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { createGraphwarWasmRouteContext } from "./route-adapter";
@@ -67,10 +71,288 @@ describe("Graphwar WASM smart trajectory composition", () => {
     expect(typescriptResult.reachesTargetBeforeObstacle).toBe(true);
     expect(result).toEqual({
       points: path,
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 1,
       removedPointCount: 0,
+      sourcePointIndexes: [0, 1, 2, 3],
       status: "success",
       validation: { target: { center: { x: 0, y: 0 }, radius: 10_000 }, type: "trajectory" },
     });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("combines ordinary validation and deletion into one owned result", async () => {
+    const runtime = await createRuntime();
+    const path = [
+      { x: 100, y: 225 },
+      { x: 170, y: 205 },
+      { x: 240, y: 245 },
+      { x: 310, y: 210 },
+      { x: 380, y: 225 },
+    ];
+    const result = runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+      allowTerminalPointDeletion: true,
+      isDeleteOptimizationEnabled: true,
+      points: path,
+      sourcePointCount: 1,
+      trajectoryValidation: {
+        descriptor: createDescriptor("pchip", "y", path),
+        stop: {
+          ...createTargetStop(path, { x: 0, y: 0 }, 10_000),
+          shouldCollectVisiblePixels: true,
+        },
+        type: "trajectory",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    if (result.status === "success") {
+      expect(result.path[0]).toEqual(path[0]);
+      expect(result.removedPointCount).toBe(path.length - result.path.length);
+      expect(result.formula.observedSignProtection).toEqual(
+        result.trajectory.continuationEvidence.observedSignProtection,
+      );
+      expect(result.targetOrder).toEqual([{ x: 0, y: 0 }]);
+      expect(result.incumbentEvidence.path).toEqual(result.path);
+      expect(result.incumbentEvidence.trajectory).toBe(result.trajectory);
+      expect(result.incumbentEvidence.formulaContext.compiledMaterials).toBe(result.formula.compiledMaterials);
+      expect(result.incumbentEvidence.formulaContext.formulaResult.expression).toBeTruthy();
+      expect(result.incumbentEvidence.trajectoryPoints.length).toBe(result.trajectory.visiblePixels.length);
+    }
+  });
+
+  it("preserves intermediate target anchors while deleting other controls", async () => {
+    const runtime = await createRuntime();
+    const path = [
+      { x: 100, y: 225 },
+      { x: 160, y: 210 },
+      { x: 220, y: 225 },
+      { x: 280, y: 240 },
+      { x: 340, y: 225 },
+    ];
+    const anchor = path[2];
+    const result = runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+      allowTerminalPointDeletion: true,
+      isDeleteOptimizationEnabled: true,
+      points: path,
+      sourcePointCount: 1,
+      targetAnchors: [anchor],
+      targetAnchorIndexes: [2],
+      trajectoryValidation: {
+        descriptor: createDescriptor("pchip", "y", path),
+        stop: {
+          ...createTargetStop(path, { x: 0, y: 0 }, 10_000),
+          requiredTargets: [{ center: anchor, radius: 1 }],
+          shouldCollectVisiblePixels: true,
+        },
+        type: "trajectory",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    if (result.status === "success") {
+      expect(result.path).toContainEqual(anchor);
+      expect(result.targetAnchors).toEqual([anchor]);
+      expect(result.sourcePointIndexes).toContain(2);
+    }
+  });
+
+  it("rejects a target anchor index bound to a different source point", async () => {
+    const runtime = await createRuntime();
+    const path = [
+      { x: 100, y: 225 },
+      { x: 160, y: 210 },
+      { x: 220, y: 225 },
+      { x: 280, y: 240 },
+      { x: 340, y: 225 },
+    ];
+    const anchor = path[2];
+    if (!anchor) {
+      throw new Error("Expected an intermediate target anchor");
+    }
+    expect(() =>
+      runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: path,
+        sourcePointCount: 1,
+        targetAnchorIndexes: [1],
+        targetAnchors: [anchor],
+        trajectoryValidation: {
+          descriptor: createDescriptor("pchip", "y", path),
+          stop: {
+            ...createTargetStop(path, path.at(-1) ?? anchor, 10_000),
+            orderedTargets: [
+              { center: anchor, radius: 1 },
+              { center: path.at(-1) ?? anchor, radius: 10_000 },
+            ],
+            requiredTargets: [{ center: anchor, radius: 1 }],
+          },
+          type: "trajectory",
+        },
+      }),
+    ).toThrowError(GraphwarWasmAdapterError);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("uses smart replay progress without a second trajectory probe", async () => {
+    const runtime = await createRuntime();
+    const path = createFlatPath();
+    const anchor = path[1];
+    const target = path.at(-1);
+    if (!anchor || !target) {
+      throw new Error("Expected an anchor and terminal target");
+    }
+    const runTrajectory = vi.spyOn(runtime, "runTrajectory");
+    const result = runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+      isDeleteOptimizationEnabled: false,
+      points: path,
+      prefixTargetCount: 1,
+      runSmartPathfinding: () => ({
+        failureReason: "trajectory",
+        points: [],
+        reachedRequiredTargetCount: 1,
+        reachedTargetCount: 1,
+        removedPointCount: 0,
+        status: "failure" as const,
+      }),
+      sourcePointCount: 1,
+      targetAnchors: [anchor],
+      trajectoryValidation: {
+        descriptor: createDescriptor("pchip", "y", path),
+        stop: {
+          ...createTargetStop(path, target, 10_000),
+          orderedTargets: [
+            { center: anchor, radius: 1 },
+            { center: target, radius: 10_000 },
+          ],
+        },
+        type: "trajectory",
+      },
+    });
+
+    expect(result).toEqual({ reachedTargetCount: 1, reason: "trajectory", status: "failure" });
+    expect(runTrajectory).not.toHaveBeenCalled();
+  });
+
+  it("keeps a deletion candidate rejected by the trajectory/obstacle proof", async () => {
+    const runtime = await createRuntime();
+    const path = [
+      graphToPixelPoint({ x: -20, y: 0 }),
+      graphToPixelPoint({ x: -15, y: 4 }),
+      graphToPixelPoint({ x: -10, y: 4 }),
+    ];
+    const target = path.at(-1);
+    if (!target) {
+      throw new Error("Expected a terminal target point");
+    }
+    const obstacle = graphToPixelPoint({ x: -10.7, y: 2.3 });
+    const collisionMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    collisionMask[Math.trunc(obstacle.y) * GRAPHWAR_PLANE_LENGTH + Math.trunc(obstacle.x)] = 1;
+    const stepRouteModel = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 7.5,
+      steepness: 3.25,
+    });
+    if (!stepRouteModel) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const routeContext = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      routeOriginPoint: pixelToGraphPoint(path[0]),
+      routeTolerancePlanePixels: 0,
+      sourceMask: collisionMask,
+      sourceMaskType: "route",
+      stepRouteModel: {
+        ...stepRouteModel,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    try {
+      const result = runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+        allowTerminalPointDeletion: false,
+        isDeleteOptimizationEnabled: true,
+        points: path,
+        runSmartPathfinding: (smartInput) => routeContext.runSmartPathfinding(smartInput),
+        sourcePointCount: 1,
+        trajectoryValidation: {
+          descriptor: createDescriptor("step", "y", path),
+          stop: {
+            ...createTargetStop(path, target, 2, collisionMask),
+            shouldCollectVisiblePixels: true,
+          },
+          type: "trajectory",
+        },
+      });
+
+      expect(result).toMatchObject({ path, removedPointCount: 0, status: "success" });
+    } finally {
+      routeContext.dispose();
+    }
+  });
+
+  it("retains target-before-obstacle ordering in the final evidence", async () => {
+    const runtime = await createRuntime();
+    const path = [
+      { x: 100, y: 300 },
+      { x: 220, y: 100 },
+      { x: 280, y: 150 },
+      { x: 400, y: 300 },
+    ];
+    const target = { x: 400, y: 300 };
+    const collisionMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
+    fillMaskRectangle(collisionMask, { maxX: 320, maxY: 315, minX: 180, minY: 285 });
+    const result = runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+      allowTerminalPointDeletion: true,
+      isDeleteOptimizationEnabled: true,
+      points: path,
+      sourcePointCount: 1,
+      trajectoryValidation: {
+        descriptor: createDescriptor("pchip", "y", path),
+        stop: {
+          ...createTargetStop(path, target, 10, collisionMask),
+          shouldCollectVisiblePixels: true,
+        },
+        type: "trajectory",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    if (result.status === "success") {
+      expect(result.trajectory.targetHitIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        result.trajectory.obstacle.type === "none" ||
+          result.trajectory.targetHitIndex <= result.trajectory.obstacle.sampleIndex,
+      ).toBe(true);
+    }
+  });
+
+  it("rejects malformed smart provenance before final evidence is exposed", async () => {
+    const runtime = await createRuntime();
+    const runSmartPathfinding = runtime.runSmartPathfinding.bind(runtime);
+    vi.spyOn(runtime, "runSmartPathfinding").mockImplementation((inputPointer, inputByteLength) => {
+      const resultPointer = runSmartPathfinding(inputPointer, inputByteLength);
+      const view = new DataView(runtime.buffer);
+      view.setUint32(resultPointer + 32, view.getUint32(inputPointer + 72, true), true);
+      return resultPointer;
+    });
+
+    expectGraphwarWasmOutputFault(
+      () =>
+        runGraphwarWasmOneClickTrajectoryComposition(runtime, {
+          isDeleteOptimizationEnabled: false,
+          points: createFlatPath(),
+          sourcePointCount: 1,
+          trajectoryValidation: {
+            descriptor: createDescriptor("pchip", "y", createFlatPath()),
+            stop: createTargetStop(createFlatPath(), { x: 0, y: 0 }, 10_000),
+            type: "trajectory",
+          },
+        }),
+      "range-out-of-bounds",
+    );
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
@@ -181,7 +463,10 @@ describe("Graphwar WASM smart trajectory composition", () => {
     expect(finalReplay?.pathError).toBeUndefined();
     expect(result).toEqual({
       points: [path[0], path.at(-1)],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 1,
       removedPointCount: 3,
+      sourcePointIndexes: [0, 4],
       status: "success",
       validation: { target: { center: { x: 0, y: 0 }, radius: 10_000 }, type: "trajectory" },
     });
@@ -259,7 +544,10 @@ describe("Graphwar WASM smart trajectory composition", () => {
 
     expect(result).toEqual({
       points: expectedWinner,
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 1,
       removedPointCount: 1,
+      sourcePointIndexes: expectedWinner.map((point) => path.indexOf(point)),
       status: "success",
       validation: { target: { center: target, radius: targetRadius }, type: "trajectory" },
     });
@@ -424,6 +712,8 @@ describe("Graphwar WASM smart trajectory composition", () => {
       blockedPoint: typescriptResult.blockedPoint,
       failureReason: "trajectory",
       points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
       removedPointCount: 0,
       status: "failure",
     });
@@ -461,6 +751,8 @@ describe("Graphwar WASM smart trajectory composition", () => {
     expect(boundaryResult).toEqual({
       failureReason: "trajectory",
       points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
       removedPointCount: 0,
       status: "failure",
     });

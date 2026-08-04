@@ -365,7 +365,10 @@ describe("Graphwar WASM composition adapter", () => {
         { x: 0, y: 0 },
         { x: 2, y: 2 },
       ],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
       removedPointCount: 1,
+      sourcePointIndexes: [0, 2],
       status: "success",
       validation: {
         target: { center: { x: 2, y: 2 }, radius: 0 },
@@ -387,7 +390,13 @@ describe("Graphwar WASM composition adapter", () => {
         targetRadius: 1,
         trajectoryValidation: { type: "route-only" },
       }),
-    ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
+    ).toEqual({
+      points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 0,
+      status: "failure",
+    });
 
     expect(
       runGraphwarWasmSmartPathfinding(runtime, {
@@ -398,7 +407,13 @@ describe("Graphwar WASM composition adapter", () => {
         targetRadius: 0,
         trajectoryValidation: { type: "route-only" },
       }),
-    ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
+    ).toEqual({
+      points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 0,
+      status: "failure",
+    });
   });
 
   it("rejects one-click route-only deletion when a retained route context is present", async () => {
@@ -445,7 +460,13 @@ describe("Graphwar WASM composition adapter", () => {
         targetRadius: 1,
         trajectoryValidation: { type: "route-only" },
       }),
-    ).toEqual({ points: [], removedPointCount: 0, status: "failure" });
+    ).toEqual({
+      points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 0,
+      status: "failure",
+    });
 
     expect(
       runGraphwarWasmSmartPathfinding(runtime, {

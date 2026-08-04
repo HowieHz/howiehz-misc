@@ -481,7 +481,7 @@ describe("one-click-clear mirrored WASM guard", () => {
       } satisfies GraphwarOneClickClearBuildOptions);
 
       expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
-      expect(runTrajectory).toHaveBeenCalledTimes(1);
+      expect(runTrajectory).toHaveBeenCalledTimes(0);
     } finally {
       resumeSpy.mockRestore();
       runTrajectory.mockRestore();

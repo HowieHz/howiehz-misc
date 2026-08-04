@@ -335,7 +335,7 @@ export const ROUTE_BOUNDARY_EDGE_RECORD_U32_LENGTH: u32 = 5;
 // only immutable flat data; formula/trajectory and route contexts remain owned
 // by the same WASM instance and are referenced by pointers below the arena.
 export const SMART_INPUT_MAGIC: u32 = 0x534d_4152;
-export const SMART_INPUT_VERSION: u32 = 2;
+export const SMART_INPUT_VERSION: u32 = 4;
 export const SMART_INPUT_FLAG_DELETE_OPTIMIZATION: u32 = 1;
 export const SMART_INPUT_FLAG_ROUTE_CONTEXT_VALIDATION: u32 = 2;
 export const SMART_INPUT_FLAG_GRAPH_VALIDATION: u32 = 4;
@@ -359,7 +359,10 @@ export const SMART_INPUT_ROUTE_CONTEXT_POINTER_OFFSET: u32 = 60;
 export const SMART_INPUT_ROUTE_GRAPH_X_POINTER_OFFSET: u32 = 64;
 export const SMART_INPUT_TRAJECTORY_COMMAND_POINTER_OFFSET: u32 = 72;
 export const SMART_INPUT_TRAJECTORY_COMMAND_BYTE_LENGTH_OFFSET: u32 = 76;
-export const SMART_INPUT_BYTE_LENGTH: u32 = 80;
+/** Source point indexes that the smart deletion loop must retain. */
+export const SMART_INPUT_PROTECTED_POINT_INDEXES_POINTER_OFFSET: u32 = 80;
+export const SMART_INPUT_PROTECTED_POINT_INDEX_COUNT_OFFSET: u32 = 84;
+export const SMART_INPUT_BYTE_LENGTH: u32 = 88;
 
 export const SMART_RESULT_MAGIC: u32 = 0x534d_5253;
 export const SMART_RESULT_STATUS_FAILURE: u32 = 0;
@@ -392,7 +395,12 @@ export const SMART_RESULT_TARGET_Y_OFFSET: u32 = 64;
 export const SMART_RESULT_TARGET_RADIUS_OFFSET: u32 = 72;
 export const SMART_RESULT_BLOCKED_POINT_X_OFFSET: u32 = 80;
 export const SMART_RESULT_BLOCKED_POINT_Y_OFFSET: u32 = 88;
-export const SMART_RESULT_BYTE_LENGTH: u32 = 96;
+/** Counts copied from the same trajectory replay that classified a smart failure/success. */
+export const SMART_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET: u32 = 96;
+export const SMART_RESULT_REACHED_TARGET_COUNT_OFFSET: u32 = 100;
+/** Source input indexes retained by the deletion loop, in output order. */
+export const SMART_RESULT_OUTPUT_SOURCE_INDEXES_POINTER_OFFSET: u32 = 104;
+export const SMART_RESULT_BYTE_LENGTH: u32 = 112;
 
 export const ONE_CLICK_INPUT_MAGIC: u32 = 0x4f_434c_52;
 export const ONE_CLICK_INPUT_VERSION: u32 = 1;

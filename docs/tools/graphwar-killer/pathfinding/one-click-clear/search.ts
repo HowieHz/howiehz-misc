@@ -6,7 +6,7 @@ import { graphXAdvancesStrictly } from "../../core/numbers";
 import { imageXToNearestPlaneColumn, planeColumnToForwardColumn } from "../../core/plane-grid";
 import { nowMs } from "../../core/time";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
-import { clonePixelPoint, createGraphPoint, createPixelPoint } from "../../core/types";
+import { clonePixelPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
@@ -14,7 +14,7 @@ import {
   beginGraphwarWasmOneClickClear,
   createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
-  runGraphwarWasmSmartPathfinding,
+  runGraphwarWasmOneClickTrajectoryComposition,
   runGraphwarWasmOneClickTrajectoryValidation,
   type GraphwarWasmOneClickEdgeJob,
   type GraphwarWasmOneClickDagJob,
@@ -35,8 +35,7 @@ import type {
   GraphwarWasmStepGlitchGeometryTestContext,
   GraphwarWasmStepGlitchOwnedEvidence,
 } from "../../core/wasm/step-glitch-adapter";
-import { buildFormula } from "../../formula/generation/build";
-import { createStepOverflowProtectionRange, resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
+import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
 import {
   graphwarByteArraysEqual,
   graphwarFinalReplaySnapshotMatches,
@@ -489,6 +488,8 @@ interface OneClickClearRoute {
   pathError?: number;
   /** 当前清图结果的完整路径。 */
   pathPoints: PixelPoint[];
+  /** Source-path indexes for retained explicit target anchors; terminal target may be absent after deletion. */
+  targetPointIndexes?: number[];
   /** 已按 DAG 序列验证命中的目标。 */
   targetSequence: OneClickClearTarget[];
 }
@@ -1506,7 +1507,10 @@ async function selectOneClickClearStatelessDagPathWithWasm(
       toNodeId: targetNode.id,
     };
   });
-  const routeContext = createOneClickClearCompositionRouteContext(options, false);
+  const routeContext = createOneClickClearCompositionRouteContext(
+    options,
+    options.formulaMode.contract.pathSearchPolicy.type === "step-stateful",
+  );
   let composition: ReturnType<typeof beginGraphwarWasmOneClickClear>;
   try {
     composition = beginGraphwarWasmOneClickClear(wasmRuntime, {
@@ -1589,6 +1593,10 @@ async function runOneClickClearSearchAttemptWithWasm(
   workUnits: number,
 ): Promise<OneClickClearSearchAttemptResult> {
   const options = context.options;
+  const wasmRuntime = options.wasmRuntime;
+  if (!wasmRuntime) {
+    return { reason: "no-usable-target", type: "failure", workUnits };
+  }
   if (options.isCancelled?.()) {
     return { reason: "no-usable-target", type: "failure", workUnits };
   }
@@ -1599,104 +1607,180 @@ async function runOneClickClearSearchAttemptWithWasm(
   if (!initialSelectedRoute) {
     return { reason: "no-usable-target", type: "failure", workUnits };
   }
-  let selectedRoute: OneClickClearRoute = initialSelectedRoute;
-
-  let validation = measureOneClickClearDebugTiming(options, "validate-route", () =>
-    runOneClickClearWasmRouteValidation(options, selectedRoute.pathPoints, selectedRoute.targetSequence, false),
-  );
-  const nextWorkUnits = workUnits + 1;
-  // A route-only session cannot prove formula/obstacle semantics. If such a
-  // result ever reaches this boundary, preserve the original edge chain when
-  // its geometry-only deletion fails trajectory validation.
-  if (
-    !validation?.reachesTargetSequenceBeforeObstacle &&
-    (wasmSelection?.routeValidation?.removedPointCount ?? 0) > 0
-  ) {
-    const originalRoute = createOneClickClearRouteFromEdges(options, dag, selectedEdges);
-    if (originalRoute) {
-      const originalValidation = measureOneClickClearDebugTiming(options, "validate-route", () =>
-        runOneClickClearWasmRouteValidation(options, originalRoute.pathPoints, originalRoute.targetSequence, false),
+  if (options.formulaMode.contract.pathSearchPolicy.type === "step-stateful") {
+    const initialStepValidation = validateOneClickClearStepRoute(options, initialSelectedRoute.pathPoints);
+    if (!initialStepValidation.ok) {
+      const failedEdge = findOneClickClearStepRouteFailedEdge(
+        options,
+        selectedEdges,
+        initialStepValidation.invalidSegmentIndex,
       );
-      if (originalValidation?.reachesTargetSequenceBeforeObstacle) {
-        selectedRoute = originalRoute;
-        validation = originalValidation;
-      }
+      return failedEdge
+        ? { failedEdge, type: "retry", workUnits }
+        : { reason: "no-usable-target", type: "failure", workUnits };
     }
   }
-  if (!validation?.reachesTargetSequenceBeforeObstacle) {
-    const reachedTargetCount = validation?.reachedTargetCount ?? 0;
-    const failedEdge = selectedEdges[Math.min(reachedTargetCount, selectedEdges.length - 1)];
+  const selectedRoute: OneClickClearRoute = initialSelectedRoute;
+  const routeContext = createOneClickClearCompositionRouteContext(
+    options,
+    options.formulaMode.contract.pathSearchPolicy.type === "step-stateful",
+  );
+  const validationTargets = createOneClickClearValidationTargets(options, selectedRoute.targetSequence, true);
+  const targetControlPoints = createOneClickClearTargetControlPoints(options, selectedRoute.targetSequence);
+  const graphPoints = selectedRoute.pathPoints.map((point) =>
+    imageToGraphPoint(point, options.bounds, options.boundsRect),
+  );
+  const soldierCenter = graphPoints[0];
+  if (!soldierCenter) {
+    routeContext?.dispose();
+    return { reason: "no-usable-target", type: "failure", workUnits };
+  }
+  const trackedTargets = createOneClickClearTrackedTargets(options, selectedRoute);
+  const qualityPoints = graphPoints.filter((_point, index) => {
+    const sourcePoint = selectedRoute.pathPoints[index];
+    return (
+      index > 0 &&
+      sourcePoint !== undefined &&
+      !targetControlPoints.some((targetPoint) => pixelPointsEqual(targetPoint, sourcePoint))
+    );
+  });
+  let composition: ReturnType<typeof runGraphwarWasmOneClickTrajectoryComposition>;
+  try {
+    composition = measureOneClickClearDebugTiming(options, "validate-route", () =>
+      runGraphwarWasmOneClickTrajectoryComposition(wasmRuntime, {
+        allowTerminalPointDeletion: true,
+        isDeleteOptimizationEnabled: options.isDeleteOptimizationEnabled,
+        points: selectedRoute.pathPoints,
+        prefixTargetCount: validationTargets.prefixTargetCount,
+        runSmartPathfinding: routeContext ? (smartInput) => routeContext.runSmartPathfinding(smartInput) : undefined,
+        sourcePointCount: options.pathPoints.length,
+        // Intermediate target controls are mandatory; final target control may
+        // be removed when trajectory proof still reaches its hit circle.
+        targetAnchors: selectedRoute.targetSequence.slice(0, -1).map((target) => target.routePoint),
+        ...(selectedRoute.targetPointIndexes
+          ? { targetAnchorIndexes: selectedRoute.targetPointIndexes.slice(0, -1) }
+          : {}),
+        trajectoryValidation: {
+          descriptor: {
+            bounds: options.bounds,
+            points: graphPoints,
+            settings: options.formulaMode.settings,
+            soldierCenter,
+          },
+          stop: {
+            boundsRect: options.boundsRect,
+            collision: options.simulationMask
+              ? {
+                  boundaryExpansion: options.simulationBoundaryExpansion,
+                  mask: options.simulationMask,
+                  type: "mask",
+                }
+              : { type: "none" },
+            continueAfterTargetsUntilGraphX: { type: "none" },
+            orderedTargets: validationTargets.orderedTargets,
+            qualityPoints,
+            requiredTargets: validationTargets.requiredTargets,
+            shouldCollectVisiblePixels: true,
+            shouldStopOnTargetsComplete: false,
+            trackedTargets: trackedTargets.map((target) => target.hitCircle),
+            type: "targets",
+          },
+          type: "trajectory",
+        },
+      }),
+    );
+  } finally {
+    routeContext?.dispose();
+  }
+  await yieldOneClickClearControl(options);
+  const nextWorkUnits = workUnits + 1 + (composition.status === "success" ? composition.removedPointCount : 0);
+  if (options.isCancelled?.()) {
+    return { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
+  }
+  if (composition.status !== "success") {
+    const failedEdge =
+      selectedEdges[Math.min(composition.reachedTargetCount ?? 0, selectedEdges.length - 1)] ?? selectedEdges.at(-1);
     return failedEdge
       ? { failedEdge, type: "retry", workUnits: nextWorkUnits }
       : { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
   }
-  if (options.isCancelled?.()) {
-    return { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
+  if (
+    composition.incumbentEvidence.trajectory !== composition.trajectory ||
+    composition.incumbentEvidence.path.length !== composition.path.length ||
+    composition.incumbentEvidence.sourcePointIndexes.length !== composition.path.length ||
+    composition.incumbentEvidence.sourcePointIndexes.some((sourceIndex, index) => {
+      return composition.sourcePointIndexes[index] !== sourceIndex;
+    }) ||
+    composition.incumbentEvidence.path.some((point, index) => {
+      const selectedPoint = composition.path[index];
+      return selectedPoint === undefined || point.x !== selectedPoint.x || point.y !== selectedPoint.y;
+    })
+  ) {
+    throw new GraphwarWasmFault("abi", "one-click incumbent evidence path is detached from composition output");
   }
-
-  let optimizedRoute: OneClickClearRoute = {
-    ...selectedRoute,
-    incumbentEvidence: {
-      formulaContext: validation.formulaContext,
-      trajectoryPoints: [...validation.trajectoryPoints],
-    },
-    ...(validation.pathError === undefined ? {} : { pathError: validation.pathError }),
-  } satisfies OneClickClearRoute;
-  let optimizedWorkUnits = nextWorkUnits;
-  if (options.isDeleteOptimizationEnabled) {
-    const optimized = await measureOneClickClearDebugTimingAsync(options, "optimize-path", () =>
-      optimizeOneClickClearPathWithWasm(context, optimizedRoute, optimizedWorkUnits),
-    );
-    optimizedRoute = optimized.route;
-    optimizedWorkUnits = optimized.workUnits;
-  }
-  if (options.isCancelled?.()) {
-    return { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits };
-  }
-
-  const finalValidation = measureOneClickClearDebugTiming(options, "validate-final", () =>
-    runOneClickClearWasmRouteValidation(options, optimizedRoute.pathPoints, optimizedRoute.targetSequence, true),
+  const finalValidation = createOneClickClearWasmRouteValidationFromTrajectory(
+    options,
+    selectedRoute.targetSequence,
+    trackedTargets,
+    composition,
   );
-  if (options.isCancelled?.()) {
-    return { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits + 1 };
-  }
-  const finalStepValidation = validateOneClickClearStepRoute(options, optimizedRoute.pathPoints);
-  if (finalStepValidation.ok && finalValidation?.reachesTargetSequenceBeforeObstacle) {
-    const route: OneClickClearRoute = {
-      ...optimizedRoute,
-      incumbentEvidence: {
-        formulaContext: finalValidation.formulaContext,
-        trajectoryPoints: [...finalValidation.trajectoryPoints],
-      },
-      ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
-    };
-    return {
-      hitTargets: collectOneClickClearHitTargets(
-        finalValidation.trackedTargets,
-        finalValidation.trackedTargetHitIndexes,
-      ),
-      route,
-      type: "validated",
-      workUnits: optimizedWorkUnits + 1,
-    };
-  }
-
+  const targetPointIndexes = remapOneClickClearTargetPointIndexes(
+    selectedRoute.targetPointIndexes,
+    composition.sourcePointIndexes,
+    selectedRoute.targetSequence.length,
+  );
+  const route: OneClickClearRoute = {
+    ...selectedRoute,
+    pathPoints: composition.incumbentEvidence.path.map(clonePixelPoint),
+    targetPointIndexes,
+    incumbentEvidence: {
+      formulaContext: finalValidation.formulaContext,
+      trajectoryPoints: [...finalValidation.trajectoryPoints],
+    },
+    ...(finalValidation.pathError === undefined ? {} : { pathError: finalValidation.pathError }),
+  };
+  const finalStepValidation = validateOneClickClearStepRoute(options, route.pathPoints);
   if (!finalStepValidation.ok) {
     const failedEdge = findOneClickClearStepRouteFailedEdge(
       options,
       selectedEdges,
       finalStepValidation.invalidSegmentIndex,
+      composition.incumbentEvidence.sourcePointIndexes,
     );
     return failedEdge
-      ? { failedEdge, type: "retry", workUnits: optimizedWorkUnits + 1 }
-      : { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits + 1 };
+      ? { failedEdge, type: "retry", workUnits: nextWorkUnits }
+      : { reason: "no-usable-target", type: "failure", workUnits: nextWorkUnits };
   }
+  return {
+    hitTargets: collectOneClickClearHitTargets(finalValidation.trackedTargets, finalValidation.trackedTargetHitIndexes),
+    route,
+    type: "validated",
+    workUnits: nextWorkUnits,
+  };
+}
 
-  const reachedTargetCount = finalValidation?.reachedTargetCount ?? 0;
-  const failedEdge = selectedEdges[Math.min(reachedTargetCount, selectedEdges.length - 1)];
-  return failedEdge
-    ? { failedEdge, type: "retry", workUnits: optimizedWorkUnits + 1 }
-    : { reason: "no-usable-target", type: "failure", workUnits: optimizedWorkUnits + 1 };
+/** Maps source-path target anchors onto a deletion result without matching duplicate coordinates. */
+function remapOneClickClearTargetPointIndexes(
+  sourceTargetPointIndexes: readonly number[] | undefined,
+  retainedSourcePointIndexes: readonly number[],
+  targetCount: number,
+) {
+  if (!sourceTargetPointIndexes || sourceTargetPointIndexes.length !== targetCount) {
+    return [];
+  }
+  const outputIndexes: number[] = [];
+  for (const [targetIndex, sourceIndex] of sourceTargetPointIndexes.entries()) {
+    const outputIndex = retainedSourcePointIndexes.indexOf(sourceIndex);
+    if (outputIndex < 0) {
+      // Only terminal control-point deletion is legal; intermediate target anchors are protected.
+      if (targetIndex !== targetCount - 1) {
+        throw new GraphwarWasmFault("abi", "one-click composition dropped a protected target anchor");
+      }
+      break;
+    }
+    outputIndexes.push(outputIndex);
+  }
+  return outputIndexes;
 }
 
 /** Builds the selected edge chain without asking TS to validate its formula. */
@@ -1707,6 +1791,7 @@ function createOneClickClearRouteFromEdges(
 ) {
   const pathPoints = [...options.pathPoints];
   const targetSequence: OneClickClearTarget[] = [];
+  const targetPointIndexes: number[] = [];
   for (const edge of edges) {
     const targetNode = dag.nodes[edge.to];
     const target = targetNode ? dag.targets[targetNode.targetIndex] : undefined;
@@ -1717,8 +1802,9 @@ function createOneClickClearRouteFromEdges(
     }
     pathPoints.push(...edge.route.slice(1));
     targetSequence.push(target);
+    targetPointIndexes.push(pathPoints.length - 1);
   }
-  return { pathPoints, targetSequence };
+  return { pathPoints, targetPointIndexes, targetSequence };
 }
 
 /** Uses composition-owned path only after proving edge, source-prefix, and target-anchor identity. */
@@ -1739,26 +1825,37 @@ function createOneClickClearRouteFromWasmSelection(
     throw new GraphwarWasmFault("abi", "one-click WASM path lost selected edge identity");
   }
   const pathPoints = selection.path;
+  // Stateless begin/retry sessions do not carry trajectory deletion proof, so
+  // their selected path must be the exact concatenation of the dispatched
+  // edge routes. Comparing by position keeps duplicate coordinates bound to
+  // the edge occurrence that produced them instead of a greedy coordinate scan.
   if (
-    pathPoints.length < options.pathPoints.length ||
-    options.pathPoints.some((point, index) => {
-      const selectedPoint = pathPoints[index];
-      return selectedPoint === undefined || !pixelPointsEqual(point, selectedPoint);
-    }) ||
-    !isOneClickClearPixelPointSubsequence(pathPoints, reconstructed.pathPoints)
+    pathPoints.length !== reconstructed.pathPoints.length ||
+    pathPoints.some((point, index) => {
+      const sourcePoint = reconstructed.pathPoints[index];
+      return sourcePoint === undefined || !pixelPointsEqual(point, sourcePoint);
+    })
   ) {
-    throw new GraphwarWasmFault("abi", "one-click WASM path is not a selected-route subsequence");
+    throw new GraphwarWasmFault("abi", "one-click WASM path changed selected edge-route provenance");
   }
-
-  let anchorSearchIndex = options.pathPoints.length;
-  for (const target of reconstructed.targetSequence) {
-    const anchorIndex = pathPoints.findIndex(
-      (point, index) => index >= anchorSearchIndex && pixelPointsEqual(point, target.routePoint),
-    );
-    if (anchorIndex < 0) {
-      throw new GraphwarWasmFault("abi", "one-click WASM path dropped a selected target anchor");
+  const targetPointIndexes = reconstructed.targetPointIndexes;
+  if (!targetPointIndexes || targetPointIndexes.length !== reconstructed.targetSequence.length) {
+    throw new GraphwarWasmFault("abi", "one-click selected route lost target-anchor indexes");
+  }
+  let previousAnchorIndex = options.pathPoints.length - 1;
+  for (const [targetIndex, anchorIndex] of targetPointIndexes.entries()) {
+    const target = reconstructed.targetSequence[targetIndex];
+    const anchorPoint = pathPoints[anchorIndex];
+    if (
+      !target ||
+      anchorIndex <= previousAnchorIndex ||
+      anchorIndex >= pathPoints.length ||
+      !anchorPoint ||
+      !pixelPointsEqual(anchorPoint, target.routePoint)
+    ) {
+      throw new GraphwarWasmFault("abi", "one-click WASM path changed selected target-anchor provenance");
     }
-    anchorSearchIndex = anchorIndex + 1;
+    previousAnchorIndex = anchorIndex;
   }
   const finalPoint = pathPoints.at(-1);
   const finalTarget = reconstructed.targetSequence.at(-1);
@@ -1773,126 +1870,19 @@ function createOneClickClearRouteFromWasmSelection(
   }
   return {
     pathPoints: pathPoints.map(clonePixelPoint),
+    ...(reconstructed.targetPointIndexes ? { targetPointIndexes: [...reconstructed.targetPointIndexes] } : {}),
     targetSequence: reconstructed.targetSequence,
-  } satisfies Pick<OneClickClearRoute, "pathPoints" | "targetSequence">;
+  } satisfies Pick<OneClickClearRoute, "pathPoints" | "targetPointIndexes" | "targetSequence">;
 }
 
-/** Checks that every returned point came from the selected edge chain in stable order. */
-function isOneClickClearPixelPointSubsequence(candidate: readonly PixelPoint[], source: readonly PixelPoint[]) {
-  let sourceIndex = 0;
-  for (const point of candidate) {
-    while (sourceIndex < source.length && !pixelPointsEqual(point, source[sourceIndex])) {
-      sourceIndex += 1;
-    }
-    if (sourceIndex >= source.length) {
-      return false;
-    }
-    sourceIndex += 1;
-  }
-  return true;
-}
-
-/** Runs a complete path or deletion candidate through WASM's canonical trajectory core. */
-function runOneClickClearWasmRouteValidation(
+function createOneClickClearWasmRouteValidationFromTrajectory(
   options: GraphwarOneClickClearSearchOptions,
-  pathPoints: readonly PixelPoint[],
   targetSequence: readonly OneClickClearTarget[],
-  trackActualHits: boolean,
-): OneClickClearWasmRouteValidation | undefined {
-  const wasmRuntime = options.wasmRuntime;
-  if (!wasmRuntime) {
-    return undefined;
-  }
-  if (pathPoints.length < 2) {
-    return undefined;
-  }
-  if (!validateOneClickClearWasmRouteGeometry(options, pathPoints)) {
-    return undefined;
-  }
-  const graphPoints = pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const soldierCenter = graphPoints[0];
-  if (!soldierCenter) {
-    return undefined;
-  }
+  trackedTargets: readonly OneClickClearTrackedTarget[],
+  outcome: Extract<ReturnType<typeof runGraphwarWasmOneClickTrajectoryComposition>, { status: "success" }>,
+): OneClickClearWasmRouteValidation {
+  const { formulaContext, trajectory, trajectoryPoints } = outcome.incumbentEvidence;
   const validationTargets = createOneClickClearValidationTargets(options, targetSequence, true);
-  const targetControlPoints = createOneClickClearTargetControlPoints(options, targetSequence);
-  const qualityPoints = graphPoints.filter((_point, index) => {
-    const sourcePoint = pathPoints[index];
-    return (
-      index > 0 &&
-      sourcePoint !== undefined &&
-      !targetControlPoints.some((targetPoint) => pixelPointsEqual(targetPoint, sourcePoint))
-    );
-  });
-  const trackedTargets = trackActualHits
-    ? createOneClickClearTrackedTargets(options, {
-        pathPoints: [...pathPoints],
-        targetSequence: [...targetSequence],
-      })
-    : [];
-  const outcome = runGraphwarWasmOneClickTrajectoryValidation(wasmRuntime, {
-    descriptor: {
-      bounds: options.bounds,
-      points: graphPoints,
-      settings: options.formulaMode.settings,
-      soldierCenter,
-    },
-    stop: {
-      boundsRect: options.boundsRect,
-      collision: options.simulationMask
-        ? {
-            boundaryExpansion: options.simulationBoundaryExpansion,
-            mask: options.simulationMask,
-            type: "mask",
-          }
-        : { type: "none" },
-      continueAfterTargetsUntilGraphX: { type: "none" },
-      orderedTargets: validationTargets.orderedTargets,
-      qualityPoints,
-      requiredTargets: validationTargets.requiredTargets,
-      shouldCollectVisiblePixels: true,
-      shouldStopOnTargetsComplete: !trackActualHits,
-      trackedTargets: trackedTargets.map((target) => target.hitCircle),
-      type: "targets",
-    },
-  });
-  if (!outcome) {
-    return undefined;
-  }
-
-  const { formula, trajectory } = outcome;
-  const signProtection = trajectory.continuationEvidence.observedSignProtection;
-  const formulaPoints = formula.formulaPoints.map((point) => createGraphPoint(point.x, point.y));
-  const stepOverflowProtectionRange = createStepOverflowProtectionRange(options.bounds, formulaPoints);
-  const formulaEvaluation = {
-    equation: options.formulaMode.settings.equation,
-    formulaDecimalPlaces: options.formulaMode.settings.decimalPlaces,
-    isStepOverflowProtectionEnabled: options.formulaMode.settings.isStepOverflowProtectionEnabled,
-    signProtection,
-    stepOverflowProtectionRange,
-  };
-  const formulaContext: GraphwarTrajectoryFormulaContext = {
-    compiledMaterials: formula.compiledMaterials,
-    formulaEvaluation,
-    formulaPoints,
-    formulaResult: buildFormula(
-      formulaPoints,
-      options.formulaMode.settings.steepness,
-      options.formulaMode.settings.equation,
-      options.formulaMode.settings.algorithm,
-      options.formulaMode.settings.decimalPlaces,
-      {
-        compiledMaterials: formula.compiledMaterials,
-        signProtection,
-        isStepOverflowProtectionEnabled: options.formulaMode.settings.isStepOverflowProtectionEnabled,
-        stepOverflowProtectionRange,
-      },
-    ),
-    ...(trajectory.launchAngleRadians === undefined ? {} : { launchAngleRadians: trajectory.launchAngleRadians }),
-    settings: options.formulaMode.settings,
-    signProtection,
-    soldierCenter,
-  };
   const requiredCount = validationTargets.requiredTargets.length;
   const orderedCount = validationTargets.orderedTargets.length;
   const targetCountsComplete =
@@ -1908,11 +1898,6 @@ function runOneClickClearWasmRouteValidation(
       trajectory.reachedRequiredTargetCount + trajectory.reachedTargetCount - validationTargets.prefixTargetCount,
     ),
   );
-  const trajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(
-    trajectory.visiblePixels,
-    trajectory.obstacle.type === "hit" ? trajectory.obstacle.sampleIndex : -1,
-    options.debugMetrics,
-  );
   return {
     formulaContext,
     ...(trajectory.pathError === undefined ? {} : { pathError: trajectory.pathError }),
@@ -1921,134 +1906,6 @@ function runOneClickClearWasmRouteValidation(
     trackedTargetHitIndexes: trajectory.trackedTargetHitIndexes,
     trackedTargets,
     trajectoryPoints,
-  };
-}
-
-/** Keeps graph-order and route-mask validation in the effective WASM path. */
-function validateOneClickClearWasmRouteGeometry(
-  options: GraphwarOneClickClearSearchOptions,
-  pathPoints: readonly PixelPoint[],
-) {
-  const wasmRuntime = options.wasmRuntime;
-  const firstPoint = pathPoints[0];
-  const lastPoint = pathPoints.at(-1);
-  if (!wasmRuntime || !firstPoint || !lastPoint) {
-    return false;
-  }
-  const routeContext = createGraphwarWasmRouteContext(wasmRuntime, {
-    boundaryExpansion: options.boundaryExpansion,
-    bounds: options.bounds,
-    boundsRect: options.boundsRect,
-    routeOriginPoint: imageToGraphPoint(firstPoint, options.bounds, options.boundsRect),
-    routeTolerancePlanePixels: options.routeMask.routeTolerancePlanePixels,
-    sourceMask: options.routeMask.mask,
-    sourceMaskType: "route",
-  });
-  try {
-    const result = routeContext.runSmartPathfinding({
-      isDeleteOptimizationEnabled: false,
-      points: pathPoints,
-      sourcePointCount: options.pathPoints.length,
-      target: lastPoint,
-      targetRadius: 0,
-      trajectoryValidation: { type: "route-only" },
-    });
-    return result.status === "success";
-  } finally {
-    routeContext.dispose();
-  }
-}
-
-/** Deletes points by repeatedly asking the same WASM trajectory core to prove the shortened path. */
-async function optimizeOneClickClearPathWithWasm(
-  context: OneClickClearSearchContext,
-  route: OneClickClearRoute,
-  workUnits: number,
-) {
-  const options = context.options;
-  const finalTarget = route.targetSequence.at(-1);
-  if (!options.wasmRuntime || !finalTarget || route.pathPoints.length < 2) {
-    return { route, workUnits };
-  }
-  const graphPoints = route.pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect));
-  const soldierCenter = graphPoints[0];
-  if (!soldierCenter) {
-    return { route, workUnits };
-  }
-  const validationTargets = createOneClickClearValidationTargets(options, route.targetSequence, true);
-  const targetControlPoints = createOneClickClearTargetControlPoints(options, route.targetSequence);
-  const qualityPoints = graphPoints.filter((_point, index) => {
-    const sourcePoint = route.pathPoints[index];
-    return (
-      index > 0 &&
-      sourcePoint !== undefined &&
-      !targetControlPoints.some((targetPoint) => pixelPointsEqual(targetPoint, sourcePoint))
-    );
-  });
-  const smartInput = {
-    allowTerminalPointDeletion: true,
-    isDeleteOptimizationEnabled: true,
-    points: route.pathPoints,
-    sourcePointCount: options.pathPoints.length,
-    target: finalTarget.hitCircle.center,
-    targetRadius: finalTarget.hitCircle.radius,
-    trajectoryValidation: {
-      descriptor: {
-        bounds: options.bounds,
-        points: graphPoints,
-        settings: options.formulaMode.settings,
-        soldierCenter,
-      },
-      stop: {
-        boundsRect: options.boundsRect,
-        collision: options.simulationMask
-          ? {
-              boundaryExpansion: options.simulationBoundaryExpansion,
-              mask: options.simulationMask,
-              type: "mask",
-            }
-          : { type: "none" },
-        continueAfterTargetsUntilGraphX: { type: "none" },
-        orderedTargets: validationTargets.orderedTargets,
-        qualityPoints,
-        requiredTargets: validationTargets.requiredTargets,
-        shouldCollectVisiblePixels: false,
-        shouldStopOnTargetsComplete: true,
-        trackedTargets: [],
-        type: "targets",
-      },
-      type: "trajectory",
-    },
-  } satisfies Parameters<typeof runGraphwarWasmSmartPathfinding>[1];
-  const isStatefulStep = options.formulaMode.contract.pathSearchPolicy.type === "step-stateful";
-  const routeContext = isStatefulStep
-    ? (() => {
-        const model = createGraphwarStepRouteModel(soldierCenter.y, options.formulaMode.settings);
-        if (!model) {
-          throw new GraphwarWasmFault("abi", "one-click Step smart optimization lost its route model");
-        }
-        return createOneClickClearStepRouteContext(options, soldierCenter, model);
-      })()
-    : undefined;
-  let optimized;
-  try {
-    optimized = routeContext
-      ? routeContext.runSmartPathfinding(smartInput)
-      : runGraphwarWasmSmartPathfinding(options.wasmRuntime, smartInput);
-  } finally {
-    routeContext?.dispose();
-  }
-  if (optimized.status !== "success") {
-    await yieldOneClickClearControl(options);
-    return { route, workUnits };
-  }
-  await yieldOneClickClearControl(options);
-  return {
-    route: {
-      ...route,
-      pathPoints: optimized.points.map(({ x, y }) => createPixelPoint(x, y)),
-    },
-    workUnits: workUnits + Math.max(1, optimized.removedPointCount),
   };
 }
 
@@ -3834,19 +3691,34 @@ function validateOneClickClearStepRouteWithWasm(
   }
 }
 
-/** Maps a final Step boundary failure back to the edge that introduced it. */
+/** Maps a final Step boundary failure back to edge that introduced segment. */
 function findOneClickClearStepRouteFailedEdge(
   options: GraphwarOneClickClearSearchOptions,
   edges: readonly OneClickClearDagEdge[],
   invalidSegmentIndex: number | undefined,
+  sourcePointIndexes?: readonly number[],
 ) {
   if (invalidSegmentIndex === undefined) {
     return edges.at(-1);
   }
+  let sourceSegmentIndex = invalidSegmentIndex;
+  if (sourcePointIndexes !== undefined) {
+    const sourcePointIndex = sourcePointIndexes[invalidSegmentIndex];
+    const nextSourcePointIndex = sourcePointIndexes[invalidSegmentIndex + 1];
+    if (
+      sourcePointIndex === undefined ||
+      nextSourcePointIndex === undefined ||
+      sourcePointIndex < options.pathPoints.length - 1 ||
+      nextSourcePointIndex <= sourcePointIndex
+    ) {
+      throw new GraphwarWasmFault("abi", "one-click Step failure lost selected-path segment provenance");
+    }
+    sourceSegmentIndex = sourcePointIndex;
+  }
   let firstEdgeSegmentIndex = Math.max(0, options.pathPoints.length - 1);
   for (const edge of edges) {
     const segmentCount = Math.max(0, edge.route.length - 1);
-    if (invalidSegmentIndex >= firstEdgeSegmentIndex && invalidSegmentIndex < firstEdgeSegmentIndex + segmentCount) {
+    if (sourceSegmentIndex >= firstEdgeSegmentIndex && sourceSegmentIndex < firstEdgeSegmentIndex + segmentCount) {
       return edge;
     }
     firstEdgeSegmentIndex += segmentCount;
@@ -4304,8 +4176,11 @@ function publishOneClickClearStepGlitchHitEvidence(
 
 /** 找出路径尾点对应的命中圈；普通控制点保持既有兜底半径语义。 */
 function createOneClickClearStepGlitchPrefixTarget(route: OneClickClearRoute, lastPathPoint: PixelPoint) {
+  const terminalTarget = route.targetSequence.at(-1);
   return (
-    route.targetSequence.find((target) => pixelPointsEqual(target.routePoint, lastPathPoint))?.hitCircle ??
+    (terminalTarget && pixelPointsEqual(terminalTarget.routePoint, lastPathPoint)
+      ? terminalTarget.hitCircle
+      : undefined) ??
     ({ center: lastPathPoint, radius: FALLBACK_TARGET_RADIUS_IMAGE_PIXELS } satisfies GraphwarTrajectoryTargetCircle)
   );
 }
@@ -4450,7 +4325,7 @@ function countOneClickClearReachedRouteTargets(
 /** 最终统计合并当前识别候选与显式 route 目标，并为仍在路径中的目标保留锚点。 */
 function createOneClickClearTrackedTargets(
   options: GraphwarOneClickClearSearchOptions,
-  route: Pick<OneClickClearRoute, "pathPoints" | "targetSequence">,
+  route: Pick<OneClickClearRoute, "pathPoints" | "targetPointIndexes" | "targetSequence">,
 ) {
   const tracked: OneClickClearTrackedTarget[] = [];
   for (const candidate of options.hitCandidates) {
@@ -4462,11 +4337,15 @@ function createOneClickClearTrackedTargets(
       id: candidate.id,
     });
   }
-  for (const target of route.targetSequence) {
+  for (const [targetIndex, target] of route.targetSequence.entries()) {
+    const anchorIndex = route.targetPointIndexes?.[targetIndex];
+    const hasRetainedAnchor = route.targetPointIndexes
+      ? anchorIndex !== undefined &&
+        route.pathPoints[anchorIndex] !== undefined &&
+        pixelPointsEqual(route.pathPoints[anchorIndex], target.routePoint)
+      : route.pathPoints.some((point) => pixelPointsEqual(point, target.routePoint));
     upsertOneClickClearTrackedTarget(tracked, {
-      ...(route.pathPoints.some((point) => pixelPointsEqual(point, target.routePoint))
-        ? { anchor: target.routePoint }
-        : {}),
+      ...(hasRetainedAnchor ? { anchor: target.routePoint } : {}),
       hitCircle: target.hitCircle,
       id: target.id,
     });

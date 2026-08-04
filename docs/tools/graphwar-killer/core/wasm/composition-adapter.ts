@@ -1,4 +1,9 @@
+import { buildFormula } from "../../formula/generation/build";
+import { createStepOverflowProtectionRange } from "../../formula/generation/step-numeric-strategy";
+import type { GraphwarTrajectoryFormulaContext } from "../../formula/trajectory/sampling";
+import { snapshotGraphwarVisibleTrajectoryPoints } from "../../formula/trajectory/visible-points";
 import type { BoundsRect } from "../types";
+import { createGraphPoint, createPixelPoint, type PixelPoint } from "../types";
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmFloat64Values,
@@ -38,8 +43,8 @@ export const graphwarWasmCompositionLayout = {
   oneClickSessionByteLength: 120,
   oneClickTargetAssignmentInputByteLength: 120,
   oneClickTargetAssignmentResultByteLength: 24,
-  smartInputByteLength: 80,
-  smartResultByteLength: 96,
+  smartInputByteLength: 88,
+  smartResultByteLength: 112,
   oneClickStepStateDedupInputByteLength: 40,
   oneClickStepStateDedupResultByteLength: 16,
   oneClickStepDagExpansionInputByteLength: 64,
@@ -48,7 +53,7 @@ export const graphwarWasmCompositionLayout = {
 } as const;
 
 const smartInputMagic = 0x534d_4152;
-const smartInputVersion = 2;
+const smartInputVersion = 4;
 const smartInputDeleteOptimizationFlag = 1;
 const smartInputRouteContextValidationFlag = 2;
 const smartInputGraphValidationFlag = 4;
@@ -95,6 +100,8 @@ const smartInput = {
   routeGraphX: 64,
   trajectoryCommand: 72,
   trajectoryCommandByteLength: 76,
+  protectedPointIndexes: 80,
+  protectedPointIndexCount: 84,
 } as const;
 
 const smartResult = {
@@ -117,6 +124,9 @@ const smartResult = {
   targetRadius: 72,
   blockedPointX: 80,
   blockedPointY: 88,
+  reachedRequiredTargetCount: 96,
+  reachedTargetCount: 100,
+  sourcePointIndexes: 104,
 } as const;
 
 const smartFailureReason = {
@@ -324,6 +334,10 @@ interface GraphwarWasmSmartPathfindingInputBase {
   readonly allowTerminalPointDeletion?: boolean;
   readonly isDeleteOptimizationEnabled: boolean;
   readonly points: readonly GraphwarWasmPoint[];
+  /** Number of ordered targets that belong to an already-proven prefix. */
+  readonly prefixTargetCount?: number;
+  /** Source indexes that candidate deletion must preserve, such as target anchors. */
+  readonly protectedPointIndexes?: readonly number[];
   readonly routeContextPointer?: number;
   /** Atomic route evidence: quantized mask points and their continuous Graphwar x identity. */
   readonly routeValidationEvidence?: GraphwarWasmSmartRouteValidationEvidence;
@@ -344,6 +358,72 @@ export type GraphwarWasmSmartPathfindingInput = GraphwarWasmSmartPathfindingInpu
     | { readonly trajectoryValidation: { readonly type: "route-only" } }
     | { readonly trajectoryValidation: GraphwarWasmSmartTrajectoryValidation }
   );
+
+/**
+ * One-click ordinary composition input. The smart kernel owns the candidate deletion/replay loop; the adapter owns the
+ * final evidence copy and binds it to the path returned by that same attempt.
+ */
+export interface GraphwarWasmOneClickTrajectoryCompositionInput {
+  /** Allow the trajectory-aware kernel to remove the final generated point. */
+  readonly allowTerminalPointDeletion?: boolean;
+  readonly isDeleteOptimizationEnabled: boolean;
+  readonly points: readonly GraphwarWasmPoint[];
+  /** Ordered-target count already proven by the retained prefix; excluded from failure-edge progress. */
+  readonly prefixTargetCount?: number;
+  readonly sourcePointCount: number;
+  /** Optional anchors that must remain an ordered subsequence of the result. */
+  readonly targetAnchors?: readonly GraphwarWasmPoint[];
+  /** Source indexes for `targetAnchors`; binds repeated coordinates to one occurrence. */
+  readonly targetAnchorIndexes?: readonly number[];
+  readonly trajectoryValidation: GraphwarWasmSmartTrajectoryValidation;
+  /**
+   * Retained route contexts provide their own route identity/evidence. This callback is intentionally local to the
+   * adapter boundary; it is never sent through the WASM ABI as a business callback.
+   */
+  readonly runSmartPathfinding?: (
+    input: Omit<
+      Extract<
+        GraphwarWasmSmartPathfindingInput,
+        { readonly trajectoryValidation: GraphwarWasmSmartTrajectoryValidation }
+      >,
+      "routeContextPointer" | "routeValidationEvidence"
+    >,
+  ) => GraphwarWasmSmartPathfindingResult;
+  readonly routeContextPointer?: number;
+  readonly routeValidationEvidence?: GraphwarWasmSmartRouteValidationEvidence;
+}
+
+/**
+ * Incumbent-ready evidence copied from one successful final replay. The selected path, formula context, and visible
+ * trajectory are kept in one payload so callers cannot rebuild an incumbent by combining separate attempts.
+ */
+export interface GraphwarWasmOneClickTrajectoryIncumbentEvidence {
+  readonly formulaContext: GraphwarTrajectoryFormulaContext;
+  readonly path: readonly PixelPoint[];
+  /** Input-path indexes retained by the successful smart composition. */
+  readonly sourcePointIndexes: readonly number[];
+  readonly trajectory: GraphwarWasmTrajectoryResult;
+  readonly trajectoryPoints: readonly PixelPoint[];
+}
+
+export type GraphwarWasmOneClickTrajectoryCompositionResult =
+  | {
+      readonly reachedTargetCount?: number;
+      readonly reason: "graph-rule" | "route-obstacle" | "target" | "trajectory";
+      readonly status: "failure";
+    }
+  | {
+      readonly formula: Extract<GraphwarWasmFormulaLaunchResult, { status: "success" }>;
+      readonly incumbentEvidence: GraphwarWasmOneClickTrajectoryIncumbentEvidence;
+      readonly path: readonly GraphwarWasmPoint[];
+      readonly removedPointCount: number;
+      readonly targetAnchors: readonly GraphwarWasmPoint[];
+      readonly targetOrder: readonly GraphwarWasmPoint[];
+      readonly trajectory: GraphwarWasmTrajectoryResult;
+      readonly status: "success";
+      /** Input-path indexes retained by the successful composition. */
+      readonly sourcePointIndexes: readonly number[];
+    };
 
 export interface GraphwarWasmSmartRouteValidationEvidence {
   /** Forward-plane integer points used only by the retained route-context validator. */
@@ -371,13 +451,19 @@ export type GraphwarWasmSmartPathfindingResult =
   | {
       readonly blockedPoint?: GraphwarWasmPoint;
       readonly failureReason?: "graph-rule" | "route-obstacle" | "target" | "trajectory";
+      readonly reachedRequiredTargetCount: number;
+      readonly reachedTargetCount: number;
       readonly points: readonly GraphwarWasmPoint[];
       readonly removedPointCount: number;
       readonly status: "failure";
     }
   | {
+      readonly reachedRequiredTargetCount: number;
+      readonly reachedTargetCount: number;
       readonly points: readonly GraphwarWasmPoint[];
       readonly removedPointCount: number;
+      /** Source indexes for `points`, in strictly increasing input order. */
+      readonly sourcePointIndexes: readonly number[];
       readonly status: "success";
       readonly validation: {
         readonly target: { readonly center: GraphwarWasmPoint; readonly radius: number };
@@ -1308,6 +1394,343 @@ export function runGraphwarWasmSmartPathfinding(
   }
 }
 
+/**
+ * Runs ordinary one-click validation and deletion as one coarse WASM composition boundary. The final trajectory replay
+ * is copied here so the selected path and its formula/evidence provenance cannot be recombined by a caller from
+ * separate attempts.
+ */
+export function runGraphwarWasmOneClickTrajectoryComposition(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmOneClickTrajectoryCompositionInput,
+): GraphwarWasmOneClickTrajectoryCompositionResult {
+  const points = validatePoints(input.points, "points");
+  const sourcePointCount = validateGraphwarWasmU32(input.sourcePointCount, "sourcePointCount", "input");
+  if (sourcePointCount > points.length) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-index",
+      "one-click trajectory composition sourcePointCount exceeds point count",
+      "input",
+    );
+  }
+  const targetAnchors =
+    input.targetAnchors?.map((point, index) => validatePoint(point, `targetAnchors[${index}]`)) ?? [];
+  const protectedPointIndexes = findOneClickProtectedPointIndexes(points, targetAnchors, input.targetAnchorIndexes);
+  const orderedTargets = input.trajectoryValidation.stop.orderedTargets;
+  const finalTarget = orderedTargets.at(-1);
+  if (!finalTarget) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click trajectory composition requires an ordered target",
+      "input",
+    );
+  }
+  const prefixTargetCount = validateGraphwarWasmU32(input.prefixTargetCount ?? 0, "prefixTargetCount", "input");
+  if (prefixTargetCount > orderedTargets.length) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-index",
+      "one-click trajectory composition prefixTargetCount exceeds ordered target count",
+      "input",
+    );
+  }
+  const smartInput = {
+    ...(input.allowTerminalPointDeletion === undefined
+      ? {}
+      : { allowTerminalPointDeletion: input.allowTerminalPointDeletion }),
+    isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled,
+    points,
+    prefixTargetCount,
+    protectedPointIndexes,
+    sourcePointCount,
+    target: finalTarget.center,
+    targetRadius: validateNonNegativeFinite(finalTarget.radius, "trajectoryValidation.stop.target.radius"),
+    trajectoryValidation: {
+      descriptor: input.trajectoryValidation.descriptor,
+      stop: {
+        ...input.trajectoryValidation.stop,
+        // Smart candidate replay only needs ordered/required target state. The
+        // final replay below owns visible pixels and tracked-target evidence.
+        shouldCollectVisiblePixels: false,
+        shouldStopOnTargetsComplete: true,
+        trackedTargets: [],
+      },
+      type: "trajectory" as const,
+    },
+  } satisfies Omit<GraphwarWasmSmartPathfindingInput, "routeContextPointer" | "routeValidationEvidence">;
+  const smartResult = input.runSmartPathfinding
+    ? input.runSmartPathfinding(smartInput)
+    : runGraphwarWasmSmartPathfinding(runtime, {
+        ...smartInput,
+        ...(input.routeContextPointer === undefined ? {} : { routeContextPointer: input.routeContextPointer }),
+        ...(input.routeValidationEvidence === undefined
+          ? {}
+          : { routeValidationEvidence: input.routeValidationEvidence }),
+      });
+  if (smartResult.status !== "success") {
+    const reachedTargetCount = Math.min(
+      targetAnchors.length + 1,
+      Math.max(0, smartResult.reachedRequiredTargetCount + smartResult.reachedTargetCount - prefixTargetCount),
+    );
+    return {
+      reachedTargetCount,
+      reason: smartResult.failureReason ?? "trajectory",
+      status: "failure",
+    };
+  }
+
+  const selectedPath = smartResult.points.map((point) => ({ x: point.x, y: point.y }));
+  const sourcePointIndexes = smartResult.sourcePointIndexes;
+  if (sourcePointIndexes.length !== selectedPath.length) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "one-click smart result source indexes do not match its path",
+      "output",
+    );
+  }
+  if (
+    targetAnchors.length > 0 &&
+    protectedPointIndexes.some((sourceIndex) => !sourcePointIndexes.includes(sourceIndex))
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click trajectory composition dropped a target anchor",
+      "output",
+    );
+  }
+  const removedPointCount = points.length - selectedPath.length;
+  if (removedPointCount !== smartResult.removedPointCount) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "one-click trajectory composition returned an inconsistent removed-point count",
+      "output",
+    );
+  }
+
+  const selectedGraphPoints = mapOneClickPixelPointsToGraphPoints(
+    selectedPath,
+    input.trajectoryValidation.descriptor.bounds,
+    input.trajectoryValidation.stop.boundsRect,
+  );
+  const firstSelectedGraphPoint = selectedGraphPoints[0];
+  if (!firstSelectedGraphPoint) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "one-click trajectory composition returned an empty selected path",
+      "output",
+    );
+  }
+  const selectedQualityPoints = input.trajectoryValidation.stop.qualityPoints.filter((qualityPoint) =>
+    selectedGraphPoints.some((point) => pointsEqual(point, qualityPoint)),
+  );
+  const finalDescriptor: GraphwarWasmFormulaInputDescriptor = {
+    ...input.trajectoryValidation.descriptor,
+    points: selectedGraphPoints,
+    soldierCenter: firstSelectedGraphPoint,
+  };
+  const finalStop: Extract<GraphwarWasmStopPolicy, { type: "targets" }> = {
+    ...input.trajectoryValidation.stop,
+    qualityPoints: selectedQualityPoints,
+  };
+  const finalOutcome = runGraphwarWasmOneClickTrajectoryValidation(runtime, {
+    descriptor: finalDescriptor,
+    stop: finalStop,
+  });
+  if (!finalOutcome) {
+    return { reason: "trajectory", status: "failure" };
+  }
+  const { formula, trajectory } = finalOutcome;
+  const obstacleSampleIndex = trajectory.obstacle.type === "hit" ? trajectory.obstacle.sampleIndex : -1;
+  const hasReachedTargetSequence =
+    trajectory.reachedTargetCount >= finalStop.orderedTargets.length &&
+    trajectory.reachedRequiredTargetCount >= finalStop.requiredTargets.length;
+  if (
+    !hasReachedTargetSequence ||
+    (obstacleSampleIndex >= 0 && (trajectory.targetHitIndex < 0 || trajectory.targetHitIndex > obstacleSampleIndex))
+  ) {
+    return { reason: "trajectory", status: "failure" };
+  }
+  const incumbentEvidence = createOneClickTrajectoryIncumbentEvidence(
+    finalDescriptor,
+    selectedPath,
+    sourcePointIndexes,
+    formula,
+    trajectory,
+  );
+  return {
+    formula,
+    incumbentEvidence,
+    path: selectedPath,
+    sourcePointIndexes,
+    removedPointCount,
+    targetAnchors,
+    targetOrder: finalStop.orderedTargets.map((target) => ({ ...target.center })),
+    trajectory,
+    status: "success",
+  };
+}
+
+/** Builds the caller-facing incumbent atom from the exact final formula/trajectory replay. */
+function createOneClickTrajectoryIncumbentEvidence(
+  descriptor: GraphwarWasmFormulaInputDescriptor,
+  selectedPath: readonly GraphwarWasmPoint[],
+  sourcePointIndexes: readonly number[],
+  formula: Extract<GraphwarWasmFormulaLaunchResult, { status: "success" }>,
+  trajectory: GraphwarWasmTrajectoryResult,
+): GraphwarWasmOneClickTrajectoryIncumbentEvidence {
+  const formulaPoints = formula.formulaPoints.map((point) => createGraphPoint(point.x, point.y));
+  const signProtection = [...trajectory.continuationEvidence.observedSignProtection];
+  const formulaSettings = {
+    ...descriptor.settings,
+    ...(descriptor.settings.stepGlitchObstacleMask === undefined
+      ? {}
+      : { stepGlitchObstacleMask: descriptor.settings.stepGlitchObstacleMask.slice() }),
+  };
+  const stepOverflowProtectionRange = createStepOverflowProtectionRange(descriptor.bounds, formulaPoints);
+  const formulaEvaluation = {
+    equation: formulaSettings.equation,
+    formulaDecimalPlaces: formulaSettings.decimalPlaces,
+    isStepOverflowProtectionEnabled: formulaSettings.isStepOverflowProtectionEnabled,
+    signProtection,
+    stepOverflowProtectionRange,
+  };
+  const formulaContext: GraphwarTrajectoryFormulaContext = {
+    compiledMaterials: formula.compiledMaterials,
+    formulaEvaluation,
+    formulaPoints,
+    formulaResult: buildFormula(
+      formulaPoints,
+      formulaSettings.steepness,
+      formulaSettings.equation,
+      formulaSettings.algorithm,
+      formulaSettings.decimalPlaces,
+      {
+        compiledMaterials: formula.compiledMaterials,
+        isStepOverflowProtectionEnabled: formulaSettings.isStepOverflowProtectionEnabled,
+        signProtection,
+        stepOverflowProtectionRange,
+      },
+    ),
+    ...(trajectory.launchAngleRadians === undefined ? {} : { launchAngleRadians: trajectory.launchAngleRadians }),
+    settings: formulaSettings,
+    signProtection,
+    soldierCenter: createGraphPoint(trajectory.launchPoint.x, trajectory.launchPoint.y),
+  };
+  const obstacleSampleIndex = trajectory.obstacle.type === "hit" ? trajectory.obstacle.sampleIndex : -1;
+  const trajectoryPoints = snapshotGraphwarVisibleTrajectoryPoints(trajectory.visiblePixels, obstacleSampleIndex).map(
+    (point) => createPixelPoint(point.x, point.y),
+  );
+  return {
+    formulaContext,
+    path: selectedPath.map((point) => createPixelPoint(point.x, point.y)),
+    sourcePointIndexes: [...sourcePointIndexes],
+    trajectory,
+    trajectoryPoints,
+  };
+}
+
+function mapOneClickPixelPointsToGraphPoints(
+  points: readonly GraphwarWasmPoint[],
+  bounds: GraphwarWasmFormulaInputDescriptor["bounds"],
+  boundsRect: BoundsRect,
+) {
+  const minX = validateGraphwarWasmFiniteNumber(bounds.minX, "trajectoryValidation.descriptor.bounds.minX", "input");
+  const maxX = validateGraphwarWasmFiniteNumber(bounds.maxX, "trajectoryValidation.descriptor.bounds.maxX", "input");
+  const minY = validateGraphwarWasmFiniteNumber(bounds.minY, "trajectoryValidation.descriptor.bounds.minY", "input");
+  const maxY = validateGraphwarWasmFiniteNumber(bounds.maxY, "trajectoryValidation.descriptor.bounds.maxY", "input");
+  const rectX = validateGraphwarWasmFiniteNumber(boundsRect.x, "trajectoryValidation.stop.boundsRect.x", "input");
+  const rectY = validateGraphwarWasmFiniteNumber(boundsRect.y, "trajectoryValidation.stop.boundsRect.y", "input");
+  const rectWidth = validateGraphwarWasmFiniteNumber(
+    boundsRect.width,
+    "trajectoryValidation.stop.boundsRect.width",
+    "input",
+  );
+  const rectHeight = validateGraphwarWasmFiniteNumber(
+    boundsRect.height,
+    "trajectoryValidation.stop.boundsRect.height",
+    "input",
+  );
+  if (maxX === minX || maxY === minY || !(rectWidth > 0) || !(rectHeight > 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "one-click trajectory composition coordinate mapping is degenerate",
+      "input",
+    );
+  }
+  return points.map((point, index) => {
+    const pixel = validatePoint(point, `selectedPath[${index}]`);
+    return {
+      x: validateGraphwarWasmFiniteNumber(
+        minX + ((pixel.x - rectX) / rectWidth) * (maxX - minX),
+        `selectedPath[${index}].graphX`,
+        "output",
+      ),
+      y: validateGraphwarWasmFiniteNumber(
+        maxY - ((pixel.y - rectY) / rectHeight) * (maxY - minY),
+        `selectedPath[${index}].graphY`,
+        "output",
+      ),
+    };
+  });
+}
+
+function findOneClickProtectedPointIndexes(
+  points: readonly GraphwarWasmPoint[],
+  anchors: readonly GraphwarWasmPoint[],
+  explicitIndexes: readonly number[] | undefined,
+) {
+  if (explicitIndexes !== undefined) {
+    if (explicitIndexes.length !== anchors.length) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-index",
+        "one-click trajectory composition target anchor indexes must match anchors",
+        "input",
+      );
+    }
+    const indexes = validateProtectedPointIndexes(explicitIndexes, points.length);
+    for (const [anchorIndex, sourceIndex] of indexes.entries()) {
+      const anchor = anchors[anchorIndex];
+      const point = points[sourceIndex];
+      if (!anchor || !point || !pointsEqual(anchor, point)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `one-click trajectory composition target anchor ${anchorIndex} does not match its source index`,
+          "input",
+        );
+      }
+    }
+    return indexes;
+  }
+  const indexes: number[] = [];
+  let searchIndex = 0;
+  for (const anchor of anchors) {
+    let matchCount = 0;
+    for (let index = searchIndex; index < points.length; index += 1) {
+      if (pointsEqual(points[index] ?? { x: 0, y: 0 }, anchor)) {
+        matchCount += 1;
+      }
+    }
+    if (matchCount > 1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "one-click trajectory composition target anchor coordinate is ambiguous",
+        "input",
+      );
+    }
+    while (searchIndex < points.length && !pointsEqual(points[searchIndex] ?? { x: 0, y: 0 }, anchor)) {
+      searchIndex += 1;
+    }
+    if (searchIndex >= points.length) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "one-click trajectory composition target anchor is not a source point",
+        "input",
+      );
+    }
+    indexes.push(searchIndex);
+    searchIndex += 1;
+  }
+  return indexes;
+}
+
 /** Runs the WASM-owned one-click target assignment and returns ordered owned points. */
 export function assignGraphwarWasmOneClickTargetRoutePoints(
   runtime: GraphwarWasmKernelRuntime,
@@ -2033,6 +2456,7 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
       "input",
     );
   }
+  const protectedPointIndexes = validateProtectedPointIndexes(input.protectedPointIndexes, points.length);
   if (routeContextPointer === 0 && routeValidationEvidence !== undefined) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
@@ -2044,6 +2468,11 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
     input.trajectoryValidation.type === "trajectory"
       ? packSmartTrajectoryCommand(runtime, input.trajectoryValidation, points, target, targetRadius)
       : { byteLength: 0, pointer: 0 };
+  const protectedPointIndexSlice = writeGraphwarWasmUint32Values(
+    runtime,
+    new Uint32Array(protectedPointIndexes),
+    runtime.arenaBase,
+  );
   const hasGraphValidation = routeContextPointer !== 0 || input.trajectoryValidation.type === "trajectory";
   return {
     flags:
@@ -2084,7 +2513,29 @@ function packSmartInput(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmS
     target,
     targetRadius,
     trajectoryCommand,
+    protectedPointIndexes: protectedPointIndexSlice,
   };
+}
+
+function validateProtectedPointIndexes(indexes: readonly number[] | undefined, pointCount: number) {
+  if (indexes === undefined) {
+    return [];
+  }
+  const validated: number[] = [];
+  let previousIndex = -1;
+  for (const [position, index] of indexes.entries()) {
+    const value = validateGraphwarWasmU32(index, `protectedPointIndexes[${position}]`, "input");
+    if (value >= pointCount || value <= previousIndex) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-index",
+        "protected point indexes must be strictly increasing source indexes",
+        "input",
+      );
+    }
+    validated.push(value);
+    previousIndex = value;
+  }
+  return validated;
 }
 
 /** Binds the formula path, target stop, and pixel-to-graph mapping before the raw template enters WASM. */
@@ -2223,6 +2674,8 @@ function writeSmartInput(
   view.setUint32(smartInput.routeGraphX, packed.routeGraphX.pointer, true);
   view.setUint32(smartInput.trajectoryCommand, packed.trajectoryCommand.pointer, true);
   view.setUint32(smartInput.trajectoryCommandByteLength, packed.trajectoryCommand.byteLength, true);
+  view.setUint32(smartInput.protectedPointIndexes, packed.protectedPointIndexes.pointer, true);
+  view.setUint32(smartInput.protectedPointIndexCount, packed.protectedPointIndexes.length, true);
 }
 
 export function copySmartResult(
@@ -2259,6 +2712,28 @@ export function copySmartResult(
     view.getUint32(smartResult.removedPointCount, true),
     "smart removed point count",
   );
+  const reachedRequiredTargetCount = validateGraphwarWasmU32(
+    view.getUint32(smartResult.reachedRequiredTargetCount, true),
+    "smart reached required target count",
+  );
+  const reachedTargetCount = validateGraphwarWasmU32(
+    view.getUint32(smartResult.reachedTargetCount, true),
+    "smart reached target count",
+  );
+  const hasTrajectoryValidation = input.trajectoryValidation.type === "trajectory";
+  const requiredTargetLimit = hasTrajectoryValidation ? input.trajectoryValidation.stop.requiredTargets.length : 0;
+  const orderedTargetLimit = hasTrajectoryValidation ? input.trajectoryValidation.stop.orderedTargets.length : 0;
+  if (
+    reachedRequiredTargetCount > requiredTargetLimit ||
+    reachedTargetCount > orderedTargetLimit ||
+    (!hasTrajectoryValidation && (reachedRequiredTargetCount !== 0 || reachedTargetCount !== 0))
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "smart target progress exceeds its trajectory validation identity",
+      "output",
+    );
+  }
   const validatedInputPoints = validatePoints(input.points, "points");
   const validatedSourcePointCount = validateGraphwarWasmU32(input.sourcePointCount, "sourcePointCount", "input");
   const validatedOriginalPointCount = validatedInputPoints.length;
@@ -2369,7 +2844,28 @@ export function copySmartResult(
       "output",
     );
   }
-  const outputInputIndexes: number[] = [];
+  const sourcePointIndexPointer = validateGraphwarWasmU32(
+    view.getUint32(smartResult.sourcePointIndexes, true),
+    "smart source-point-index pointer",
+    "output",
+  );
+  const outputInputIndexes: number[] =
+    status === 1
+      ? Array.from(
+          copyGraphwarWasmUint32Values(
+            runtime,
+            { pointer: sourcePointIndexPointer, length: pointCount },
+            nestedOutputMinimumPointer,
+          ),
+        )
+      : [];
+  if (status === 0 && sourcePointIndexPointer !== 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "smart failure retains source-point provenance",
+      "output",
+    );
+  }
   if (status === 1) {
     const inputLastPoint = validatedInputPoints.at(-1);
     const outputLastPoint = points.at(-1);
@@ -2409,24 +2905,33 @@ export function copySmartResult(
         );
       }
     }
-    let inputIndex = 0;
-    for (const [outputIndex, outputPoint] of points.entries()) {
-      while (inputIndex < validatedOriginalPointCount) {
-        const inputPoint = validatedInputPoints[inputIndex];
-        if (inputPoint && pointsEqual(inputPoint, outputPoint)) {
-          break;
-        }
-        inputIndex += 1;
-      }
-      if (inputIndex >= validatedOriginalPointCount) {
+    let previousInputIndex = -1;
+    for (const [outputIndex, inputIndex] of outputInputIndexes.entries()) {
+      if (
+        inputIndex >= validatedOriginalPointCount ||
+        inputIndex <= previousInputIndex ||
+        !pointsEqual(validatedInputPoints[inputIndex] ?? { x: 0, y: 0 }, points[outputIndex] ?? { x: 0, y: 0 })
+      ) {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
-          `smart result point ${outputIndex} is not an ordered source point`,
+          `smart result source index ${inputIndex} is not an ordered source point`,
           "output",
         );
       }
-      outputInputIndexes.push(inputIndex);
-      inputIndex += 1;
+      previousInputIndex = inputIndex;
+    }
+    const protectedPointIndexes = validateProtectedPointIndexes(
+      input.protectedPointIndexes,
+      validatedOriginalPointCount,
+    );
+    for (const protectedPointIndex of protectedPointIndexes) {
+      if (!outputInputIndexes.includes(protectedPointIndex)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `smart result dropped protected source point ${protectedPointIndex}`,
+          "output",
+        );
+      }
     }
   }
   const evidenceCount = validateGraphwarWasmU32(
@@ -2499,14 +3004,19 @@ export function copySmartResult(
     return {
       ...(blockedPoint ? { blockedPoint } : {}),
       ...(reason === undefined ? {} : { failureReason: reason }),
+      reachedRequiredTargetCount,
+      reachedTargetCount,
       points,
       removedPointCount,
       status: "failure",
     };
   }
   return {
+    reachedRequiredTargetCount,
+    reachedTargetCount,
     points,
     removedPointCount,
+    sourcePointIndexes: outputInputIndexes,
     status: "success",
     validation: {
       target: { center: { x: rawTargetX, y: rawTargetY }, radius: rawTargetRadius },

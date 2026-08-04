@@ -38,6 +38,7 @@ import {
   TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET,
   TRAJECTORY_RESULT_FLAGS_OFFSET,
   TRAJECTORY_RESULT_LAUNCH_STATUS_OFFSET,
+  TRAJECTORY_RESULT_REACHED_ORDERED_TARGET_COUNT_OFFSET,
   TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
   TRAJECTORY_RESULT_STOP_REASON_OFFSET,
   TRAJECTORY_RESULT_TARGET_HIT_INDEX_OFFSET,
@@ -6568,6 +6569,8 @@ function optimizeOneClickRoutePath(
 function writeSmartFailure(
   resultPointer: u32,
   reason: u32,
+  reachedRequiredTargetCount: u32,
+  reachedTargetCount: u32,
   hasBlockedPoint: bool,
   blockedPointX: f64,
   blockedPointY: f64,
@@ -6594,6 +6597,12 @@ function writeSmartFailure(
   store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_RADIUS_OFFSET, 0);
   store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_X_OFFSET, hasBlockedPoint ? blockedPointX : 0);
   store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_Y_OFFSET, hasBlockedPoint ? blockedPointY : 0);
+  store<u32>(
+    resultPointer + Layout.SMART_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+    reachedRequiredTargetCount,
+  );
+  store<u32>(resultPointer + Layout.SMART_RESULT_REACHED_TARGET_COUNT_OFFSET, reachedTargetCount);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_SOURCE_INDEXES_POINTER_OFFSET, 0);
 }
 
 @inline
@@ -6855,6 +6864,31 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const trajectoryCommandByteLength = load<u32>(
     inputPointer + Layout.SMART_INPUT_TRAJECTORY_COMMAND_BYTE_LENGTH_OFFSET,
   );
+  const protectedPointIndexesPointer = load<u32>(
+    inputPointer + Layout.SMART_INPUT_PROTECTED_POINT_INDEXES_POINTER_OFFSET,
+  );
+  const protectedPointIndexCount = load<u32>(
+    inputPointer + Layout.SMART_INPUT_PROTECTED_POINT_INDEX_COUNT_OFFSET,
+  );
+  if (protectedPointIndexCount > pointCount) trap();
+  if (protectedPointIndexCount > 0) {
+    if (protectedPointIndexesPointer == 0) trap();
+    requireArenaRange(
+      protectedPointIndexesPointer,
+      protectedPointIndexCount * sizeof<u32>(),
+      sizeof<u32>(),
+    );
+    let protectedIndex: u32 = 0;
+    let previousProtectedPointIndex: u32 = 0;
+    while (protectedIndex < protectedPointIndexCount) {
+      const pointIndex = load<u32>(protectedPointIndexesPointer + protectedIndex * sizeof<u32>());
+      if (pointIndex >= pointCount || (protectedIndex > 0 && pointIndex <= previousProtectedPointIndex)) trap();
+      previousProtectedPointIndex = pointIndex;
+      protectedIndex += 1;
+    }
+  } else if (protectedPointIndexesPointer != 0) {
+    trap();
+  }
   if (hasTrajectoryValidation) {
     if (trajectoryCommandByteLength != TRAJECTORY_INPUT_BYTE_LENGTH || pointCount < 2) trap();
     requireArenaRange(trajectoryCommandPointer, TRAJECTORY_INPUT_BYTE_LENGTH, sizeof<u64>());
@@ -6873,10 +6907,12 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   const trajectoryQualityPointCount = hasTrajectoryValidation
     ? load<u32>(trajectoryCommandPointer + TRAJECTORY_INPUT_QUALITY_POINT_COUNT_OFFSET)
     : 0;
+  let reachedRequiredTargetCount: u32 = 0;
+  let reachedTargetCount: u32 = 0;
 
   const resultPointer = reserveArena(Layout.SMART_RESULT_BYTE_LENGTH, sizeof<u64>());
   if (pointCount == 0) {
-    writeSmartFailure(resultPointer, Layout.SMART_RESULT_FAILURE_REASON_NONE, false, 0, 0);
+    writeSmartFailure(resultPointer, Layout.SMART_RESULT_FAILURE_REASON_NONE, 0, 0, false, 0, 0);
     return resultPointer;
   }
 
@@ -6897,8 +6933,16 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
     ? reserveArena(pointCount * sizeof<f64>(), sizeof<u64>())
     : 0;
   const outputQualityFlagsPointer = hasTrajectoryValidation ? reserveArena(pointCount, 1) : 0;
+  const outputSourceIndexesPointer = reserveArena(pointCount * sizeof<u32>(), sizeof<u32>());
+  const outputProtectedFlagsPointer =
+    protectedPointIndexCount > 0 ? reserveArena(pointCount, 1) : 0;
   memory.copy(outputXPointer, pointsXPointer, pointCount * sizeof<f64>());
   memory.copy(outputYPointer, pointsYPointer, pointCount * sizeof<f64>());
+  let sourceIndex: u32 = 0;
+  while (sourceIndex < pointCount) {
+    store<u32>(outputSourceIndexesPointer + sourceIndex * sizeof<u32>(), sourceIndex);
+    sourceIndex += 1;
+  }
   if (hasRouteContextValidation) {
     memory.copy(outputRouteXPointer, routePointsXPointer, pointCount * sizeof<f64>());
     memory.copy(outputRouteYPointer, routePointsYPointer, pointCount * sizeof<f64>());
@@ -6943,6 +6987,15 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   } else if (hasRouteContextValidation) {
     memory.copy(outputGraphXPointer, routeGraphXPointer, pointCount * sizeof<f64>());
   }
+  if (outputProtectedFlagsPointer != 0) {
+    memory.fill(outputProtectedFlagsPointer, 0, pointCount);
+    let protectedIndex: u32 = 0;
+    while (protectedIndex < protectedPointIndexCount) {
+      const pointIndex = load<u32>(protectedPointIndexesPointer + protectedIndex * sizeof<u32>());
+      store<u8>(outputProtectedFlagsPointer + pointIndex, 1);
+      protectedIndex += 1;
+    }
+  }
   if (hasTrajectoryValidation) {
     memory.fill(outputQualityFlagsPointer, 0, pointCount);
     let graphIndex: u32 = 1;
@@ -6968,6 +7021,8 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
       writeSmartFailure(
         resultPointer,
         hasGraphValidation ? Layout.SMART_RESULT_FAILURE_REASON_TARGET : Layout.SMART_RESULT_FAILURE_REASON_NONE,
+        0,
+        0,
         false,
         0,
         0,
@@ -7004,6 +7059,10 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
         0,
       );
       smartTrajectoryPathError(trajectoryResultPointer);
+      reachedRequiredTargetCount = load<u32>(
+        trajectoryResultPointer + TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+      );
+      reachedTargetCount = load<u32>(trajectoryResultPointer + TRAJECTORY_RESULT_REACHED_ORDERED_TARGET_COUNT_OFFSET);
       if (!smartTrajectoryCandidateIsValid(trajectoryResultPointer, trajectoryRequiredTargetCount)) {
         initialFailureReason = Layout.SMART_RESULT_FAILURE_REASON_TRAJECTORY;
         const obstacleHitIndex = load<i32>(trajectoryResultPointer + TRAJECTORY_RESULT_OBSTACLE_HIT_INDEX_OFFSET);
@@ -7040,6 +7099,8 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
     writeSmartFailure(
       resultPointer,
       initialFailureReason,
+      reachedRequiredTargetCount,
+      reachedTargetCount,
       hasInitialBlockedPoint,
       initialBlockedPointX,
       initialBlockedPointY,
@@ -7051,6 +7112,10 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   if ((flags & Layout.SMART_INPUT_FLAG_DELETE_OPTIMIZATION) != 0 && !hasTrajectoryValidation) {
     let index: u32 = sourcePointCount < 1 ? 1 : sourcePointCount;
     while (index + 1 < outputCount) {
+      if (outputProtectedFlagsPointer != 0 && load<u8>(outputProtectedFlagsPointer + index) != 0) {
+        index += 1;
+        continue;
+      }
       const previousX = load<f64>(outputXPointer + (index - 1) * sizeof<f64>());
       const previousY = load<f64>(outputYPointer + (index - 1) * sizeof<f64>());
       const currentX = load<f64>(outputXPointer + index * sizeof<f64>());
@@ -7087,6 +7152,16 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
             load<f64>(outputGraphXPointer + (shiftIndex + 1) * sizeof<f64>()),
           );
         }
+        if (outputProtectedFlagsPointer != 0) {
+          store<u8>(
+            outputProtectedFlagsPointer + shiftIndex,
+            load<u8>(outputProtectedFlagsPointer + shiftIndex + 1),
+          );
+        }
+        store<u32>(
+          outputSourceIndexesPointer + shiftIndex * sizeof<u32>(),
+          load<u32>(outputSourceIndexesPointer + (shiftIndex + 1) * sizeof<u32>()),
+        );
         shiftIndex += 1;
       }
       outputCount -= 1;
@@ -7129,8 +7204,14 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
       let bestCandidateIndex: u32 = 0;
       let hasBestPathError = false;
       let bestPathError = 0.0;
+      let bestReachedRequiredTargetCount = reachedRequiredTargetCount;
+      let bestReachedTargetCount = reachedTargetCount;
       let index: u32 = firstOptimizableIndex;
       while (index + 1 < outputCount || (canDeleteTerminalPoint && index < outputCount)) {
+        if (outputProtectedFlagsPointer != 0 && load<u8>(outputProtectedFlagsPointer + index) != 0) {
+          index += 1;
+          continue;
+        }
         let sourceIndex: u32 = 0;
         let candidateIndex: u32 = 0;
         while (sourceIndex < outputCount) {
@@ -7197,6 +7278,8 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
           Layout.SMART_RESULT_FAILURE_REASON_NONE;
         let hasCandidatePathError = false;
         let candidatePathError = 0.0;
+        let candidateReachedRequiredTargetCount: u32 = 0;
+        let candidateReachedTargetCount: u32 = 0;
         if (isCandidateValid) {
           const candidateMark = markArena();
           isCandidateValid =
@@ -7229,6 +7312,12 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
               trajectoryCommandByteLength,
               0,
             );
+            candidateReachedRequiredTargetCount = load<u32>(
+              trajectoryResultPointer + TRAJECTORY_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+            );
+            candidateReachedTargetCount = load<u32>(
+              trajectoryResultPointer + TRAJECTORY_RESULT_REACHED_ORDERED_TARGET_COUNT_OFFSET,
+            );
             hasCandidatePathError =
               (load<u32>(trajectoryResultPointer + TRAJECTORY_RESULT_FLAGS_OFFSET) &
                 TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR) !=
@@ -7252,6 +7341,8 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
           bestCandidateIndex = index;
           hasBestPathError = hasCandidatePathError;
           bestPathError = candidatePathError;
+          bestReachedRequiredTargetCount = candidateReachedRequiredTargetCount;
+          bestReachedTargetCount = candidateReachedTargetCount;
         }
         index += 1;
       }
@@ -7292,10 +7383,22 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
             load<u8>(outputQualityFlagsPointer + shiftIndex + 1),
           );
         }
+        if (outputProtectedFlagsPointer != 0) {
+          store<u8>(
+            outputProtectedFlagsPointer + shiftIndex,
+            load<u8>(outputProtectedFlagsPointer + shiftIndex + 1),
+          );
+        }
+        store<u32>(
+          outputSourceIndexesPointer + shiftIndex * sizeof<u32>(),
+          load<u32>(outputSourceIndexesPointer + (shiftIndex + 1) * sizeof<u32>()),
+        );
         shiftIndex += 1;
       }
       outputCount -= 1;
       removedCount += 1;
+      reachedRequiredTargetCount = bestReachedRequiredTargetCount;
+      reachedTargetCount = bestReachedTargetCount;
     }
   }
   if (!hasTrajectoryValidation) {
@@ -7309,7 +7412,7 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
       );
     }
     if (outputFailureReason != Layout.SMART_RESULT_FAILURE_REASON_NONE) {
-      writeSmartFailure(resultPointer, outputFailureReason, false, 0, 0);
+      writeSmartFailure(resultPointer, outputFailureReason, 0, 0, false, 0, 0);
       return resultPointer;
     }
   }
@@ -7341,6 +7444,12 @@ export function runSmartPathfinding(inputPointer: u32, inputByteLength: u32): u3
   store<f64>(resultPointer + Layout.SMART_RESULT_TARGET_RADIUS_OFFSET, targetRadius);
   store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_X_OFFSET, 0);
   store<f64>(resultPointer + Layout.SMART_RESULT_BLOCKED_POINT_Y_OFFSET, 0);
+  store<u32>(
+    resultPointer + Layout.SMART_RESULT_REACHED_REQUIRED_TARGET_COUNT_OFFSET,
+    reachedRequiredTargetCount,
+  );
+  store<u32>(resultPointer + Layout.SMART_RESULT_REACHED_TARGET_COUNT_OFFSET, reachedTargetCount);
+  store<u32>(resultPointer + Layout.SMART_RESULT_OUTPUT_SOURCE_INDEXES_POINTER_OFFSET, outputSourceIndexesPointer);
   return resultPointer;
 }
 

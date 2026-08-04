@@ -7,7 +7,7 @@ import { imageXToNearestPlaneColumn, planeColumnToForwardColumn } from "../../co
 import { nowMs } from "../../core/time";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { clonePixelPoint, createGraphPoint, createPixelPoint } from "../../core/types";
-import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
+import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
@@ -38,6 +38,7 @@ import type {
   GraphwarWasmStepGlitchOwnedEvidence,
 } from "../../core/wasm/step-glitch-adapter";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
+import type { StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
 import {
   graphwarByteArraysEqual,
   graphwarFinalReplaySnapshotMatches,
@@ -1110,15 +1111,7 @@ function publishOneClickClearWasmStepGlitchEvidence(
     }
     pathStartIndex = targetPathIndex + 1;
     const path = route.pathPoints.slice(0, targetPathIndex + 1);
-    // Selected automatic segments still lack exact continuation arrays; keep them on cold replay.
-    if (evidence.selectedSegment) {
-      continue;
-    }
-    const formulaEvidence =
-      path.length === evidence.path.length
-        ? (evidence.formulaContext.stepGlitchFormulaEvidence ??
-          createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, path.length))
-        : createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, path.length);
+    const formulaEvidence = createGraphwarWasmFormulaEvidence(options, evidence, path.length);
     if (!formulaEvidence) {
       continue;
     }
@@ -1146,22 +1139,12 @@ function publishOneClickClearWasmStepGlitchEvidence(
   }
 }
 
-/** Rebuilds only the no-glitch prefix shape; selected WASM glitch segments need a richer ABI before reuse is safe. */
-function createGraphwarWasmNoGlitchFormulaEvidence(
+/** Rebuilds the exact prefix evidence carried by one WASM replay, including selected glitch terms. */
+function createGraphwarWasmFormulaEvidence(
   options: GraphwarOneClickClearSearchOptions,
   evidence: GraphwarWasmStepGlitchOwnedEvidence,
   pointCount = evidence.formulaInput.points.length,
 ): GraphwarStepGlitchFormulaEvidence | undefined {
-  // Automatic scans leave window descriptors empty; compiled materials still
-  // carry the authoritative selected glitch segment. Never reconstruct a
-  // no-glitch prefix from evidence that contains one.
-  if (
-    evidence.formulaInput.stepGlitchWindows.some((window) => window !== undefined) ||
-    !evidence.formulaMaterials.stepFormula ||
-    evidence.formulaMaterials.stepFormula.terms.some((term) => term.glitchSegment !== undefined)
-  ) {
-    return undefined;
-  }
   const points = evidence.formulaInput.points;
   const formulaPoints = evidence.formulaLaunch.formulaPoints;
   const segmentCount = Math.max(0, pointCount - 1);
@@ -1170,16 +1153,24 @@ function createGraphwarWasmNoGlitchFormulaEvidence(
     pointCount < 2 ||
     pointCount > points.length ||
     pointCount > formulaPoints.length ||
-    evidence.protection.length < segmentCount
+    evidence.protection.length < segmentCount ||
+    evidence.formulaInput.segmentStartPoints.length < segmentCount ||
+    evidence.formulaInput.stepSegmentDeltaYs.length < segmentCount
   ) {
     return undefined;
+  }
+  const stepGlitchSegments: (StepGlitchSegment | undefined)[] = new Array(segmentCount).fill(undefined);
+  for (const term of evidence.formulaMaterials.stepFormula?.terms ?? []) {
+    if (term.glitchSegment && term.sourceSegmentIndex < segmentCount) {
+      stepGlitchSegments[term.sourceSegmentIndex] = term.glitchSegment;
+    }
   }
   const prefix = {
     bounds: { ...evidence.formulaInput.bounds },
     initialFormulaPoints: points.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
     points: points.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
     refinedFormulaPoints: formulaPoints.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
-    segmentStartPoints: new Array<GraphPoint | undefined>(segmentCount).fill(undefined),
+    segmentStartPoints: evidence.formulaInput.segmentStartPoints.slice(0, segmentCount),
     ...(evidence.formulaLaunch.launch.equation === "y"
       ? {}
       : { launchAngleRadians: evidence.formulaLaunch.launch.angleRadians }),
@@ -1187,9 +1178,9 @@ function createGraphwarWasmNoGlitchFormulaEvidence(
       ...evidence.formulaInput.settings,
       ...(options.simulationMask ? { stepGlitchObstacleMask: options.simulationMask } : {}),
     },
-    stepGlitchRequirements: new Array<boolean>(segmentCount).fill(false),
-    stepGlitchSegments: new Array<undefined>(segmentCount).fill(undefined),
-    stepSegmentDeltaYs: new Array<number | undefined>(segmentCount).fill(undefined),
+    stepGlitchRequirements: stepGlitchSegments.map((segment) => segment !== undefined),
+    stepGlitchSegments,
+    stepSegmentDeltaYs: evidence.formulaInput.stepSegmentDeltaYs.slice(0, segmentCount),
     signProtection: evidence.protection.slice(0, segmentCount),
   } satisfies GraphwarStepGlitchFormulaEvidence["prefix"];
   return { prefix };

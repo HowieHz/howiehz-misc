@@ -184,17 +184,16 @@ export function refineStepFormulaCold(
   const hasFixedWindows = (flags & FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS) != 0;
   const fixedWindowPointer =
     hasFixedWindows ? load<u32>(inputPointer + FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET) : 0;
-  const pointByteLength = checkedByteLength(pointCount, sizeof<f64>());
   const segmentF64ByteLength = checkedByteLength(segmentCount, sizeof<f64>());
   const glitchByteLength = checkedByteLength(segmentCount, STEP_GLITCH_RECORD_BYTE_LENGTH);
   const deltaYPointer = reserveArena(segmentF64ByteLength, sizeof<f64>());
-  const segmentStartXPointer = reserveArena(pointByteLength, sizeof<f64>());
-  const segmentStartYPointer = reserveArena(pointByteLength, sizeof<f64>());
+  const segmentStartXPointer = reserveArena(segmentF64ByteLength, sizeof<f64>());
+  const segmentStartYPointer = reserveArena(segmentF64ByteLength, sizeof<f64>());
   const glitchPointer = reserveArena(glitchByteLength, sizeof<f64>());
   const disabledPointer = reserveArena(segmentCount, 1);
   fillFloat64NaN(deltaYPointer, segmentCount);
-  fillFloat64NaN(segmentStartXPointer, pointCount);
-  fillFloat64NaN(segmentStartYPointer, pointCount);
+  fillFloat64NaN(segmentStartXPointer, segmentCount);
+  fillFloat64NaN(segmentStartYPointer, segmentCount);
   memory.fill(glitchPointer, 0, glitchByteLength);
   memory.fill(disabledPointer, 1, segmentCount);
   store<u32>(buildInputPointer + FORMULA_INPUT_DISABLED_SEGMENT_POINTER_OFFSET, disabledPointer);

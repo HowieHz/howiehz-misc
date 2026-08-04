@@ -76,7 +76,23 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       segment: { equation: "dy" },
       segmentIndex: 1,
     });
-    expect(scan.evidence?.owned.formulaContext).not.toHaveProperty("stepGlitchFormulaEvidence");
+    expect(scan.evidence?.owned.formulaInput.segmentStartPoints).toHaveLength(fixture.pixelPath.length - 1);
+    expect(scan.evidence?.owned.formulaInput.segmentStartPoints[0]).toBeUndefined();
+    expect(scan.evidence?.owned.formulaInput.segmentStartPoints[1]).toBeDefined();
+    expect(scan.evidence?.owned.formulaInput.stepSegmentDeltaYs).toHaveLength(fixture.pixelPath.length - 1);
+    expect(scan.evidence?.owned.formulaInput.stepSegmentDeltaYs.every((value) => Number.isFinite(value))).toBe(true);
+    expect(scan.evidence?.owned.formulaContext.formulaEvaluation.segmentStartPoints).toEqual(
+      scan.evidence?.owned.formulaInput.segmentStartPoints,
+    );
+    expect(scan.evidence?.owned.formulaContext.formulaEvaluation.stepSegmentDeltaYs).toEqual(
+      scan.evidence?.owned.formulaInput.stepSegmentDeltaYs,
+    );
+    expect(scan.evidence?.owned.formulaContext.stepGlitchFormulaEvidence?.prefix.segmentStartPoints).toEqual(
+      scan.evidence?.owned.formulaInput.segmentStartPoints,
+    );
+    expect(scan.evidence?.owned.formulaContext.stepGlitchFormulaEvidence?.prefix.stepSegmentDeltaYs).toEqual(
+      scan.evidence?.owned.formulaInput.stepSegmentDeltaYs,
+    );
     const evidenceView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength);
     const continuation = scan.evidence?.owned.continuation;
     if (!continuation) throw new Error("expected copied continuation evidence");
@@ -816,6 +832,22 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         new DataView(runtime.buffer).setFloat64(evidencePointer + 288, Number.NaN, true);
       },
       name: "path error without final validation",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setUint32(evidencePointer + 316, 0, true);
+      },
+      name: "continuation segment count differs from the source path",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const startPointer = evidenceView.getUint32(296, true);
+        new DataView(runtime.buffer).setFloat64(startPointer + 8, Number.NaN, true);
+      },
+      name: "continuation segment start is non-finite",
     },
     {
       mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {

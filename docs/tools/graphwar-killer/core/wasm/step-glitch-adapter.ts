@@ -128,9 +128,15 @@ const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION = 1;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT = 2;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_ALLOWED_FLAGS =
   STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION | STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT;
-const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 296;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 320;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET = 248;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET = 252;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET = 296;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_Y_POINTER_OFFSET = 300;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_PRESENCE_POINTER_OFFSET = 304;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_POINTER_OFFSET = 308;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_PRESENCE_POINTER_OFFSET = 312;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_COUNT_OFFSET = 316;
 const FORMULA_INPUT_BYTE_LENGTH = 176;
 const FORMULA_RESULT_BYTE_LENGTH = 48;
 const FORMULA_LAUNCH_RESULT_BYTE_LENGTH = 80;
@@ -181,6 +187,9 @@ const FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET = 80;
 const FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET = 88;
 const FORMULA_INPUT_SOLDIER_X_OFFSET = 96;
 const FORMULA_INPUT_SOLDIER_Y_OFFSET = 104;
+const FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET = 124;
+const FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET = 128;
+const FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET = 132;
 const FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET = 136;
 const FORMULA_INPUT_STEP_OVERFLOW_RANGE_COUNT_OFFSET = 148;
 const FORMULA_INPUT_PATH_STEEPNESS_OFFSET = 152;
@@ -719,7 +728,11 @@ export interface GraphwarWasmStepGlitchOwnedFormulaInput {
   readonly mask: Uint8Array;
   readonly overflowProtectionRange?: { maxX: number; minX: number };
   readonly points: readonly GraphPoint[];
+  /** Exact per-segment start states emitted by WASM refinement; absent values stay explicit. */
+  readonly segmentStartPoints: readonly (GraphPoint | undefined)[];
   readonly settings: Readonly<GraphwarTrajectoryFormulaSettings>;
+  /** Exact Step delta-y overrides emitted by WASM refinement; absent values stay explicit. */
+  readonly stepSegmentDeltaYs: readonly (number | undefined)[];
   readonly steepness: number;
   readonly stepGlitchWindows: readonly ({ endX: number; isPresent: boolean; startX: number } | undefined)[];
 }
@@ -1987,6 +2000,100 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   });
   validateOwnedProductionWindowIdentity(command, path, stepGlitchWindows, segmentCount, flags);
 
+  const evidenceSegmentCount = validateGraphwarWasmU32(
+    header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_COUNT_OFFSET, true),
+    "stepGlitch.evidence.segmentCount",
+  );
+  if (evidenceSegmentCount !== segmentCount) {
+    productionEvidenceFault("Step-glitch evidence continuation count differs from the source path");
+  }
+  const segmentStartXPointer = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET, true);
+  const segmentStartYPointer = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_Y_POINTER_OFFSET, true);
+  const segmentStartPresencePointer = header.getUint32(
+    STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_PRESENCE_POINTER_OFFSET,
+    true,
+  );
+  const deltaYPointer = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_POINTER_OFFSET, true);
+  const deltaYPresencePointer = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_PRESENCE_POINTER_OFFSET, true);
+  if (
+    formulaInput.getUint32(FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET, true) !== segmentStartXPointer ||
+    formulaInput.getUint32(FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET, true) !== segmentStartYPointer ||
+    formulaInput.getUint32(FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET, true) !== deltaYPointer
+  ) {
+    productionEvidenceFault("Step-glitch evidence continuation pointers differ from its formula input");
+  }
+  const segmentStartXs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    segmentStartXPointer,
+    segmentCount,
+    "stepGlitch.evidence.segmentStartX",
+    outputMinimumPointer,
+  );
+  const segmentStartYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    segmentStartYPointer,
+    segmentCount,
+    "stepGlitch.evidence.segmentStartY",
+    outputMinimumPointer,
+  );
+  const segmentStartPresence = readOwnedProductionEvidenceBytes(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    segmentStartPresencePointer,
+    segmentCount,
+    "stepGlitch.evidence.segmentStartPresence",
+    outputMinimumPointer,
+  );
+  const deltaYs = readOwnedProductionEvidenceFloat64Values(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    deltaYPointer,
+    segmentCount,
+    "stepGlitch.evidence.stepSegmentDeltaYs",
+    outputMinimumPointer,
+  );
+  const deltaYPresence = readOwnedProductionEvidenceBytes(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    deltaYPresencePointer,
+    segmentCount,
+    "stepGlitch.evidence.stepSegmentDeltaYsPresence",
+    outputMinimumPointer,
+  );
+  const segmentStartPoints: (GraphPoint | undefined)[] = new Array(segmentCount).fill(undefined);
+  const stepSegmentDeltaYs: (number | undefined)[] = new Array(segmentCount).fill(undefined);
+  for (let index = 0; index < segmentCount; index += 1) {
+    const startPresence = segmentStartPresence[index];
+    if (startPresence > 1) productionEvidenceFault("Step-glitch evidence segment-start presence is invalid");
+    const startX = productionEvidenceFinite(segmentStartXs[index], `stepGlitch.evidence.segmentStartX[${index}]`);
+    const startY = productionEvidenceFinite(segmentStartYs[index], `stepGlitch.evidence.segmentStartY[${index}]`);
+    if (startPresence === 0) {
+      if (!Object.is(startX, 0) || !Object.is(startY, 0)) {
+        productionEvidenceFault("Step-glitch evidence absent segment start is not canonical");
+      }
+    } else {
+      segmentStartPoints[index] = createGraphPoint(startX, startY);
+    }
+    const deltaPresence = deltaYPresence[index];
+    if (deltaPresence > 1) productionEvidenceFault("Step-glitch evidence delta-y presence is invalid");
+    const deltaY = productionEvidenceFinite(deltaYs[index], `stepGlitch.evidence.stepSegmentDeltaYs[${index}]`);
+    if (deltaPresence === 0) {
+      if (!Object.is(deltaY, 0)) productionEvidenceFault("Step-glitch evidence absent delta-y is not canonical");
+    } else {
+      stepSegmentDeltaYs[index] = deltaY;
+    }
+  }
+  if (segmentCount > 0 && segmentStartPresence[0] !== 0) {
+    productionEvidenceFault("Step-glitch evidence has a first-segment start state");
+  }
+
   const formulaPointCount = validateGraphwarWasmU32(
     header.getUint32(264, true),
     "stepGlitch.evidence.formulaPointCount",
@@ -2182,8 +2289,41 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     formulaDecimalPlaces: decimalPlaces,
     isStepOverflowProtectionEnabled: formulaSettings.isStepOverflowProtectionEnabled,
     signProtection: [...protection],
+    segmentStartPoints,
+    stepSegmentDeltaYs,
     ...(overflowProtectionRange ? { stepOverflowProtectionRange: overflowProtectionRange } : {}),
   };
+  const stepGlitchTerms =
+    formulaLaunch.compiledMaterials.stepFormula?.terms.filter((term) => term.glitchSegment !== undefined) ?? [];
+  const stepGlitchSegments: (StepGlitchSegment | undefined)[] = new Array(segmentCount).fill(undefined);
+  for (const term of stepGlitchTerms) {
+    if (term.sourceSegmentIndex >= segmentCount || stepGlitchSegments[term.sourceSegmentIndex] !== undefined) {
+      productionEvidenceFault("Step-glitch evidence contains duplicate or out-of-range glitch material");
+    }
+    stepGlitchSegments[term.sourceSegmentIndex] = term.glitchSegment;
+  }
+  const stepGlitchFormulaEvidence =
+    stepGlitchTerms.length === 0
+      ? undefined
+      : ({
+          prefix: {
+            bounds: { ...context.bounds },
+            initialFormulaPoints: formulaInputPoints,
+            points: formulaInputPoints,
+            refinedFormulaPoints: formulaLaunch.formulaPoints,
+            segmentStartPoints,
+            ...(formulaLaunch.launch.equation === "y" ? {} : { launchAngleRadians: formulaLaunch.launch.angleRadians }),
+            settings: formulaSettings,
+            signProtection: [...protection],
+            soldierCenter: createGraphPoint(
+              formulaInput.getFloat64(FORMULA_INPUT_SOLDIER_X_OFFSET, true),
+              formulaInput.getFloat64(FORMULA_INPUT_SOLDIER_Y_OFFSET, true),
+            ),
+            stepGlitchRequirements: stepGlitchSegments.map((segment) => segment !== undefined),
+            stepGlitchSegments,
+            stepSegmentDeltaYs,
+          },
+        } satisfies GraphwarStepGlitchFormulaEvidence);
   const formulaContext = {
     compiledMaterials: formulaLaunch.compiledMaterials,
     formulaEvaluation,
@@ -2214,6 +2354,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
         "formulaInput.soldierCenter.y",
       ),
     ),
+    ...(stepGlitchFormulaEvidence ? { stepGlitchFormulaEvidence } : {}),
   } satisfies GraphwarTrajectoryFormulaContext;
 
   const continuation = decodeOwnedProductionContinuation(
@@ -2254,8 +2395,10 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
       mask: formulaMask,
       ...(overflowProtectionRange ? { overflowProtectionRange } : {}),
       points: formulaInputPoints,
+      segmentStartPoints,
       settings: formulaSettings,
       steepness,
+      stepSegmentDeltaYs,
       stepGlitchWindows,
     },
     formulaLaunch,
@@ -2866,6 +3009,31 @@ function rewriteProductionEvidencePointersRelativeToBase(
     [260, header.getUint32(260, true), "formulaPointY"],
     [268, header.getUint32(268, true), "continuation"],
     [276, header.getUint32(276, true), "trackedHit"],
+    [
+      STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET,
+      header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET, true),
+      "segmentStartX",
+    ],
+    [
+      STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_Y_POINTER_OFFSET,
+      header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_Y_POINTER_OFFSET, true),
+      "segmentStartY",
+    ],
+    [
+      STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_PRESENCE_POINTER_OFFSET,
+      header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_PRESENCE_POINTER_OFFSET, true),
+      "segmentStartPresence",
+    ],
+    [
+      STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_POINTER_OFFSET,
+      header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_POINTER_OFFSET, true),
+      "deltaY",
+    ],
+    [
+      STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_PRESENCE_POINTER_OFFSET,
+      header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_PRESENCE_POINTER_OFFSET, true),
+      "deltaYPresence",
+    ],
   ] as const) {
     productionEvidenceRewriteRelativePointer(
       bytes,
@@ -2881,6 +3049,9 @@ function rewriteProductionEvidencePointersRelativeToBase(
   rewrite(formulaInputPointer, FORMULA_INPUT_POINT_Y_POINTER_OFFSET, "formulaInput.pointY");
   rewrite(formulaInputPointer, FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, "formulaInput.protection");
   rewrite(formulaInputPointer, FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET, "formulaInput.overflowRange");
+  rewrite(formulaInputPointer, FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET, "formulaInput.segmentStartX");
+  rewrite(formulaInputPointer, FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET, "formulaInput.segmentStartY");
+  rewrite(formulaInputPointer, FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET, "formulaInput.deltaY");
   rewrite(formulaInputPointer, FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET, "formulaInput.glitchWindows");
   rewrite(formulaInputPointer, FORMULA_INPUT_MASK_POINTER_OFFSET, "formulaInput.mask");
   rewrite(formulaLaunchPointer, 48, "launchResult.materialResult");

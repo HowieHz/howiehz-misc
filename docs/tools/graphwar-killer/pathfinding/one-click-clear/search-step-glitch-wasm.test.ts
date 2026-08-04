@@ -43,17 +43,23 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     }
   });
 
-  it("does not publish fabricated evidence for an automatic glitch segment", async () => {
+  it("publishes exact evidence for an automatic glitch segment", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
-    let publishedPath: readonly PixelPoint[] | undefined;
+    let published:
+      | Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0]
+      | undefined;
     const result = await buildGraphwarOneClickClearPath(
       createOptions(new Uint8Array(planeCellCount), runtime, (evidence) => {
-        publishedPath = evidence.path;
+        published = evidence;
       }),
     );
 
     expect(result.type).toBe("success");
-    expect(publishedPath).toBeUndefined();
+    expect(published).toBeDefined();
+    if (!published) return;
+    expect(published.path.length).toBeGreaterThan(0);
+    expect(published.prefixEvidence.formulaEvidence.prefix.points).toHaveLength(published.path.length);
+    expect(published.prefixEvidence.formulaEvidence.prefix.segmentStartPoints).toHaveLength(published.path.length - 1);
   });
 
   it("accepts a published no-glitch prefix on the next request", async () => {

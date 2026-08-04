@@ -589,6 +589,74 @@ function copyProductionEvidenceRange(
   return pointer;
 }
 
+function reserveProductionEvidenceRange(
+  evidencePointer: u32,
+  finalSize: u32,
+  cursorPointer: u32,
+  byteLength: u32,
+  alignment: u32,
+): u32 {
+  if (byteLength == 0) return 0;
+  const cursor = alignProductionEvidenceOffset(load<u32>(cursorPointer), alignment);
+  const pointer = evidencePointer + cursor;
+  if (<u64>pointer + byteLength > <u64>evidencePointer + finalSize) trap();
+  store<u32>(cursorPointer, cursor + byteLength);
+  return pointer;
+}
+
+/** Converts refinement NaN placeholders into explicit finite values plus presence bytes. */
+function copyProductionOptionalFloat64Range(
+  sourcePointer: u32,
+  count: u32,
+  valuesPointer: u32,
+  presencePointer: u32,
+): void {
+  memory.copy(valuesPointer, sourcePointer, checkedProductionEvidenceBytes(count, sizeof<f64>()));
+  let index: u32 = 0;
+  while (index < count) {
+    const valuePointer = valuesPointer + index * sizeof<f64>();
+    const value = load<f64>(valuePointer);
+    if (value != value) {
+      store<f64>(valuePointer, 0);
+      store<u8>(presencePointer + index, 0);
+    } else {
+      if (!isFiniteValue(value)) trap();
+      store<u8>(presencePointer + index, 1);
+    }
+    index += 1;
+  }
+}
+
+/** Copies optional point coordinates atomically; X and Y must share one presence state. */
+function copyProductionOptionalPointRange(
+  sourceXPointer: u32,
+  sourceYPointer: u32,
+  count: u32,
+  valuesXPointer: u32,
+  valuesYPointer: u32,
+  presencePointer: u32,
+): void {
+  let index: u32 = 0;
+  while (index < count) {
+    const sourceX = load<f64>(sourceXPointer + index * sizeof<f64>());
+    const sourceY = load<f64>(sourceYPointer + index * sizeof<f64>());
+    const isXAbsent = sourceX != sourceX;
+    const isYAbsent = sourceY != sourceY;
+    if (isXAbsent != isYAbsent) trap();
+    if (isXAbsent) {
+      store<f64>(valuesXPointer + index * sizeof<f64>(), 0);
+      store<f64>(valuesYPointer + index * sizeof<f64>(), 0);
+      store<u8>(presencePointer + index, 0);
+    } else {
+      if (!isFiniteValue(sourceX) || !isFiniteValue(sourceY)) trap();
+      store<f64>(valuesXPointer + index * sizeof<f64>(), sourceX);
+      store<f64>(valuesYPointer + index * sizeof<f64>(), sourceY);
+      store<u8>(presencePointer + index, 1);
+    }
+    index += 1;
+  }
+}
+
 /** Copies one successful replay into a single arena-owned range and rewrites all nested pointers into that range. */
 function copyProductionReplayEvidence(
   metadataPointer: u32,
@@ -623,6 +691,9 @@ function copyProductionReplayEvidence(
   const graphPathYPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_POINT_Y_POINTER_OFFSET);
   requireArenaRange(graphPathXPointer, checkedProductionEvidenceBytes(pathCount, sizeof<f64>()), sizeof<f64>());
   requireArenaRange(graphPathYPointer, checkedProductionEvidenceBytes(pathCount, sizeof<f64>()), sizeof<f64>());
+  const segmentStartXPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET);
+  const segmentStartYPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET);
+  const deltaYPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET);
 
   const pointCount = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_POINT_COUNT_OFFSET);
   const pointXPointer = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_POINT_X_POINTER_OFFSET);
@@ -661,6 +732,9 @@ function copyProductionReplayEvidence(
   const maskByteLength = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_BYTE_LENGTH_OFFSET);
   const overflowPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET);
   const segmentCount = pathCount - 1;
+  requireArenaRange(segmentStartXPointer, checkedProductionEvidenceBytes(segmentCount, sizeof<f64>()), sizeof<f64>());
+  requireArenaRange(segmentStartYPointer, checkedProductionEvidenceBytes(segmentCount, sizeof<f64>()), sizeof<f64>());
+  requireArenaRange(deltaYPointer, checkedProductionEvidenceBytes(segmentCount, sizeof<f64>()), sizeof<f64>());
   const continuationPointer = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_EVIDENCE_POINTER_OFFSET);
   const continuationLength = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_EVIDENCE_BYTE_LENGTH_OFFSET);
   const trackedHitPointer = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_TRACKED_TARGET_HIT_INDEX_POINTER_OFFSET);
@@ -683,6 +757,8 @@ function copyProductionReplayEvidence(
   const visibleBytes = checkedProductionEvidenceBytes(visibleCount, sizeof<f64>());
   const materialBytes = checkedProductionEvidenceBytes(materialCount, materialStride);
   const protectionBytes = checkedProductionEvidenceBytes(protectionCount, sizeof<u32>());
+  const segmentContinuationBytes = checkedProductionEvidenceBytes(segmentCount, sizeof<f64>());
+  const segmentPresenceBytes = checkedProductionEvidenceBytes(segmentCount, sizeof<u8>());
   const finalTargetBytes = checkedProductionEvidenceBytes(finalValidationTargetCount, sizeof<f64>());
   const finalTrackedBytes = checkedProductionEvidenceBytes(finalValidationTrackedCount, 3 * sizeof<f64>());
   let finalSize = Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH;
@@ -720,6 +796,11 @@ function copyProductionReplayEvidence(
   finalSize = advanceProductionEvidenceOffset(finalSize, FormulaLayout.FORMULA_INPUT_BYTE_LENGTH, sizeof<u64>());
   finalSize = advanceProductionEvidenceOffset(finalSize, FormulaLayout.FORMULA_RESULT_BYTE_LENGTH, sizeof<u64>());
   finalSize = advanceProductionEvidenceOffset(finalSize, FormulaLayout.FORMULA_LAUNCH_RESULT_BYTE_LENGTH, sizeof<u64>());
+  finalSize = advanceProductionEvidenceOffset(finalSize, segmentContinuationBytes, sizeof<f64>());
+  finalSize = advanceProductionEvidenceOffset(finalSize, segmentContinuationBytes, sizeof<f64>());
+  finalSize = advanceProductionEvidenceOffset(finalSize, segmentPresenceBytes, sizeof<u8>());
+  finalSize = advanceProductionEvidenceOffset(finalSize, segmentContinuationBytes, sizeof<f64>());
+  finalSize = advanceProductionEvidenceOffset(finalSize, segmentPresenceBytes, sizeof<u8>());
   const cursorPointer = reserveArena(sizeof<u32>(), sizeof<u32>());
   const evidencePointer = reserveArena(finalSize, sizeof<u64>());
   memory.fill(evidencePointer, 0, finalSize);
@@ -798,6 +879,58 @@ function copyProductionReplayEvidence(
   store<u32>(copiedLaunchResultPointer + FormulaLayout.FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET, copiedProtectionPointer);
   store<u32>(copiedLaunchResultPointer + FormulaLayout.FORMULA_LAUNCH_RESULT_FORMULA_POINT_X_POINTER_OFFSET, copiedFormulaPointXPointer);
   store<u32>(copiedLaunchResultPointer + FormulaLayout.FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET, copiedFormulaPointYPointer);
+  const copiedSegmentStartXPointer = reserveProductionEvidenceRange(
+    evidencePointer,
+    finalSize,
+    cursorPointer,
+    segmentContinuationBytes,
+    sizeof<f64>(),
+  );
+  const copiedSegmentStartYPointer = reserveProductionEvidenceRange(
+    evidencePointer,
+    finalSize,
+    cursorPointer,
+    segmentContinuationBytes,
+    sizeof<f64>(),
+  );
+  const copiedSegmentStartPresencePointer = reserveProductionEvidenceRange(
+    evidencePointer,
+    finalSize,
+    cursorPointer,
+    segmentPresenceBytes,
+    sizeof<u8>(),
+  );
+  const copiedDeltaYPointer = reserveProductionEvidenceRange(
+    evidencePointer,
+    finalSize,
+    cursorPointer,
+    segmentContinuationBytes,
+    sizeof<f64>(),
+  );
+  const copiedDeltaYPresencePointer = reserveProductionEvidenceRange(
+    evidencePointer,
+    finalSize,
+    cursorPointer,
+    segmentPresenceBytes,
+    sizeof<u8>(),
+  );
+  copyProductionOptionalPointRange(
+    segmentStartXPointer,
+    segmentStartYPointer,
+    segmentCount,
+    copiedSegmentStartXPointer,
+    copiedSegmentStartYPointer,
+    copiedSegmentStartPresencePointer,
+  );
+  copyProductionOptionalFloat64Range(
+    deltaYPointer,
+    segmentCount,
+    copiedDeltaYPointer,
+    copiedDeltaYPresencePointer,
+  );
+  store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET, copiedSegmentStartXPointer);
+  store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET, copiedSegmentStartYPointer);
+  store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET, copiedDeltaYPointer);
   const flags =
     (finalValidationPointer == 0 ? 0 : Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION) |
     (hasSelectedSegment ? Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT : 0);
@@ -882,6 +1015,27 @@ function copyProductionReplayEvidence(
     evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET,
     selectedSegmentIndex,
   );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET,
+    copiedSegmentStartXPointer,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_Y_POINTER_OFFSET,
+    copiedSegmentStartYPointer,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_PRESENCE_POINTER_OFFSET,
+    copiedSegmentStartPresencePointer,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_POINTER_OFFSET,
+    copiedDeltaYPointer,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_DELTA_Y_PRESENCE_POINTER_OFFSET,
+    copiedDeltaYPresencePointer,
+  );
+  store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_COUNT_OFFSET, segmentCount);
   return evidencePointer;
 }
 

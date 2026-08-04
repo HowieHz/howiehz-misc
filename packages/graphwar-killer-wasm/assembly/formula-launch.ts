@@ -1552,6 +1552,20 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     }
     store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET, workingProtectionPointer);
     store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_COUNT_OFFSET, segmentCount);
+    // Keep the exact refinement arrays attached to the retained launch input. Production Step-glitch
+    // evidence copies these pointers before the nested replay arena is reset.
+    store<u32>(
+      inputPointer + FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET,
+      load<u32>(buildInputPointer + FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET),
+    );
+    store<u32>(
+      inputPointer + FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET,
+      load<u32>(buildInputPointer + FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET),
+    );
+    store<u32>(
+      inputPointer + FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET,
+      load<u32>(buildInputPointer + FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET),
+    );
     commitArena(attemptMark);
     return writeLaunchResult(
       FORMULA_LAUNCH_STATUS_SUCCESS,

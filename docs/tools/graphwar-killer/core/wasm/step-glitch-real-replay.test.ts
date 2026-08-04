@@ -112,6 +112,36 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it("owns multi-target session traversal and preserves same-x duplicate provenance", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const session = context.sessionRaw({
+      finalValidation: { type: "none" },
+      targets: [
+        {
+          hitTarget: target,
+          routePoint: fixture.pixelPath[2],
+          sortGraphX: graphPath[2].x,
+          sourceIndex: 11,
+        },
+        {
+          hitTarget: target,
+          routePoint: fixture.pixelPath[2],
+          sortGraphX: graphPath[2].x,
+          sourceIndex: 17,
+        },
+      ],
+      type: "session",
+    });
+    expect(session.status).toBe("hit");
+    expect(session.acceptedTargetIndexes).toEqual([0]);
+    expect(session.finalTargetIndex).toBe(0);
+    expect(session.evidence?.owned.path).toEqual(fixture.pixelPath);
+    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    context.dispose();
+  });
+
   it("runs smart composition through command 20 and rejects a stale source count", async () => {
     const fixture = createFixture("dy");
     const { context } = await createContext(fixture);

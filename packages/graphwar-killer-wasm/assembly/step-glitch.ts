@@ -925,6 +925,48 @@ function createProductionResult(
   return resultPointer;
 }
 
+/** Session result extends the common production header with accepted target provenance. */
+function createOneClickSessionResult(
+  status: u32,
+  evidencePointer: u32,
+  evidenceByteLength: u32,
+  expandedStates: u32,
+  reachedTargetCount: u32,
+  hasAcceptedPoint: u32,
+  acceptedX: f64,
+  acceptedY: f64,
+  hasBlockedPoint: u32,
+  blockedX: f64,
+  blockedY: f64,
+  acceptedIndexPointer: u32,
+  acceptedIndexCount: u32,
+  finalTargetIndex: u32,
+  finalSourceCount: u32,
+): u32 {
+  const resultPointer = reserveArena(Layout.STEP_GLITCH_SESSION_RESULT_BYTE_LENGTH, sizeof<u64>());
+  memory.fill(resultPointer, 0, Layout.STEP_GLITCH_SESSION_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_MAGIC_OFFSET, Layout.STEP_GLITCH_PRODUCTION_RESULT_MAGIC);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_STATUS_OFFSET, status);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EVIDENCE_POINTER_OFFSET, evidencePointer);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EVIDENCE_BYTE_LENGTH_OFFSET, evidenceByteLength);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EXPANDED_STATES_OFFSET, expandedStates);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_REACHED_TARGET_COUNT_OFFSET, reachedTargetCount);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_ACCEPTED_FLAG_OFFSET, hasAcceptedPoint);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_BLOCKED_FLAG_OFFSET, hasBlockedPoint);
+  store<f64>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_ACCEPTED_X_OFFSET, hasAcceptedPoint == 0 ? 0 : acceptedX);
+  store<f64>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_ACCEPTED_Y_OFFSET, hasAcceptedPoint == 0 ? 0 : acceptedY);
+  store<f64>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_BLOCKED_X_OFFSET, hasBlockedPoint == 0 ? 0 : blockedX);
+  store<f64>(resultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_BLOCKED_Y_OFFSET, hasBlockedPoint == 0 ? 0 : blockedY);
+  store<u32>(
+    resultPointer + Layout.STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_POINTER_OFFSET,
+    acceptedIndexCount == 0 ? 0 : acceptedIndexPointer,
+  );
+  store<u32>(resultPointer + Layout.STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_COUNT_OFFSET, acceptedIndexCount);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_SESSION_RESULT_FINAL_TARGET_INDEX_OFFSET, finalTargetIndex);
+  store<u32>(resultPointer + Layout.STEP_GLITCH_SESSION_RESULT_FINAL_SOURCE_COUNT_OFFSET, finalSourceCount);
+  return resultPointer;
+}
+
 function isProductionTargetRequired(contextPointer: u32, targetValuesPointer: u32): bool {
   const requiredPointer = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_POINTER_OFFSET);
   const requiredValueCount = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET);
@@ -1057,6 +1099,226 @@ export function scanStepGlitch(inputPointer: u32, inputByteLength: u32): u32 {
     load<u32>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_FLAG_OFFSET),
     load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET),
     load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET),
+  );
+}
+
+/**
+ * Owns one-click Step-glitch target traversal. Each layer reuses command 18's
+ * DFS/replay path through a short-lived context record; no JS callback or
+ * second numerical implementation crosses this boundary.
+ */
+export function composeStepGlitchOneClickSession(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.STEP_GLITCH_SESSION_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
+  const baseContextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_CONTEXT_POINTER_OFFSET);
+  requireStepGlitchContext(baseContextPointer);
+  if (load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_RESERVED_OFFSET) != 0) trap();
+
+  const targetRecordPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_TARGET_RECORD_POINTER_OFFSET);
+  const targetPointXPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_TARGET_POINT_X_POINTER_OFFSET);
+  const targetPointYPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_TARGET_POINT_Y_POINTER_OFFSET);
+  const targetGraphXPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_TARGET_GRAPH_X_POINTER_OFFSET);
+  const targetSourceIndexPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_TARGET_SOURCE_INDEX_POINTER_OFFSET);
+  const targetCount = load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_TARGET_COUNT_OFFSET);
+  if (targetCount == 0 || targetCount > u32.MAX_VALUE / sizeof<u32>()) trap();
+  validateStepGlitchTargetRecords(targetRecordPointer, targetCount);
+  requireElementRange(targetPointXPointer, targetCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(targetPointYPointer, targetCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(targetGraphXPointer, targetCount, sizeof<f64>(), sizeof<f64>());
+  requireElementRange(targetSourceIndexPointer, targetCount, sizeof<u32>(), sizeof<u32>());
+  const finalValidationPointer = validateProductionFinalValidation(
+    load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_FINAL_VALIDATION_POINTER_OFFSET),
+    load<u32>(inputPointer + Layout.STEP_GLITCH_SESSION_FINAL_VALIDATION_BYTE_LENGTH_OFFSET),
+  );
+
+  const baseValuesPointer = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET);
+  const baseRequiredPointer = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_POINTER_OFFSET);
+  const baseRequiredValueCount = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET);
+  const basePrefixEvidencePointer = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_POINTER_OFFSET);
+  const basePrefixEvidenceByteLength = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_BYTE_LENGTH_OFFSET);
+  if (baseRequiredValueCount % 3 != 0) trap();
+  validateStepGlitchTargetRecords(baseRequiredPointer, baseRequiredValueCount / 3);
+
+  // Values hold prefix target identity. Clone once so a session never mutates
+  // the Adapter-owned context record while advancing accepted layers.
+  const valuesPointer = reserveArena(Layout.STEP_GLITCH_CONTEXT_VALUE_COUNT * sizeof<f64>(), sizeof<f64>());
+  memory.copy(valuesPointer, baseValuesPointer, Layout.STEP_GLITCH_CONTEXT_VALUE_COUNT * sizeof<f64>());
+  const acceptedIndexPointer = reserveArena(targetCount * sizeof<u32>(), sizeof<u32>());
+  let acceptedIndexCount: u32 = 0;
+  let expandedStates: u32 = 0;
+  let currentSourceXPointer = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET);
+  let currentSourceYPointer = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_Y_POINTER_OFFSET);
+  let currentSourceCount = load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET);
+  let currentRequiredPointer = baseRequiredPointer;
+  let currentRequiredValueCount = baseRequiredValueCount;
+  let hasAcceptedLayer = false;
+  let previousGraphX = 0.0;
+  let finalTargetIndex = u32.MAX_VALUE;
+  let finalSourceCount = currentSourceCount;
+  let finalEvidencePointer: u32 = 0;
+  let finalEvidenceByteLength: u32 = 0;
+  let finalReachedTargetCount: u32 = baseRequiredValueCount / 3;
+  let finalAcceptedX = 0.0;
+  let finalAcceptedY = 0.0;
+  let finalBlockedFlag: u32 = 0;
+  let finalBlockedX = 0.0;
+  let finalBlockedY = 0.0;
+  const isMirrored =
+    (load<u32>(baseContextPointer + Layout.STEP_GLITCH_CONTEXT_FLAGS_OFFSET) & Layout.STEP_GLITCH_CONTEXT_FLAG_MIRRORED) != 0;
+
+  let targetIndex: u32 = 0;
+  let acceptedGraphX = 0.0;
+  while (targetIndex < targetCount) {
+    const recordPointer = targetRecordPointer + targetIndex * 3 * sizeof<f64>();
+    const graphX = load<f64>(targetGraphXPointer + targetIndex * sizeof<f64>());
+    const pointX = load<f64>(targetPointXPointer + targetIndex * sizeof<f64>());
+    const pointY = load<f64>(targetPointYPointer + targetIndex * sizeof<f64>());
+    const sourceIndex = load<u32>(targetSourceIndexPointer + targetIndex * sizeof<u32>());
+    if (!isFiniteValue(graphX) || !isFiniteValue(pointX) || !isFiniteValue(pointY)) trap();
+    // Source indexes identify the original assignment. Keep uniqueness in the
+    // WASM boundary even when a caller bypasses the TypeScript packer.
+    let priorIndex: u32 = 0;
+    while (priorIndex < targetIndex) {
+      if (load<u32>(targetSourceIndexPointer + priorIndex * sizeof<u32>()) == sourceIndex) trap();
+      priorIndex += 1;
+    }
+    const hasEqualAcceptedGraphX = hasAcceptedLayer && graphX == acceptedGraphX;
+    if (targetIndex > 0) {
+      if ((!isMirrored && graphX < previousGraphX) || (isMirrored && graphX > previousGraphX)) trap();
+    }
+
+    // Graphwar x+ cannot advance between equal-x layers after an accepted
+    // target. Keep duplicate candidates in the stable input sequence but do
+    // not fabricate a second route node.
+    if (hasEqualAcceptedGraphX) {
+      targetIndex += 1;
+      continue;
+    }
+    previousGraphX = graphX;
+
+    const layerContextPointer = reserveArena(Layout.STEP_GLITCH_CONTEXT_BYTE_LENGTH, sizeof<f64>());
+    memory.copy(layerContextPointer, baseContextPointer, Layout.STEP_GLITCH_CONTEXT_BYTE_LENGTH);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_VALUES_POINTER_OFFSET, valuesPointer);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_X_POINTER_OFFSET, currentSourceXPointer);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_Y_POINTER_OFFSET, currentSourceYPointer);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_SOURCE_COUNT_OFFSET, currentSourceCount);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_POINTER_OFFSET, currentRequiredPointer);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_REQUIRED_TARGET_LENGTH_OFFSET, currentRequiredValueCount);
+    const prefixEvidencePointer = acceptedIndexCount == 0 ? basePrefixEvidencePointer : 0;
+    const prefixEvidenceByteLength = acceptedIndexCount == 0 ? basePrefixEvidenceByteLength : 0;
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_POINTER_OFFSET, prefixEvidencePointer);
+    store<u32>(layerContextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_BYTE_LENGTH_OFFSET, prefixEvidenceByteLength);
+
+    const targetValuesPointer = reserveArena(Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUE_COUNT * sizeof<f64>(), sizeof<f64>());
+    store<f64>(targetValuesPointer, load<f64>(recordPointer));
+    store<f64>(targetValuesPointer + sizeof<f64>(), load<f64>(recordPointer + sizeof<f64>()));
+    store<f64>(targetValuesPointer + 2 * sizeof<f64>(), load<f64>(recordPointer + 2 * sizeof<f64>()));
+    store<f64>(targetValuesPointer + 3 * sizeof<f64>(), pointX);
+    store<f64>(targetValuesPointer + 4 * sizeof<f64>(), pointY);
+    const scanInputPointer = reserveArena(Layout.STEP_GLITCH_SCAN_INPUT_BYTE_LENGTH, sizeof<u32>());
+    memory.fill(scanInputPointer, 0, Layout.STEP_GLITCH_SCAN_INPUT_BYTE_LENGTH);
+    store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_CONTEXT_POINTER_OFFSET, layerContextPointer);
+    store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_TARGET_VALUES_POINTER_OFFSET, targetValuesPointer);
+    store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_TARGET_VALUES_LENGTH_OFFSET, Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUE_COUNT);
+    // Final validation belongs to final input target. A same-x duplicate that
+    // is skipped keeps the explicit command-19 final replay in the Adapter.
+    if (targetIndex + 1 == targetCount) {
+      store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_FINAL_VALIDATION_POINTER_OFFSET, finalValidationPointer);
+      store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_FINAL_VALIDATION_BYTE_LENGTH_OFFSET, finalValidationPointer == 0 ? 0 : Layout.STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH);
+    }
+    const scanResultPointer = scanStepGlitch(scanInputPointer, Layout.STEP_GLITCH_SCAN_INPUT_BYTE_LENGTH);
+    const status = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_STATUS_OFFSET);
+    const scanExpanded = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EXPANDED_STATES_OFFSET);
+    if (expandedStates > u32.MAX_VALUE - scanExpanded) trap();
+    expandedStates += scanExpanded;
+    if (status == Layout.STEP_GLITCH_PRODUCTION_STATUS_INVALID_INPUT || status == Layout.STEP_GLITCH_PRODUCTION_STATUS_UNSUPPORTED) {
+      // A typed command failure cannot carry a partially accepted route. The
+      // caller must restart from its cold path instead of splicing prefixes.
+      return createOneClickSessionResult(status, 0, 0, expandedStates, 0, 0, 0, 0, 0, 0, 0, 0, 0, u32.MAX_VALUE, finalSourceCount);
+    }
+    if (status == Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT) {
+      const evidencePointer = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EVIDENCE_POINTER_OFFSET);
+      const evidenceByteLength = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EVIDENCE_BYTE_LENGTH_OFFSET);
+      if (evidencePointer == 0 || evidenceByteLength == 0) trap();
+      const pathCount = load<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_PATH_COUNT_OFFSET);
+      const pathXPointer = load<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_PATH_X_POINTER_OFFSET);
+      const pathYPointer = load<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_PATH_Y_POINTER_OFFSET);
+      if (pathCount < 2 || pathCount < currentSourceCount) trap();
+      requireElementRange(pathXPointer, pathCount, sizeof<f64>(), sizeof<f64>());
+      requireElementRange(pathYPointer, pathCount, sizeof<f64>(), sizeof<f64>());
+      const nextSourceXPointer = reserveArena(pathCount * sizeof<f64>(), sizeof<f64>());
+      const nextSourceYPointer = reserveArena(pathCount * sizeof<f64>(), sizeof<f64>());
+      memory.copy(nextSourceXPointer, pathXPointer, pathCount * sizeof<f64>());
+      memory.copy(nextSourceYPointer, pathYPointer, pathCount * sizeof<f64>());
+      const previousRequiredCount = currentRequiredValueCount / 3;
+      const nextRequiredCount = previousRequiredCount + 1;
+      const nextRequiredPointer = reserveArena(nextRequiredCount * 3 * sizeof<f64>(), sizeof<f64>());
+      if (previousRequiredCount != 0) memory.copy(nextRequiredPointer, currentRequiredPointer, currentRequiredValueCount * sizeof<f64>());
+      memory.copy(nextRequiredPointer + currentRequiredValueCount * sizeof<f64>(), recordPointer, 3 * sizeof<f64>());
+      currentSourceXPointer = nextSourceXPointer;
+      currentSourceYPointer = nextSourceYPointer;
+      currentSourceCount = pathCount;
+      currentRequiredPointer = nextRequiredPointer;
+      currentRequiredValueCount = nextRequiredCount * 3;
+      store<u32>(acceptedIndexPointer + acceptedIndexCount * sizeof<u32>(), targetIndex);
+      acceptedIndexCount += 1;
+      hasAcceptedLayer = true;
+      finalTargetIndex = targetIndex;
+      finalSourceCount = pathCount;
+      acceptedGraphX = graphX;
+      finalEvidencePointer = evidencePointer;
+      finalEvidenceByteLength = evidenceByteLength;
+      finalReachedTargetCount = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_REACHED_TARGET_COUNT_OFFSET);
+      finalAcceptedX = load<f64>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_ACCEPTED_X_OFFSET);
+      finalAcceptedY = load<f64>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_ACCEPTED_Y_OFFSET);
+      finalBlockedFlag = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_BLOCKED_FLAG_OFFSET);
+      finalBlockedX = load<f64>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_BLOCKED_X_OFFSET);
+      finalBlockedY = load<f64>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_BLOCKED_Y_OFFSET);
+      store<f64>(valuesPointer + Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_X_INDEX * sizeof<f64>(), load<f64>(recordPointer));
+      store<f64>(valuesPointer + Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_Y_INDEX * sizeof<f64>(), load<f64>(recordPointer + sizeof<f64>()));
+      store<f64>(valuesPointer + Layout.STEP_GLITCH_VALUE_PREFIX_TARGET_RADIUS_INDEX * sizeof<f64>(), load<f64>(recordPointer + 2 * sizeof<f64>()));
+      store<f64>(valuesPointer + Layout.STEP_GLITCH_VALUE_HAS_PREFIX_TARGET_INDEX * sizeof<f64>(), 1);
+    } else if (status != Layout.STEP_GLITCH_PRODUCTION_STATUS_MISS) {
+      trap();
+    }
+    targetIndex += 1;
+  }
+
+  if (finalEvidencePointer == 0) {
+    return createOneClickSessionResult(
+      Layout.STEP_GLITCH_PRODUCTION_STATUS_MISS,
+      0,
+      0,
+      expandedStates,
+      finalReachedTargetCount,
+      0,
+      0,
+      0,
+      finalBlockedFlag,
+      finalBlockedX,
+      finalBlockedY,
+      acceptedIndexPointer,
+      acceptedIndexCount,
+      finalTargetIndex,
+      finalSourceCount,
+    );
+  }
+  return createOneClickSessionResult(
+    Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT,
+    finalEvidencePointer,
+    finalEvidenceByteLength,
+    expandedStates,
+    finalReachedTargetCount,
+    1,
+    finalAcceptedX,
+    finalAcceptedY,
+    finalBlockedFlag,
+    finalBlockedX,
+    finalBlockedY,
+    acceptedIndexPointer,
+    acceptedIndexCount,
+    finalTargetIndex,
+    finalSourceCount,
   );
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { GraphwarTrajectorySamplingState } from "../../formula/simulation/simulator";
 import type { GraphwarStepGlitchFormulaPrefix } from "../../formula/trajectory/sampling";
@@ -343,6 +344,58 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
           targetSequence: [],
           type: "replay",
         },
+        8,
+      ),
+    ).toEqual({ status: "invalid-input" });
+  });
+
+  it("packs one-click session target provenance and rejects duplicate source indexes", () => {
+    const fixture = createFixture();
+    const arena = new TestGraphwarWasmArena();
+    const firstPoint = graphToImagePoint(createGraphPoint(-7, 0), bounds, boundsRect);
+    const secondPoint = graphToImagePoint(createGraphPoint(-5.5, 1), bounds, boundsRect);
+    const targets = [
+      {
+        hitTarget: { center: firstPoint, radius: 12 },
+        routePoint: firstPoint,
+        sortGraphX: imageToGraphPoint(firstPoint, bounds, boundsRect).x,
+        sourceIndex: 4,
+      },
+      {
+        hitTarget: { center: secondPoint, radius: 12 },
+        routePoint: secondPoint,
+        sortGraphX: imageToGraphPoint(secondPoint, bounds, boundsRect).x,
+        sourceIndex: 9,
+      },
+    ];
+    const session = {
+      finalValidation: { type: "none" as const },
+      targets,
+      type: "session" as const,
+    };
+    const packed = packGraphwarWasmStepGlitchCommandInput(arena, fixture.context, session, 8);
+    expect(packed.status).toBe("ready");
+    if (packed.status === "ready" && packed.input.type === "session") {
+      expect([...copyGraphwarWasmFloat64Values(arena, packed.input.targetGraphX, 8)]).toEqual([
+        targets[0].sortGraphX,
+        targets[1].sortGraphX,
+      ]);
+      expect([...copyGraphwarWasmFloat64Values(arena, packed.input.targetRecords, 8)]).toEqual([
+        firstPoint.x,
+        firstPoint.y,
+        12,
+        secondPoint.x,
+        secondPoint.y,
+        12,
+      ]);
+      expect([...new Uint32Array(arena.buffer, packed.input.targetSourceIndexes.pointer, 2)]).toEqual([4, 9]);
+      expect(packed.input.finalValidation).toEqual({ type: "none" });
+    }
+    expect(
+      packGraphwarWasmStepGlitchCommandInput(
+        arena,
+        fixture.context,
+        { ...session, targets: [targets[0], { ...targets[1], sourceIndex: targets[0].sourceIndex }] },
         8,
       ),
     ).toEqual({ status: "invalid-input" });

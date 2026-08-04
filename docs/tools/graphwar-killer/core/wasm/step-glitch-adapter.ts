@@ -75,6 +75,7 @@ const STEP_GLITCH_COMMAND_TRACE_REAL_DFS_FOR_TEST = 17;
 const STEP_GLITCH_COMMAND_SCAN = 18;
 const STEP_GLITCH_COMMAND_REPLAY = 19;
 const STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH = 20;
+const STEP_GLITCH_COMMAND_COMPOSE_ONE_CLICK_SESSION = 25;
 const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
 const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
@@ -110,6 +111,13 @@ const STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH = 24;
 const STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH = 64;
 const STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH = 64;
 const STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION = 1;
+const STEP_GLITCH_SESSION_INPUT_BYTE_LENGTH = 40;
+const STEP_GLITCH_SESSION_RESULT_BYTE_LENGTH = 96;
+const STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_POINTER_OFFSET = 72;
+const STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_COUNT_OFFSET = 76;
+const STEP_GLITCH_SESSION_RESULT_FINAL_TARGET_INDEX_OFFSET = 80;
+const STEP_GLITCH_SESSION_RESULT_FINAL_SOURCE_COUNT_OFFSET = 84;
+const STEP_GLITCH_SESSION_RESULT_RESERVED_OFFSET = 88;
 const STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH = 32;
 const STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH = 72;
 const STEP_GLITCH_PRODUCTION_RESULT_MAGIC = 0x5347_5052;
@@ -223,6 +231,14 @@ export type GraphwarWasmStepGlitchWindows =
   | { type: "automatic" }
   | { segments: readonly (GraphwarStepGlitchXWindow | undefined)[]; type: "explicit" };
 
+/** Stable one-click target identity packed once for the WASM-owned target loop. */
+export interface GraphwarWasmStepGlitchSessionTarget {
+  readonly hitTarget: GraphwarTrajectoryTargetCircle;
+  readonly routePoint: PixelPoint;
+  readonly sortGraphX: number;
+  readonly sourceIndex: number;
+}
+
 /** 同一 retained context 支持 scan、replay 与 smart composition。 */
 export type GraphwarWasmStepGlitchCommandInput =
   | {
@@ -248,6 +264,11 @@ export type GraphwarWasmStepGlitchCommandInput =
       targetSequence: readonly GraphwarTrajectoryTargetCircle[];
       windows: GraphwarWasmStepGlitchWindows;
       type: "compose";
+    }
+  | {
+      finalValidation: GraphwarWasmStepGlitchFinalValidationInput;
+      targets: readonly GraphwarWasmStepGlitchSessionTarget[];
+      type: "session";
     };
 
 /** Formula settings 的 raw 数值记录和可选 mask 是一个原子范围集合。 */
@@ -318,6 +339,14 @@ export interface GraphwarWasmPackedStepGlitchContextInput {
   values: GraphwarWasmMemorySlice;
 }
 
+export interface GraphwarWasmPackedStepGlitchSessionInput {
+  finalValidation: GraphwarWasmPackedStepGlitchFinalValidation;
+  targetGraphX: GraphwarWasmMemorySlice;
+  targetPoints: GraphwarWasmPackedPointSoA;
+  targetRecords: GraphwarWasmMemorySlice;
+  targetSourceIndexes: GraphwarWasmMemorySlice;
+}
+
 export type GraphwarWasmPackedStepGlitchFinalValidation =
   | { type: "none" }
   | {
@@ -350,6 +379,14 @@ export type GraphwarWasmPackedStepGlitchCommandInput =
       targetSequenceRecords: GraphwarWasmMemorySlice;
       windows: { count: number; mode: number; pointer: number };
       type: "compose";
+    }
+  | {
+      finalValidation: GraphwarWasmPackedStepGlitchFinalValidation;
+      targetGraphX: GraphwarWasmMemorySlice;
+      targetPoints: GraphwarWasmPackedPointSoA;
+      targetRecords: GraphwarWasmMemorySlice;
+      targetSourceIndexes: GraphwarWasmMemorySlice;
+      type: "session";
     };
 
 /** Descriptor preflight can produce only normal scanner outcomes or a fully packed context. */
@@ -384,6 +421,9 @@ export interface GraphwarWasmStepGlitchGeometryTestContext {
   composeRaw: (
     input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "compose" }>,
   ) => GraphwarWasmStepGlitchRawResultBase;
+  sessionRaw: (
+    input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "session" }>,
+  ) => GraphwarWasmStepGlitchSessionRawResult;
   scanRaw: (
     input: Extract<GraphwarWasmStepGlitchCommandInput, { type: "scan" }>,
   ) => GraphwarWasmStepGlitchRawScanOutput;
@@ -767,6 +807,11 @@ export interface GraphwarWasmStepGlitchRawResultBase {
 
 export type GraphwarWasmStepGlitchRawScanOutput = GraphwarWasmStepGlitchRawResultBase;
 export type GraphwarWasmStepGlitchRawReplayOutput = GraphwarWasmStepGlitchRawResultBase;
+
+export interface GraphwarWasmStepGlitchSessionRawResult extends GraphwarWasmStepGlitchRawResultBase {
+  readonly acceptedTargetIndexes: readonly number[];
+  readonly finalTargetIndex: number;
+}
 
 /**
  * Smart Step-glitch composition keeps candidate deletion and replay evidence in one retained scanner boundary. The
@@ -1214,7 +1259,9 @@ function decodeGraphwarWasmStepGlitchProductionRawResult(
   const orderedTargetCount =
     command.type === "scan"
       ? orderedTargetSequence(context.requiredTargets, command.hitTarget).length
-      : command.targetSequence.length;
+      : "targetSequence" in command
+        ? command.targetSequence.length
+        : 0;
   if (reachedTargetCount > context.requiredTargets.length + orderedTargetCount) {
     productionEvidenceFault("Step-glitch result target count exceeds its command identity");
   }
@@ -2472,7 +2519,9 @@ function decodeOwnedProductionTrajectory(
   const orderedTargets =
     command.type === "replay" || command.type === "compose"
       ? command.targetSequence
-      : orderedTargetSequence(context.requiredTargets, command.hitTarget);
+      : command.type === "scan"
+        ? orderedTargetSequence(context.requiredTargets, command.hitTarget)
+        : [];
   if (
     header.getUint32(144, true) > orderedTargets.length ||
     header.getUint32(148, true) > context.requiredTargets.length
@@ -2535,7 +2584,9 @@ function validateOwnedProductionTargetIdentity(
   const orderedTargets =
     command.type === "replay" || command.type === "compose"
       ? command.targetSequence
-      : orderedTargetSequence(context.requiredTargets, command.hitTarget);
+      : command.type === "scan"
+        ? orderedTargetSequence(context.requiredTargets, command.hitTarget)
+        : [];
   let reachedRequiredTargetCount = 0;
   const requiredHit = requiredTargets.map(() => false);
   let requiredTargetsHitIndex = -1;
@@ -2791,7 +2842,7 @@ function runGraphwarWasmStepGlitchProductionRaw(
   contextPointer: number,
   context: GraphwarWasmStepGlitchContextInput,
   command: GraphwarWasmStepGlitchCommandInput,
-): GraphwarWasmStepGlitchRawResultBase {
+): GraphwarWasmStepGlitchRawResultBase | GraphwarWasmStepGlitchSessionRawResult {
   const commandMark = runtime.markArena();
   try {
     const packed = packGraphwarWasmStepGlitchCommandInput(runtime, context, command, runtime.arenaBase);
@@ -2804,7 +2855,9 @@ function runGraphwarWasmStepGlitchProductionRaw(
         ? STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH
         : packed.input.type === "replay"
           ? STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH
-          : STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH,
+          : packed.input.type === "compose"
+            ? STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH
+            : STEP_GLITCH_SESSION_INPUT_BYTE_LENGTH,
       8,
     );
     const inputView = new DataView(
@@ -2814,12 +2867,38 @@ function runGraphwarWasmStepGlitchProductionRaw(
         ? STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH
         : packed.input.type === "replay"
           ? STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH
-          : STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH,
+          : packed.input.type === "compose"
+            ? STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH
+            : STEP_GLITCH_SESSION_INPUT_BYTE_LENGTH,
     );
     inputView.setUint32(0, contextPointer, true);
     let commandId: number;
     let inputByteLength: number;
-    if (command.type === "scan") {
+    if (command.type === "session") {
+      if (packed.input.type !== "session") {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Step-glitch command pack changed the session input variant",
+          "output",
+        );
+      }
+      const finalValidation = packGraphwarWasmStepGlitchFinalValidationDescriptor(
+        runtime,
+        packed.input.finalValidation,
+      );
+      inputView.setUint32(0, contextPointer, true);
+      inputView.setUint32(4, packed.input.targetRecords.pointer, true);
+      inputView.setUint32(8, packed.input.targetPoints.x.pointer, true);
+      inputView.setUint32(12, packed.input.targetPoints.y.pointer, true);
+      inputView.setUint32(16, packed.input.targetGraphX.pointer, true);
+      inputView.setUint32(20, packed.input.targetSourceIndexes.pointer, true);
+      inputView.setUint32(24, packed.input.targetPoints.length, true);
+      inputView.setUint32(28, finalValidation.pointer, true);
+      inputView.setUint32(32, finalValidation.length, true);
+      inputView.setUint32(36, 0, true);
+      commandId = STEP_GLITCH_COMMAND_COMPOSE_ONE_CLICK_SESSION;
+      inputByteLength = STEP_GLITCH_SESSION_INPUT_BYTE_LENGTH;
+    } else if (command.type === "scan") {
       if (packed.input.type !== "scan") {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
@@ -2897,19 +2976,192 @@ function runGraphwarWasmStepGlitchProductionRaw(
     }
     const outputMinimumPointer = runtime.arenaCursor;
     const resultPointer = runtime.runRouteTask(commandId, inputPointer, inputByteLength);
-    const result = decodeGraphwarWasmStepGlitchProductionRawResult(
-      runtime,
-      context,
-      command,
-      resultPointer,
-      outputMinimumPointer,
-    );
+    const result =
+      command.type === "session"
+        ? decodeGraphwarWasmStepGlitchSessionRawResult(runtime, context, command, resultPointer, outputMinimumPointer)
+        : decodeGraphwarWasmStepGlitchProductionRawResult(
+            runtime,
+            context,
+            command,
+            resultPointer,
+            outputMinimumPointer,
+          );
     runtime.resetArena(commandMark);
     return result;
   } catch (error) {
     runtime.resetArenaAfterFault(commandMark);
     throw error;
   }
+}
+
+/** Decodes session provenance, then reuses the ordinary production evidence decoder once. */
+function decodeGraphwarWasmStepGlitchSessionRawResult(
+  runtime: GraphwarWasmKernelRuntime,
+  context: GraphwarWasmStepGlitchContextInput,
+  command: Extract<GraphwarWasmStepGlitchCommandInput, { type: "session" }>,
+  resultPointer: number,
+  outputMinimumPointer: number,
+): GraphwarWasmStepGlitchSessionRawResult {
+  const resultRange = validateGraphwarWasmMemoryRange(
+    runtime,
+    { length: 1, pointer: resultPointer },
+    { alignment: 8, elementByteLength: STEP_GLITCH_SESSION_RESULT_BYTE_LENGTH, minimumPointer: outputMinimumPointer },
+  );
+  const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+  if (
+    resultView.getUint32(0, true) !== STEP_GLITCH_PRODUCTION_RESULT_MAGIC ||
+    resultView.getUint32(STEP_GLITCH_SESSION_RESULT_RESERVED_OFFSET, true) !== 0
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch session result header is invalid",
+      "output",
+    );
+  }
+  const status = resultView.getUint32(4, true);
+  if (![1, 2, 3, 4].includes(status)) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "Step-glitch session status is invalid", "output");
+  }
+  const acceptedIndexCount = validateGraphwarWasmU32(
+    resultView.getUint32(STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_COUNT_OFFSET, true),
+    "stepGlitch.session.acceptedIndexCount",
+  );
+  const acceptedIndexPointer = resultView.getUint32(STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_POINTER_OFFSET, true);
+  const acceptedIndexes = acceptedIndexCount
+    ? [
+        ...copyGraphwarWasmUint32Values(
+          runtime,
+          { pointer: acceptedIndexPointer, length: acceptedIndexCount },
+          outputMinimumPointer,
+        ),
+      ]
+    : [];
+  if (acceptedIndexCount === 0 && acceptedIndexPointer !== 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch session has an empty index range",
+      "output",
+    );
+  }
+  let previousIndex = -1;
+  for (const index of acceptedIndexes) {
+    if (index >= command.targets.length || index <= previousIndex) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Step-glitch session target indexes are not stable",
+        "output",
+      );
+    }
+    previousIndex = index;
+  }
+  const finalTargetIndex = resultView.getUint32(STEP_GLITCH_SESSION_RESULT_FINAL_TARGET_INDEX_OFFSET, true);
+  const finalSourceCount = validateGraphwarWasmU32(
+    resultView.getUint32(STEP_GLITCH_SESSION_RESULT_FINAL_SOURCE_COUNT_OFFSET, true),
+    "stepGlitch.session.finalSourceCount",
+  );
+  if (
+    (acceptedIndexes.length === 0 && finalTargetIndex !== 0xffff_ffff) ||
+    (acceptedIndexes.length > 0 && finalTargetIndex !== acceptedIndexes.at(-1)) ||
+    (status === 1) !== acceptedIndexes.length > 0
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch session final target identity is invalid",
+      "output",
+    );
+  }
+  const evidencePointer = resultView.getUint32(8, true);
+  const evidenceByteLength = resultView.getUint32(12, true);
+  if (status === 1) {
+    if (!evidencePointer || !evidenceByteLength || finalSourceCount < 2) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step-glitch session hit has incomplete evidence",
+        "output",
+      );
+    }
+    const evidenceHeaderRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: evidencePointer },
+      {
+        alignment: 8,
+        elementByteLength: STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH,
+        minimumPointer: outputMinimumPointer,
+      },
+    );
+    const evidenceHeader = new DataView(
+      evidenceHeaderRange.buffer,
+      evidenceHeaderRange.byteOffset,
+      evidenceHeaderRange.byteLength,
+    );
+    const pathCount = evidenceHeader.getUint32(20, true);
+    if (finalSourceCount > pathCount) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "Step-glitch session source prefix exceeds evidence path",
+        "output",
+      );
+    }
+    const pathXs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { pointer: evidenceHeader.getUint32(12, true), length: pathCount },
+      outputMinimumPointer,
+    );
+    const pathYs = copyGraphwarWasmFloat64Values(
+      runtime,
+      { pointer: evidenceHeader.getUint32(16, true), length: pathCount },
+      outputMinimumPointer,
+    );
+    const finalTarget = command.targets[finalTargetIndex];
+    if (!finalTarget) {
+      throw new GraphwarWasmAdapterError("invalid-session-identity", "Step-glitch session lost final target", "output");
+    }
+    const requiredTargets = [
+      ...context.requiredTargets,
+      ...acceptedIndexes
+        .slice(0, -1)
+        .map((index) => command.targets[index]?.hitTarget)
+        .filter((target): target is GraphwarTrajectoryTargetCircle => target !== undefined),
+    ];
+    const decodeContext: GraphwarWasmStepGlitchContextInput = {
+      ...context,
+      requiredTargets,
+      sourcePath: Array.from({ length: finalSourceCount }, (_value, index) =>
+        createPixelPoint(pathXs[index] ?? Number.NaN, pathYs[index] ?? Number.NaN),
+      ),
+    };
+    const decodeCommand: Extract<GraphwarWasmStepGlitchCommandInput, { type: "scan" }> = {
+      finalValidation: finalTargetIndex === command.targets.length - 1 ? command.finalValidation : { type: "none" },
+      hitTarget: finalTarget.hitTarget,
+      targetPoint: finalTarget.routePoint,
+      type: "scan",
+    };
+    const decoded = decodeGraphwarWasmStepGlitchProductionRawResult(
+      runtime,
+      decodeContext,
+      decodeCommand,
+      resultPointer,
+      outputMinimumPointer,
+    );
+    return { ...decoded, acceptedTargetIndexes: acceptedIndexes, finalTargetIndex };
+  }
+  if (evidencePointer !== 0 || evidenceByteLength !== 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch session failure retained evidence",
+      "output",
+    );
+  }
+  return {
+    acceptedTargetIndexes: acceptedIndexes,
+    finalTargetIndex,
+    expandedStates: validateGraphwarWasmU32(resultView.getUint32(16, true), "stepGlitch.session.expandedStates"),
+    reachedTargetCount: validateGraphwarWasmU32(
+      resultView.getUint32(20, true),
+      "stepGlitch.session.reachedTargetCount",
+    ),
+    status: status === 2 ? "no-path" : status === 3 ? "invalid-input" : "unsupported",
+  };
 }
 
 /** Creates the retained 8B1 mask-index context below one Adapter-owned arena mark. */
@@ -3093,6 +3345,15 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
         composeRaw(composeInput) {
           assertActive();
           return runGraphwarWasmStepGlitchProductionRaw(runtime, contextPointer, contextSnapshot, composeInput);
+        },
+        sessionRaw(sessionInput) {
+          assertActive();
+          return runGraphwarWasmStepGlitchProductionRaw(
+            runtime,
+            contextPointer,
+            contextSnapshot,
+            sessionInput,
+          ) as GraphwarWasmStepGlitchSessionRawResult;
         },
         scanRaw(scanInput) {
           assertActive();
@@ -5050,6 +5311,69 @@ export function packGraphwarWasmStepGlitchCommandInput(
   );
   if (!packedFinalValidation) {
     return { status: "invalid-input" };
+  }
+  if (command.type === "session") {
+    if (command.targets.length === 0 || command.targets.length > 0xffff_ffff) {
+      return { status: "invalid-input" };
+    }
+    const isMirrored = context.bounds.minX > context.bounds.maxX;
+    let previousGraphX: number | undefined;
+    const sourceIndexes: number[] = [];
+    const sourceIndexSet = new Set<number>();
+    for (const [index, target] of command.targets.entries()) {
+      if (
+        !targetIsValid(target.hitTarget) ||
+        !isGraphwarTrajectoryPoint(target.routePoint) ||
+        !Number.isFinite(target.sortGraphX) ||
+        !Number.isInteger(target.sourceIndex) ||
+        target.sourceIndex < 0 ||
+        target.sourceIndex > 0xffff_ffff
+      ) {
+        return { status: "invalid-input" };
+      }
+      const expectedGraphX = imageToGraphPoint(target.routePoint, context.bounds, context.boundsRect).x;
+      if (!Object.is(expectedGraphX, target.sortGraphX)) {
+        return { status: "invalid-input" };
+      }
+      if (
+        previousGraphX !== undefined &&
+        ((!isMirrored && target.sortGraphX < previousGraphX) || (isMirrored && target.sortGraphX > previousGraphX))
+      ) {
+        return { status: "invalid-input" };
+      }
+      if (sourceIndexSet.has(target.sourceIndex)) {
+        return { status: "invalid-input" };
+      }
+      sourceIndexSet.add(target.sourceIndex);
+      sourceIndexes.push(target.sourceIndex);
+      previousGraphX = target.sortGraphX;
+      if (index > 0 && !Number.isFinite(previousGraphX)) {
+        return { status: "invalid-input" };
+      }
+    }
+    return {
+      input: {
+        finalValidation: packedFinalValidation,
+        targetGraphX: writeGraphwarWasmFloat64Values(
+          arena,
+          new Float64Array(command.targets.map((target) => target.sortGraphX)),
+          minimumPointer,
+        ),
+        targetPoints: packGraphwarWasmPointSoA(
+          arena,
+          command.targets.map((target) => target.routePoint),
+          minimumPointer,
+        ),
+        targetRecords: packTargets(
+          arena,
+          command.targets.map((target) => target.hitTarget),
+          minimumPointer,
+        ),
+        targetSourceIndexes: writeGraphwarWasmUint32Values(arena, new Uint32Array(sourceIndexes), minimumPointer),
+        type: "session",
+      },
+      status: "ready",
+    };
   }
   if (command.type === "compose") {
     if (

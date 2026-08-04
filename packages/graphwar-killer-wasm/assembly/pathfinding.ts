@@ -61,6 +61,7 @@ import {
   scanStepGlitch,
   replayStepGlitch,
   composeStepGlitchSmartPath,
+  composeStepGlitchOneClickSession,
 } from "./step-glitch";
 
 const ROUTE_POLICY_VALUE_COUNT: u32 = 12;
@@ -6455,6 +6456,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   }
   if (command == Layout.STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH) {
     return composeStepGlitchSmartPath(inputPointer, inputByteLength);
+  }
+  if (command == Layout.STEP_GLITCH_COMMAND_COMPOSE_ONE_CLICK_SESSION) {
+    return composeStepGlitchOneClickSession(inputPointer, inputByteLength);
   }
   trap();
   return 0;

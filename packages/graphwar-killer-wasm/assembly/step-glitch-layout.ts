@@ -11,6 +11,8 @@ export const STEP_GLITCH_COMMAND_SCAN: u32 = 18;
 export const STEP_GLITCH_COMMAND_REPLAY: u32 = 19;
 /** Production smart deletion keeps all candidate replays inside one retained context. */
 export const STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH: u32 = 20;
+/** One-click Step-glitch target loop; numerical work delegates to command 18/19 helpers. */
+export const STEP_GLITCH_COMMAND_COMPOSE_ONE_CLICK_SESSION: u32 = 25;
 
 export const STEP_GLITCH_CREATE_VALUES_POINTER_OFFSET: u32 = 0;
 export const STEP_GLITCH_CREATE_VALUES_LENGTH_OFFSET: u32 = 4;
@@ -422,6 +424,27 @@ export const STEP_GLITCH_PRODUCTION_COMPOSITION_WINDOW_MODE_OFFSET: u32 = 56;
 export const STEP_GLITCH_PRODUCTION_COMPOSITION_RESERVED_TAIL_OFFSET: u32 = 60;
 export const STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH: u32 = 64;
 export const STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION: u32 = 1;
+
+/** Stable multi-target session input. Target records carry hit-circle identity; route points carry anchor identity. */
+export const STEP_GLITCH_SESSION_CONTEXT_POINTER_OFFSET: u32 = 0;
+export const STEP_GLITCH_SESSION_TARGET_RECORD_POINTER_OFFSET: u32 = 4;
+export const STEP_GLITCH_SESSION_TARGET_POINT_X_POINTER_OFFSET: u32 = 8;
+export const STEP_GLITCH_SESSION_TARGET_POINT_Y_POINTER_OFFSET: u32 = 12;
+export const STEP_GLITCH_SESSION_TARGET_GRAPH_X_POINTER_OFFSET: u32 = 16;
+export const STEP_GLITCH_SESSION_TARGET_SOURCE_INDEX_POINTER_OFFSET: u32 = 20;
+export const STEP_GLITCH_SESSION_TARGET_COUNT_OFFSET: u32 = 24;
+export const STEP_GLITCH_SESSION_FINAL_VALIDATION_POINTER_OFFSET: u32 = 28;
+export const STEP_GLITCH_SESSION_FINAL_VALIDATION_BYTE_LENGTH_OFFSET: u32 = 32;
+export const STEP_GLITCH_SESSION_RESERVED_OFFSET: u32 = 36;
+export const STEP_GLITCH_SESSION_INPUT_BYTE_LENGTH: u32 = 40;
+
+/** Session output keeps the common production result prefix and adds accepted target provenance. */
+export const STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_POINTER_OFFSET: u32 = 72;
+export const STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_COUNT_OFFSET: u32 = 76;
+export const STEP_GLITCH_SESSION_RESULT_FINAL_TARGET_INDEX_OFFSET: u32 = 80;
+export const STEP_GLITCH_SESSION_RESULT_FINAL_SOURCE_COUNT_OFFSET: u32 = 84;
+export const STEP_GLITCH_SESSION_RESULT_RESERVED_OFFSET: u32 = 88;
+export const STEP_GLITCH_SESSION_RESULT_BYTE_LENGTH: u32 = 96;
 
 /** Final-validation input is a complete descriptor, not a detached cache id. */
 export const STEP_GLITCH_FINAL_VALIDATION_TARGET_CONTROL_X_POINTER_OFFSET: u32 = 0;

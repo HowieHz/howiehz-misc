@@ -30,9 +30,7 @@ import {
   validateGraphwarWasmStepGlitchSmartCompositionIdentity,
   createGraphwarWasmStepGlitchContext,
   createGraphwarWasmStepGlitchContextInput,
-  createGraphwarWasmStepGlitchScanCommandInput,
   createGraphwarWasmStepGlitchWindowsFromEvidence,
-  retainGraphwarWasmStepGlitchScanSession,
 } from "../../core/wasm/step-glitch-adapter";
 import type {
   GraphwarWasmStepGlitchGeometryTestContext,
@@ -969,98 +967,71 @@ async function buildOneClickClearStepGlitchPathWithWasm(
     pathPoints: [...options.pathPoints],
     targetSequence: [],
   };
-  let prefixEvidence = options.stepGlitchPrefixEvidence;
   let scanner: GraphwarWasmStepGlitchGeometryTestContext | undefined;
   let finalEvidence: GraphwarWasmStepGlitchOwnedEvidence | undefined;
   let workUnits = 0;
-  let acceptedLayerGraphX: number | undefined;
 
   try {
-    for (const target of targets) {
-      if (acceptedLayerGraphX === target.sortGraphX) {
-        continue;
-      }
-      if (options.isCancelled?.()) {
-        return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
-      }
-
-      const requiredTargets = createOneClickClearPreviousTargets(route.targetSequence);
-      if (!scanner) {
-        const created = createOneClickClearStepGlitchWasmScanner(
-          options,
-          formulaMode,
-          simulationMask,
-          route.pathPoints,
-          requiredTargets,
-          prefixEvidence,
-          route.targetSequence.length === 0 ? options.prefixTarget : undefined,
-        );
-        if (created.status !== "ready") {
-          return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
-        }
-        scanner = created.context;
-      }
-
-      const nextTargetSequence = [...route.targetSequence, target];
-      const isFinalTarget = target === targets.at(-1);
-      const scanStartedAt = nowMs();
-      const scan = scanner.scanRaw(
-        createGraphwarWasmStepGlitchScanCommandInput({
-          ...(isFinalTarget
-            ? {
-                finalValidation: {
-                  simulationMaskCacheId: options.simulationMaskCacheId,
-                  targetControlPoints: createOneClickClearTargetControlPoints(options, nextTargetSequence),
-                  trackedTargets: createOneClickClearTrackedTargets(options, {
-                    pathPoints: [...route.pathPoints, target.routePoint],
-                    targetSequence: nextTargetSequence,
-                  }).map((trackedTarget) => trackedTarget.hitCircle),
-                },
-              }
-            : {}),
-          hitTarget: target.hitCircle,
-          targetPoint: target.routePoint,
-        }),
-      );
-      options.onDebugTiming?.({
-        elapsedMs: Math.max(0, nowMs() - scanStartedAt),
-        stage: "scan-step-glitch",
-      });
-      workUnits += scan.expandedStates;
-
-      if (scan.status === "hit") {
-        const evidence = scan.evidence?.owned;
-        if (!evidence) {
-          throw new GraphwarWasmFault("abi", "One-Click Clear WASM scan returned no owned evidence");
-        }
-        const acceptedSession = retainGraphwarWasmStepGlitchScanSession({
-          evidence,
-          scanner,
-          sourcePath: route.pathPoints,
-          target: target.hitCircle,
-          targetSequence: nextTargetSequence.map((candidate) => candidate.hitCircle),
-        });
-        acceptedLayerGraphX = target.sortGraphX;
-        route = {
-          incumbentEvidence: createOneClickClearWasmIncumbentEvidence(acceptedSession.evidence, options.debugMetrics),
-          pathPoints: acceptedSession.path.map(clonePixelPoint),
-          targetSequence: nextTargetSequence,
-        };
-        publishOneClickClearValidatedRoute(context, route);
-        // Keep the latest accepted evidence even when a later candidate is
-        // skipped or unreachable; it still proves the retained route and can
-        // seed command 20 optimization for that incumbent.
-        finalEvidence = acceptedSession.evidence;
-        // The source path and required target set changed. Drop all old state, including any stale prefix evidence.
-        scanner.dispose();
-        scanner = undefined;
-        prefixEvidence = undefined;
-      } else if (scan.status === "invalid-input" || scan.status === "unsupported") {
-        return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
-      }
-
-      await yieldOneClickClearControl(options);
+    if (options.isCancelled?.()) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
     }
+
+    const created = createOneClickClearStepGlitchWasmScanner(
+      options,
+      formulaMode,
+      simulationMask,
+      route.pathPoints,
+      [],
+      options.stepGlitchPrefixEvidence,
+      options.prefixTarget,
+    );
+    if (created.status !== "ready") {
+      return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+    }
+    scanner = created.context;
+    const scanStartedAt = nowMs();
+    const session = scanner.sessionRaw({
+      finalValidation: { type: "none" },
+      targets: targets.map((target) => ({
+        hitTarget: target.hitCircle,
+        routePoint: target.routePoint,
+        sortGraphX: target.sortGraphX,
+        sourceIndex: target.sourceIndex,
+      })),
+      type: "session",
+    });
+    options.onDebugTiming?.({
+      elapsedMs: Math.max(0, nowMs() - scanStartedAt),
+      stage: "scan-step-glitch",
+    });
+    workUnits += session.expandedStates;
+    // Session command is synchronous; yield once before publishing its
+    // terminal route so cancellation keeps the same single-settlement rule as
+    // the former per-target loop.
+    await yieldOneClickClearControl(options);
+    if (options.isCancelled?.()) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+    }
+    if (session.status === "invalid-input" || session.status === "unsupported") {
+      return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+    }
+    if (session.status !== "hit" || !session.evidence || session.acceptedTargetIndexes.length === 0) {
+      return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
+    }
+    const acceptedTargets = session.acceptedTargetIndexes.map((index) => {
+      const target = targets[index];
+      if (!target) {
+        throw new GraphwarWasmFault("abi", "One-Click Clear WASM session returned an unknown target index");
+      }
+      return target;
+    });
+    finalEvidence = session.evidence.owned;
+    route = {
+      incumbentEvidence: createOneClickClearWasmIncumbentEvidence(finalEvidence, options.debugMetrics),
+      pathPoints: finalEvidence.path.map(clonePixelPoint),
+      targetSequence: acceptedTargets,
+    };
+    publishOneClickClearValidatedRoute(context, route);
 
     if (route.targetSequence.length === 0) {
       return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
@@ -1082,7 +1053,7 @@ async function buildOneClickClearStepGlitchPathWithWasm(
       finalEvidence = optimized.evidence;
     }
 
-    if (!finalEvidence) {
+    if (!finalEvidence || finalEvidence.finalValidation.type === "none") {
       const replay = measureOneClickClearDebugTiming(options, "validate-final", () =>
         runOneClickClearStepGlitchWasmReplay(options, formulaMode, simulationMask, optimizedRoute),
       );

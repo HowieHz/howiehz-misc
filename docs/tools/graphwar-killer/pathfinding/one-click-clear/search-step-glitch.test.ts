@@ -47,6 +47,7 @@ const wasmMockState = vi.hoisted(() => ({
     dispose: ReturnType<typeof vi.fn>;
     composeRaw: ReturnType<typeof vi.fn>;
     replayRaw: ReturnType<typeof vi.fn>;
+    sessionRaw: ReturnType<typeof vi.fn>;
     scanRaw: ReturnType<typeof vi.fn>;
   }[],
   gatePoint: undefined as PixelPoint | undefined,
@@ -277,7 +278,12 @@ vi.mock("../../core/wasm/step-glitch-adapter", async (importOriginal) => {
                 return outcome === "hit"
                   ? {
                       expandedStates: 1,
-                      evidence: createMockWasmEvidence(composedPath, targetSequence.at(-1), requiredTargets),
+                      evidence: createMockWasmEvidence(
+                        composedPath,
+                        targetSequence.at(-1),
+                        requiredTargets,
+                        "validated",
+                      ),
                       status: "hit",
                     }
                   : { expandedStates: 1, status: outcome };
@@ -297,6 +303,44 @@ vi.mock("../../core/wasm/step-glitch-adapter", async (importOriginal) => {
                 }
               : { expandedStates: 1, status: outcome };
           }),
+          sessionRaw: vi
+            .fn()
+            .mockImplementation(
+              ({
+                targets,
+              }: {
+                targets: readonly { hitTarget: { center: PixelPoint; radius: number }; routePoint: PixelPoint }[];
+              }) => {
+                let path = [...input.sourcePath];
+                let required = [...requiredTargets];
+                const acceptedTargetIndexes: number[] = [];
+                let evidence: ReturnType<typeof createMockWasmEvidence> | undefined;
+                for (const [index, target] of targets.entries()) {
+                  const outcome = wasmMockState.outcomes.shift() ?? "no-path";
+                  if (outcome !== "hit") {
+                    continue;
+                  }
+                  path = [...path, ...(wasmMockState.gatePoint ? [wasmMockState.gatePoint] : []), target.routePoint];
+                  acceptedTargetIndexes.push(index);
+                  evidence = createMockWasmEvidence(path, target.hitTarget, required);
+                  required = [...required, target.hitTarget];
+                }
+                return evidence
+                  ? {
+                      acceptedTargetIndexes,
+                      expandedStates: targets.length,
+                      finalTargetIndex: acceptedTargetIndexes.at(-1) ?? 0xffff_ffff,
+                      evidence,
+                      status: "hit",
+                    }
+                  : {
+                      acceptedTargetIndexes,
+                      expandedStates: targets.length,
+                      finalTargetIndex: 0xffff_ffff,
+                      status: "no-path",
+                    };
+              },
+            ),
           scanRaw: vi
             .fn()
             .mockImplementation(
@@ -1047,6 +1091,7 @@ function createMockWasmEvidence(
   path: readonly PixelPoint[],
   hitTarget?: { center: PixelPoint; radius: number },
   requiredTargets: readonly { center: PixelPoint; radius: number }[] = [],
+  finalValidationType: "none" | "validated" = "none",
 ) {
   const settings = {
     algorithm: "step" as const,
@@ -1064,6 +1109,8 @@ function createMockWasmEvidence(
   } as unknown as GraphwarTrajectoryFormulaContext;
   return {
     owned: {
+      finalValidation:
+        finalValidationType === "validated" ? { snapshot: {}, type: "validated" as const } : { type: "none" as const },
       formulaContext,
       path: path.map((point) => ({ ...point })),
       requiredTargets: requiredTargets.map((target) => ({

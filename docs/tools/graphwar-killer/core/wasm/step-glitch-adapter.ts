@@ -120,6 +120,7 @@ const STEP_GLITCH_SESSION_RESULT_FINAL_SOURCE_COUNT_OFFSET = 84;
 const STEP_GLITCH_SESSION_RESULT_RESERVED_OFFSET = 88;
 const STEP_GLITCH_FINAL_VALIDATION_BYTE_LENGTH = 32;
 const STEP_GLITCH_PRODUCTION_RESULT_BYTE_LENGTH = 72;
+const STEP_GLITCH_PRODUCTION_RESULT_RESERVED_OFFSET = 64;
 const STEP_GLITCH_PRODUCTION_RESULT_MAGIC = 0x5347_5052;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC = 0x5347_4556;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION = 1;
@@ -1151,7 +1152,10 @@ function decodeGraphwarWasmStepGlitchProductionRawResult(
     },
   );
   const view = new DataView(range.buffer, range.byteOffset, range.byteLength);
-  if (view.getUint32(0, true) !== STEP_GLITCH_PRODUCTION_RESULT_MAGIC || view.getUint32(64, true) !== 0) {
+  if (
+    view.getUint32(0, true) !== STEP_GLITCH_PRODUCTION_RESULT_MAGIC ||
+    view.getUint32(STEP_GLITCH_PRODUCTION_RESULT_RESERVED_OFFSET, true) !== 0
+  ) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-state",
       "Step-glitch production result header is invalid",
@@ -3010,6 +3014,7 @@ function decodeGraphwarWasmStepGlitchSessionRawResult(
   const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
   if (
     resultView.getUint32(0, true) !== STEP_GLITCH_PRODUCTION_RESULT_MAGIC ||
+    resultView.getUint32(STEP_GLITCH_PRODUCTION_RESULT_RESERVED_OFFSET, true) !== 0 ||
     resultView.getUint32(STEP_GLITCH_SESSION_RESULT_RESERVED_OFFSET, true) !== 0
   ) {
     throw new GraphwarWasmAdapterError(
@@ -3072,6 +3077,41 @@ function decodeGraphwarWasmStepGlitchSessionRawResult(
   }
   const evidencePointer = resultView.getUint32(8, true);
   const evidenceByteLength = resultView.getUint32(12, true);
+  const acceptedFlag = resultView.getUint32(24, true);
+  const blockedFlag = resultView.getUint32(28, true);
+  const acceptedX = resultView.getFloat64(32, true);
+  const acceptedY = resultView.getFloat64(40, true);
+  const blockedX = resultView.getFloat64(48, true);
+  const blockedY = resultView.getFloat64(56, true);
+  if (acceptedFlag > 1 || blockedFlag > 1 || acceptedFlag !== (status === 1 ? 1 : 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch session result flags disagree with status",
+      "output",
+    );
+  }
+  if (acceptedFlag === 0 && (!Object.is(acceptedX, 0) || !Object.is(acceptedY, 0))) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch session result contains an unexpected accepted point",
+      "output",
+    );
+  }
+  if (blockedFlag === 1) {
+    if (!Number.isFinite(blockedX) || !Number.isFinite(blockedY)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Step-glitch session blocked point is non-finite",
+        "output",
+      );
+    }
+  } else if (!Object.is(blockedX, 0) || !Object.is(blockedY, 0)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-state",
+      "Step-glitch session result contains an unexpected blocked point",
+      "output",
+    );
+  }
   if (status === 1) {
     if (!evidencePointer || !evidenceByteLength || finalSourceCount < 2) {
       throw new GraphwarWasmAdapterError(

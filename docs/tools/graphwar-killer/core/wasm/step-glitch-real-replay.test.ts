@@ -545,6 +545,38 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it("keeps duplicate multi-target composition identity without duplicating ordered state", async () => {
+    const baseFixture = createFixture("dy");
+    const targetPoint = baseFixture.pixelPath[2];
+    if (!targetPoint) throw new Error("expected a three-point Step-glitch fixture");
+    const target = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const fixture = { ...baseFixture, requiredTargets: [target] };
+    const { context } = await createContext(fixture);
+    const scan = context.scanRaw(createGraphwarWasmStepGlitchScanCommandInput({ hitTarget: target, targetPoint }));
+    expect(scan.status).toBe("hit");
+    if (scan.status !== "hit" || !scan.evidence) throw new Error("expected duplicate-target scan evidence");
+
+    const composed = composeGraphwarWasmStepGlitchSmartPath({
+      controlX: imageToGraphPoint(targetPoint, bounds, boundsRect).x,
+      formulaSettings: fixture.formulaMode.settings,
+      initialEvidence: scan.evidence.owned,
+      initialPath: scan.evidence.owned.path,
+      isDeleteOptimizationEnabled: true,
+      targetControlPoints: [targetPoint],
+      scanner: context,
+      simulationMask: fixture.mask,
+      sourcePointCount: 2,
+      targetSequence: [target, target],
+    });
+    expect(composed.status).toBe("success");
+    if (composed.status === "success") {
+      expect(composed.evidence.trajectory.reachedTargetCount).toBe(0);
+      expect(composed.evidence.trajectory.reachedRequiredTargetCount).toBe(1);
+      expect(composed.evidence.path).toEqual(scan.evidence.owned.path);
+    }
+    context.dispose();
+  });
+
   it.each([
     {
       mutate(view: DataView) {

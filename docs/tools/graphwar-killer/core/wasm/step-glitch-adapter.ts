@@ -800,19 +800,81 @@ export type GraphwarWasmStepGlitchSmartCompositionResult =
       readonly status: "failure";
     };
 
-/** Keeps scan evidence and its path identity together, then delegates deletion/replay ordering to command 20. */
-export function composeGraphwarWasmStepGlitchSmartPath(
-  input: GraphwarWasmStepGlitchSmartCompositionInput,
-): GraphwarWasmStepGlitchSmartCompositionResult {
-  const scanTarget = input.initialEvidence.scanTarget;
-  if (!scanTarget) {
+export interface GraphwarWasmStepGlitchSmartCompositionIdentity {
+  /** Raw command target records exclude required targets retained by context. */
+  readonly orderedTargetSequence: readonly GraphwarTrajectoryTargetCircle[];
+  readonly scanTarget: GraphwarTrajectoryTargetCircle;
+}
+
+/**
+ * A successful scan is the only evidence allowed to advance a Step-glitch target session. Keeping the required prefix,
+ * scanned target and resulting path together prevents `search.ts` from combining a target sequence from one context
+ * with evidence produced by another context.
+ */
+export interface GraphwarWasmStepGlitchScanSessionEvidence {
+  readonly evidence: GraphwarWasmStepGlitchOwnedEvidence;
+  readonly path: readonly PixelPoint[];
+  readonly requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
+  readonly scanTarget: GraphwarTrajectoryTargetCircle;
+  readonly targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+}
+
+/**
+ * Retains one accepted multi-target scan as an atomic session transition. The WASM context and production decoder
+ * already validate numerical evidence; this boundary owns the cross-call ordering and source-prefix proof.
+ */
+export function retainGraphwarWasmStepGlitchScanSession(input: {
+  readonly evidence: GraphwarWasmStepGlitchOwnedEvidence;
+  readonly scanner: GraphwarWasmStepGlitchGeometryTestContext;
+  readonly sourcePath: readonly PixelPoint[];
+  readonly target: GraphwarTrajectoryTargetCircle;
+  readonly targetSequence: readonly GraphwarTrajectoryTargetCircle[];
+}): GraphwarWasmStepGlitchScanSessionEvidence {
+  const requiredTargets = input.scanner.requiredTargets ?? [];
+  const expectedTargetSequence = [...requiredTargets, input.target];
+  if (
+    input.targetSequence.length === 0 ||
+    !productionEvidenceTargetSequencesEqual(input.targetSequence, expectedTargetSequence) ||
+    !productionEvidenceTargetSequencesEqual(input.evidence.requiredTargets, requiredTargets) ||
+    !input.evidence.scanTarget ||
+    !productionEvidenceTargetSequencesEqual([input.evidence.scanTarget], [input.target]) ||
+    input.evidence.path.length < input.sourcePath.length ||
+    !productionEvidencePixelsEqual(input.evidence.path.slice(0, input.sourcePath.length), input.sourcePath)
+  ) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",
-      "Step-glitch smart composition source identity is invalid",
-      "input",
+      "Step-glitch scan evidence does not match its retained multi-target session",
+      "output",
     );
   }
+  return {
+    evidence: input.evidence,
+    path: input.evidence.path.map(({ x, y }) => createPixelPoint(x, y)),
+    requiredTargets: requiredTargets.map(({ center, radius }) => ({
+      center: createPixelPoint(center.x, center.y),
+      radius,
+    })),
+    scanTarget: {
+      center: createPixelPoint(input.target.center.x, input.target.center.y),
+      radius: input.target.radius,
+    },
+    targetSequence: input.targetSequence.map(({ center, radius }) => ({
+      center: createPixelPoint(center.x, center.y),
+      radius,
+    })),
+  };
+}
+
+/**
+ * Validates the retained scan/session identity once at the adapter boundary. The raw command keeps required targets in
+ * its retained context, so callers must not rebuild that distinction or pass a duplicate target sequence.
+ */
+export function validateGraphwarWasmStepGlitchSmartCompositionIdentity(
+  input: GraphwarWasmStepGlitchSmartCompositionInput,
+): GraphwarWasmStepGlitchSmartCompositionIdentity {
+  const scanTarget = input.initialEvidence.scanTarget;
   if (
+    !scanTarget ||
     !Number.isFinite(input.controlX) ||
     !Number.isInteger(input.sourcePointCount) ||
     input.sourcePointCount < 1 ||
@@ -844,7 +906,18 @@ export function composeGraphwarWasmStepGlitchSmartPath(
     );
   }
 
-  const compositionTargetSequence = orderedTargetSequence(input.initialEvidence.requiredTargets, scanTarget);
+  return {
+    orderedTargetSequence: orderedTargetSequence(input.initialEvidence.requiredTargets, scanTarget),
+    scanTarget,
+  };
+}
+
+/** Keeps scan evidence and its path identity together, then delegates deletion/replay ordering to command 20. */
+export function composeGraphwarWasmStepGlitchSmartPath(
+  input: GraphwarWasmStepGlitchSmartCompositionInput,
+): GraphwarWasmStepGlitchSmartCompositionResult {
+  const { orderedTargetSequence: compositionTargetSequence } =
+    validateGraphwarWasmStepGlitchSmartCompositionIdentity(input);
   const optimizedPath = input.initialPath.map(({ x, y }) => createPixelPoint(x, y));
   if (!input.isDeleteOptimizationEnabled) {
     return { evidence: input.initialEvidence, path: optimizedPath, replayCount: 0, status: "success" };

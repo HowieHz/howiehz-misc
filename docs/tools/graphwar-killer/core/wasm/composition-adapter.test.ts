@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  compareGraphwarWasmOneClickIncumbent,
   createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
   graphwarWasmCompositionLayout,
@@ -18,6 +19,123 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
 
 describe("Graphwar WASM composition adapter", () => {
+  it("owns one-click incumbent ordering and keeps omitted path errors neutral", async () => {
+    const runtime = await createRuntime();
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: 2, pointCount: 9, targetCount: 3 },
+        { pathError: 1, pointCount: 4, targetCount: 2 },
+      ),
+    ).toBe(true);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: 2, pointCount: 4, targetCount: 3 },
+        { pathError: 1, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pointCount: 4, targetCount: 3 },
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: 1, pointCount: 4, targetCount: 3 },
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(true);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+        { pathError: 1, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects NaN incumbent path-error evidence at the adapter boundary", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: Number.NaN, pointCount: 2, targetCount: 1 },
+        { pointCount: 3, targetCount: 1 },
+      ),
+    ).toThrow(/pathError/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    { field: "alignment padding", mutate: (view: DataView) => view.setUint32(36, 1, true) },
+    { field: "tail reserved word", mutate: (view: DataView) => view.setUint32(52, 1, true) },
+    {
+      field: "negative path error",
+      mutate: (view: DataView) => view.setFloat64(16, -1, true),
+    },
+    {
+      field: "non-neutral omitted path error",
+      mutate: (view: DataView) => view.setFloat64(16, 1, true),
+    },
+  ])("rejects raw incumbent input with a non-canonical $field", async ({ mutate }) => {
+    const runtime = await createRuntime();
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementationOnce((command, inputPointer, inputByteLength) => {
+      mutate(new DataView(runtime.buffer, inputPointer, inputByteLength));
+      return runRouteTask(command, inputPointer, inputByteLength);
+    });
+
+    expect(() =>
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pointCount: 2, targetCount: 1 },
+        { pointCount: 3, targetCount: 1 },
+      ),
+    ).toThrow(/unreachable/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    { field: "magic", mutate: (view: DataView) => view.setUint32(0, 0, true) },
+    { field: "reserved result word", mutate: (view: DataView) => view.setUint32(8, 1, true) },
+    { field: "status", mutate: (view: DataView) => view.setUint32(4, 2, true) },
+  ])("rejects a malicious incumbent comparison $field", async ({ mutate }) => {
+    const runtime = await createRuntime();
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementationOnce((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      mutate(
+        new DataView(
+          runtime.buffer,
+          resultPointer,
+          graphwarWasmCompositionLayout.oneClickIncumbentCompareResultByteLength,
+        ),
+      );
+      return resultPointer;
+    });
+
+    expect(() =>
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pointCount: 2, targetCount: 1 },
+        { pointCount: 3, targetCount: 1 },
+      ),
+    ).toThrow(/incumbent comparison/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("returns an empty Step state mapping without crossing the raw ABI", async () => {
     const runtime = await createRuntime();
     expect(internGraphwarWasmOneClickStepStates(runtime, [])).toEqual({ nodeCount: 0, nodeIds: [] });

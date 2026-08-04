@@ -490,6 +490,7 @@ describe("one-click-clear mirrored WASM guard", () => {
 
   it("does not report success after ordinary WASM incumbent cancellation", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const runRouteTask = vi.spyOn(runtime, "runRouteTask");
     const start = createPixelPoint(100, 225);
     const first = createPixelPoint(300, 225);
     const second = createPixelPoint(500, 225);
@@ -533,6 +534,64 @@ describe("one-click-clear mirrored WASM guard", () => {
     } satisfies GraphwarOneClickClearBuildOptions);
 
     expect(result).toMatchObject({ reason: "no-usable-target", type: "failure" });
+    expect(runRouteTask.mock.calls.some(([command]) => command === 24)).toBe(true);
+  });
+
+  it("treats a command-24 result mutation as a WASM fault before publishing", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const originalRunRouteTask = runtime.runRouteTask.bind(runtime);
+    const runRouteTask = vi
+      .spyOn(runtime, "runRouteTask")
+      .mockImplementation((command, inputPointer, inputByteLength) => {
+        const resultPointer = originalRunRouteTask(command, inputPointer, inputByteLength);
+        if (command === 24) {
+          new DataView(
+            runtime.buffer,
+            resultPointer,
+            graphwarWasmCompositionLayout.oneClickIncumbentCompareResultByteLength,
+          ).setUint32(4, 2, true);
+        }
+        return resultPointer;
+      });
+    const start = createPixelPoint(100, 225);
+    const target = createPixelPoint(300, 225);
+    const candidates = [{ id: "target", isEnemy: true, hitCenter: target, hitRadius: 20 }];
+    const incumbents: unknown[] = [];
+
+    await expect(
+      buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+        boundsRect,
+        buildDagEdges: async (request) => ({
+          routes: request.jobs.filter(isStatelessJob).map((job) => createSuccessfulEdgeRoute(job)),
+          timings: [],
+        }),
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode({
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        }),
+        hitCandidates: candidates,
+        isDeleteOptimizationEnabled: false,
+        onValidatedIncumbent: (incumbent) => incumbents.push(incumbent),
+        pathPoints: [start],
+        routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        simulationBoundaryExpansion: 0,
+        simulationMask: emptyMask,
+        simulationMaskCacheId: 1,
+        wasmRequestNonce: 24,
+        wasmRuntime: runtime,
+      } satisfies GraphwarOneClickClearBuildOptions),
+    ).rejects.toThrow(/incumbent comparison/u);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 24)).toBe(true);
+    expect(incumbents).toEqual([]);
   });
 
   it("drops the ordinary WASM obstacle terminal sample from the incumbent", async () => {
@@ -858,7 +917,8 @@ describe("one-click-clear mirrored WASM guard", () => {
       resolvedY: expectedPrefix.resolvedEndY,
     });
     expect(wasmJob.stepRouteStartState).toEqual(tsJob.stepRouteStartState);
-    expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(true);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(false);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 23)).toBe(true);
     expect(runRouteTask.mock.calls.some(([command]) => command === 22)).toBe(true);
     runRouteTask.mockRestore();
   });

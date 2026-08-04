@@ -12,6 +12,7 @@ import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  compareGraphwarWasmOneClickIncumbent,
   createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
   runGraphwarWasmOneClickTrajectoryComposition,
@@ -26,10 +27,12 @@ import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import type { GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
+  validateGraphwarWasmStepGlitchSmartCompositionIdentity,
   createGraphwarWasmStepGlitchContext,
   createGraphwarWasmStepGlitchContextInput,
   createGraphwarWasmStepGlitchScanCommandInput,
   createGraphwarWasmStepGlitchWindowsFromEvidence,
+  retainGraphwarWasmStepGlitchScanSession,
 } from "../../core/wasm/step-glitch-adapter";
 import type {
   GraphwarWasmStepGlitchGeometryTestContext,
@@ -1030,17 +1033,24 @@ async function buildOneClickClearStepGlitchPathWithWasm(
         if (!evidence) {
           throw new GraphwarWasmFault("abi", "One-Click Clear WASM scan returned no owned evidence");
         }
+        const acceptedSession = retainGraphwarWasmStepGlitchScanSession({
+          evidence,
+          scanner,
+          sourcePath: route.pathPoints,
+          target: target.hitCircle,
+          targetSequence: nextTargetSequence.map((candidate) => candidate.hitCircle),
+        });
         acceptedLayerGraphX = target.sortGraphX;
         route = {
-          incumbentEvidence: createOneClickClearWasmIncumbentEvidence(evidence, options.debugMetrics),
-          pathPoints: evidence.path.map(clonePixelPoint),
+          incumbentEvidence: createOneClickClearWasmIncumbentEvidence(acceptedSession.evidence, options.debugMetrics),
+          pathPoints: acceptedSession.path.map(clonePixelPoint),
           targetSequence: nextTargetSequence,
         };
         publishOneClickClearValidatedRoute(context, route);
         // Keep the latest accepted evidence even when a later candidate is
         // skipped or unreachable; it still proves the retained route and can
         // seed command 20 optimization for that incumbent.
-        finalEvidence = evidence;
+        finalEvidence = acceptedSession.evidence;
         // The source path and required target set changed. Drop all old state, including any stale prefix evidence.
         scanner.dispose();
         scanner = undefined;
@@ -1159,34 +1169,11 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
   if (!initialEvidence) {
     return { route, status: "ready", workUnits };
   }
-  if (
-    initialEvidence.path.length !== route.pathPoints.length ||
-    initialEvidence.path.some((point, index) => {
-      const expectedPoint = route.pathPoints[index];
-      return expectedPoint === undefined || !pixelPointsEqual(point, expectedPoint);
-    })
-  ) {
-    throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization lost its scan path evidence");
-  }
-  const actualTargetSequence = route.targetSequence.map((target) => target.hitCircle);
-  const scanTarget = initialEvidence.scanTarget ?? actualTargetSequence.at(-1);
+  const scanTarget = initialEvidence.scanTarget;
   if (!scanTarget) {
     throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization has no target identity");
   }
-  const requiredTargets =
-    initialEvidence.scanTarget === undefined && initialEvidence.requiredTargets.length === 0
-      ? actualTargetSequence.slice(0, -1)
-      : initialEvidence.requiredTargets;
-  const expectedTargetSequence = [...requiredTargets, scanTarget];
-  if (
-    actualTargetSequence.length !== expectedTargetSequence.length ||
-    actualTargetSequence.some((target, index) => {
-      const expectedTarget = expectedTargetSequence[index];
-      return expectedTarget === undefined || !pixelCirclesEqual(target, expectedTarget);
-    })
-  ) {
-    throw new GraphwarWasmFault("abi", "one-click Step-glitch optimization target evidence is stale");
-  }
+  const requiredTargets = initialEvidence.requiredTargets;
   const created = createOneClickClearStepGlitchWasmScanner(
     options,
     options.formulaMode,
@@ -1214,20 +1201,35 @@ async function optimizeOneClickClearStepGlitchPathWithWasm(
     if (options.isCancelled?.()) {
       return { route, status: "ready", workUnits };
     }
+    const targetSequence = route.targetSequence.map((target) => target.hitCircle);
+    const targetControlPoints = createOneClickClearTargetControlPoints(options, route.targetSequence);
+    const trackedTargets = createOneClickClearTrackedTargets(options, route).map(
+      (trackedTarget) => trackedTarget.hitCircle,
+    );
+    const compositionIdentity = validateGraphwarWasmStepGlitchSmartCompositionIdentity({
+      controlX,
+      formulaSettings: options.formulaMode.settings,
+      initialEvidence,
+      initialPath: route.pathPoints,
+      isDeleteOptimizationEnabled: true,
+      targetControlPoints,
+      scanner,
+      simulationMask,
+      sourcePointCount: options.pathPoints.length,
+      targetSequence,
+    });
     const composed = scanner.composeRaw({
       controlX,
       finalValidation: {
         simulationMaskCacheId: options.simulationMaskCacheId,
-        targetControlPoints: createOneClickClearTargetControlPoints(options, route.targetSequence),
-        trackedTargets: createOneClickClearTrackedTargets(options, route).map(
-          (trackedTarget) => trackedTarget.hitCircle,
-        ),
+        targetControlPoints,
+        trackedTargets,
         type: "validate",
       },
       isDeleteOptimizationEnabled: true,
       path: route.pathPoints,
       sourcePointCount: options.pathPoints.length,
-      targetSequence: [scanTarget],
+      targetSequence: compositionIdentity.orderedTargetSequence,
       type: "compose",
       windows,
     });
@@ -3004,20 +3006,13 @@ function resolveOneClickClearStepStartState(options: GraphwarOneClickClearSearch
       if (!stepRoute) {
         throw new GraphwarWasmFault("abi", "one-click Step start-state context lost its route model");
       }
-      let state = { resolvedY: firstPoint.y, routeStateKey: "0" };
-      for (let index = 1; index < graphPoints.length; index += 1) {
-        const previous = graphPoints[index - 1];
-        const next = graphPoints[index];
-        if (!previous || !next) {
-          return undefined;
-        }
-        const transition = stepRoute.evaluateTransition(previous, next, state);
-        if (transition.type !== "success") {
-          return undefined;
-        }
-        state = transition.transition.routeState;
-      }
-      return { resolvedStateKey: state.routeStateKey, resolvedY: state.resolvedY };
+      const validation = stepRoute.validatePath(graphPoints);
+      return validation.ok
+        ? {
+            resolvedStateKey: validation.routeStateKey ?? "0",
+            resolvedY: validation.resolvedEndY,
+          }
+        : undefined;
     } finally {
       routeContext.dispose();
     }
@@ -4210,15 +4205,30 @@ function appendOneClickClearTargetCircle(
  */
 function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext, route: OneClickClearRoute) {
   const targetCount = route.targetSequence.length;
-  if (targetCount === 0 || targetCount < context.bestValidatedTargetCount) {
+  if (targetCount === 0) {
     return;
   }
-  if (
-    targetCount === context.bestValidatedTargetCount &&
-    (route.pathPoints.length > context.bestValidatedPointCount ||
-      (route.pathPoints.length === context.bestValidatedPointCount &&
-        compareGraphwarPathErrors(route.pathError, context.bestValidatedPathError) >= 0))
-  ) {
+  const wasmRuntime = context.options.wasmRuntime;
+  const isBetter = wasmRuntime
+    ? compareGraphwarWasmOneClickIncumbent(
+        wasmRuntime,
+        {
+          pathError: route.pathError,
+          pointCount: route.pathPoints.length,
+          targetCount,
+        },
+        {
+          pathError: context.bestValidatedPathError,
+          pointCount: Number.isFinite(context.bestValidatedPointCount) ? context.bestValidatedPointCount : 0xffff_ffff,
+          targetCount: context.bestValidatedTargetCount,
+        },
+      )
+    : targetCount > context.bestValidatedTargetCount ||
+      (targetCount === context.bestValidatedTargetCount &&
+        (route.pathPoints.length < context.bestValidatedPointCount ||
+          (route.pathPoints.length === context.bestValidatedPointCount &&
+            compareGraphwarPathErrors(route.pathError, context.bestValidatedPathError) < 0)));
+  if (!isBetter) {
     return;
   }
   let incumbent: GraphwarOneClickClearIncumbent | undefined;

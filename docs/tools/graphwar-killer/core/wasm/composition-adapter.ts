@@ -11,6 +11,7 @@ import {
   validateGraphwarWasmEnumValue,
   validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
+  validateGraphwarWasmPathError,
   validateGraphwarWasmU32,
   writeGraphwarWasmBytes,
   writeGraphwarWasmFloat64Values,
@@ -50,6 +51,8 @@ export const graphwarWasmCompositionLayout = {
   oneClickStepDagExpansionInputByteLength: 64,
   oneClickStepDagExpansionResultByteLength: 16,
   oneClickStepDagExpansionJobByteLength: 48,
+  oneClickIncumbentCompareInputByteLength: 56,
+  oneClickIncumbentCompareResultByteLength: 12,
 } as const;
 
 const smartInputMagic = 0x534d_4152;
@@ -84,6 +87,11 @@ const oneClickStepDagExpansionCommand = 22;
 const oneClickStepDagExpansionMagic = 0x4f_434a_45;
 const oneClickStepDagExpansionVersion = 1;
 const oneClickStepDagExpansionStartFlag = 1;
+const oneClickIncumbentCompareCommand = 24;
+const oneClickIncumbentCompareMagic = 0x4f_4349_43;
+const oneClickIncumbentCompareVersion = 1;
+const oneClickIncumbentCompareInputAlignmentReservedOffset = 36;
+const oneClickIncumbentCompareInputReservedOffset = 52;
 
 const smartInput = {
   flags: 8,
@@ -1729,6 +1737,86 @@ function findOneClickProtectedPointIndexes(
     searchIndex += 1;
   }
   return indexes;
+}
+
+export interface GraphwarWasmOneClickIncumbentScore {
+  readonly pathError?: number;
+  readonly pointCount: number;
+  readonly targetCount: number;
+}
+
+/** Lets effective WASM composition own incumbent tie-breaks while TS keeps event payload construction. */
+export function compareGraphwarWasmOneClickIncumbent(
+  runtime: GraphwarWasmKernelRuntime,
+  candidate: GraphwarWasmOneClickIncumbentScore,
+  current: GraphwarWasmOneClickIncumbentScore,
+): boolean {
+  const candidateTargetCount = validateGraphwarWasmU32(candidate.targetCount, "candidate.targetCount", "input");
+  const candidatePointCount = validateGraphwarWasmU32(candidate.pointCount, "candidate.pointCount", "input");
+  const currentTargetCount = validateGraphwarWasmU32(current.targetCount, "current.targetCount", "input");
+  const currentPointCount = validateGraphwarWasmU32(current.pointCount, "current.pointCount", "input");
+  const candidatePathError = validateGraphwarWasmPathError(candidate.pathError, "candidate.pathError", "input");
+  const currentPathError = validateGraphwarWasmPathError(current.pathError, "current.pathError", "input");
+  const mark = runtime.markArena();
+  try {
+    const commandPointer = runtime.reserveArena(
+      graphwarWasmCompositionLayout.oneClickIncumbentCompareInputByteLength,
+      8,
+    );
+    const inputView = new DataView(
+      runtime.buffer,
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickIncumbentCompareInputByteLength,
+    );
+    inputView.setUint32(0, oneClickIncumbentCompareMagic, true);
+    inputView.setUint32(4, oneClickIncumbentCompareVersion, true);
+    inputView.setUint32(8, candidateTargetCount, true);
+    inputView.setUint32(12, candidatePointCount, true);
+    inputView.setFloat64(16, candidatePathError ?? 0, true);
+    inputView.setUint32(24, candidatePathError === undefined ? 0 : 1, true);
+    inputView.setUint32(28, currentTargetCount, true);
+    inputView.setUint32(32, currentPointCount, true);
+    inputView.setUint32(oneClickIncumbentCompareInputAlignmentReservedOffset, 0, true);
+    inputView.setFloat64(40, currentPathError ?? 0, true);
+    inputView.setUint32(48, currentPathError === undefined ? 0 : 1, true);
+    inputView.setUint32(oneClickIncumbentCompareInputReservedOffset, 0, true);
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runRouteTask(
+      oneClickIncumbentCompareCommand,
+      commandPointer,
+      graphwarWasmCompositionLayout.oneClickIncumbentCompareInputByteLength,
+    );
+    const range = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: resultPointer },
+      {
+        alignment: 4,
+        elementByteLength: graphwarWasmCompositionLayout.oneClickIncumbentCompareResultByteLength,
+        minimumPointer: outputMinimumPointer,
+      },
+    );
+    const resultView = new DataView(range.buffer, range.byteOffset, range.byteLength);
+    if (resultView.getUint32(0, true) !== oneClickIncumbentCompareMagic || resultView.getUint32(8, true) !== 0) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "one-click incumbent comparison returned malformed result",
+        "output",
+      );
+    }
+    const status = resultView.getUint32(4, true);
+    if (status > 1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-enum",
+        "one-click incumbent comparison returned an invalid status",
+        "output",
+      );
+    }
+    runtime.resetArena(mark);
+    return status === 1;
+  } catch (error) {
+    runtime.resetArenaAfterFault(mark);
+    throw error;
+  }
 }
 
 /** Runs the WASM-owned one-click target assignment and returns ordered owned points. */

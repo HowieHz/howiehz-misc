@@ -12,10 +12,13 @@ import {
   decodeGraphwarWasmStepGlitchBusinessStatus,
   packGraphwarWasmStepGlitchCommandInput,
   packGraphwarWasmStepGlitchContextInput,
+  retainGraphwarWasmStepGlitchScanSession,
   type GraphwarWasmStepGlitchFinalValidationInput,
   type GraphwarWasmStepGlitchPrefixEvidenceInput,
   type GraphwarWasmStepGlitchReplayOutput,
   type GraphwarWasmStepGlitchScanOutput,
+  type GraphwarWasmStepGlitchOwnedEvidence,
+  type GraphwarWasmStepGlitchGeometryTestContext,
 } from "./step-glitch-adapter";
 
 class TestGraphwarWasmArena {
@@ -71,6 +74,39 @@ describe("Graphwar WASM Step-glitch descriptor Adapter", () => {
       replayEvidence: { unexpected: true };
       status: "miss";
     }>().not.toMatchTypeOf<GraphwarWasmStepGlitchReplayOutput>();
+  });
+
+  it("retains multi-target scan evidence as one session identity", () => {
+    const source = createPixelPoint(100, 200);
+    const first = { center: createPixelPoint(300, 200), radius: 12 };
+    const second = { center: createPixelPoint(500, 200), radius: 12 };
+    const evidence = {
+      path: [source, first.center, second.center],
+      requiredTargets: [first],
+      scanTarget: second,
+    } as unknown as GraphwarWasmStepGlitchOwnedEvidence;
+    const scanner = { requiredTargets: [first] } as unknown as GraphwarWasmStepGlitchGeometryTestContext;
+
+    const retained = retainGraphwarWasmStepGlitchScanSession({
+      evidence,
+      scanner,
+      sourcePath: [source, first.center],
+      target: second,
+      targetSequence: [first, second],
+    });
+
+    expect(retained.requiredTargets).toEqual([first]);
+    expect(retained.targetSequence).toEqual([first, second]);
+    expect(retained.path).not.toBe(evidence.path);
+    expect(() =>
+      retainGraphwarWasmStepGlitchScanSession({
+        evidence,
+        scanner,
+        sourcePath: [source, first.center],
+        target: second,
+        targetSequence: [second],
+      }),
+    ).toThrow(/multi-target session/u);
   });
 
   it("packs one complete retained context and the complete prefix evidence identity", () => {

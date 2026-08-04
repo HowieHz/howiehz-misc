@@ -81,6 +81,76 @@ function isIntegerValue(value: f64): bool {
   return isFiniteValue(value) && NativeMath.floor(value) == value;
 }
 
+/** Mirrors one-click incumbent ordering: maximize targets, then minimize points, then path error. */
+function compareOneClickIncumbent(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u64>());
+  if (
+    load<u32>(inputPointer) != Layout.ONE_CLICK_INCUMBENT_COMPARE_MAGIC ||
+    load<u32>(inputPointer + 4) != Layout.ONE_CLICK_INCUMBENT_COMPARE_VERSION
+  )
+    trap();
+  if (
+    load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_ALIGNMENT_RESERVED_OFFSET) != 0 ||
+    load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_RESERVED_OFFSET) != 0
+  )
+    trap();
+
+  const candidatePathErrorFlag = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CANDIDATE_PATH_ERROR_FLAG_OFFSET,
+  );
+  const currentPathErrorFlag = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CURRENT_PATH_ERROR_FLAG_OFFSET,
+  );
+  if (candidatePathErrorFlag > 1 || currentPathErrorFlag > 1) trap();
+  const candidatePathError = load<f64>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CANDIDATE_PATH_ERROR_OFFSET,
+  );
+  const currentPathError = load<f64>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CURRENT_PATH_ERROR_OFFSET,
+  );
+  if (
+    (candidatePathErrorFlag == 0 && candidatePathError != 0) ||
+    (currentPathErrorFlag == 0 && currentPathError != 0) ||
+    (candidatePathErrorFlag != 0 &&
+      (candidatePathError != candidatePathError || candidatePathError == f64.NEGATIVE_INFINITY || candidatePathError < 0)) ||
+    (currentPathErrorFlag != 0 &&
+      (currentPathError != currentPathError || currentPathError == f64.NEGATIVE_INFINITY || currentPathError < 0))
+  )
+    trap();
+
+  const candidateTargetCount = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CANDIDATE_TARGET_COUNT_OFFSET,
+  );
+  const candidatePointCount = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CANDIDATE_POINT_COUNT_OFFSET,
+  );
+  const currentTargetCount = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CURRENT_TARGET_COUNT_OFFSET,
+  );
+  const currentPointCount = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_INPUT_CURRENT_POINT_COUNT_OFFSET,
+  );
+  let isBetter = candidateTargetCount > currentTargetCount;
+  if (!isBetter && candidateTargetCount == currentTargetCount) {
+    isBetter = candidatePointCount < currentPointCount;
+    if (!isBetter && candidatePointCount == currentPointCount && candidatePathErrorFlag != 0 && currentPathErrorFlag != 0) {
+      const candidateFinite = isFiniteValue(candidatePathError);
+      const currentFinite = isFiniteValue(currentPathError);
+      isBetter = candidateFinite && !currentFinite;
+      if (!isBetter && candidateFinite == currentFinite && candidateFinite) {
+        isBetter = candidatePathError < currentPathError;
+      }
+    }
+  }
+
+  const resultPointer = reserveArena(Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_BYTE_LENGTH, sizeof<u32>());
+  memory.fill(resultPointer, 0, Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_INCUMBENT_COMPARE_MAGIC);
+  store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_STATUS_OFFSET, isBetter ? 1 : 0);
+  return resultPointer;
+}
+
 /** Validates canonical decimal bytes before using them as a cross-boundary Step identity. */
 function isCanonicalStepStateKey(keyPointer: u32, keyLength: u32): bool {
   if (keyLength == 0) return false;
@@ -6342,6 +6412,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_PATH_VALIDATION) {
     return runStepPathValidation(inputPointer, inputByteLength);
+  }
+  if (command == Layout.ROUTE_COMMAND_ONE_CLICK_INCUMBENT_COMPARE) {
+    return compareOneClickIncumbent(inputPointer, inputByteLength);
   }
   if (command == Layout.ROUTE_COMMAND_ONE_CLICK_STEP_STATE_DEDUP) {
     return internOneClickStepStateKeys(inputPointer, inputByteLength);

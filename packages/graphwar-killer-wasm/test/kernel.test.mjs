@@ -454,7 +454,7 @@ test("guards the source and release configuration against managed hot-path alloc
 });
 
 test("publishes a one-click session only after its waiting result is allocated", async () => {
-  const source = await readFile(join(packageRoot, "assembly", "pathfinding.ts"), "utf8");
+  const source = (await readFile(join(packageRoot, "assembly", "pathfinding.ts"), "utf8")).replace(/\r\n?/gu, "\n");
   const waitingResult = source.indexOf(
     "const resultPointer = writeOneClickResult(\n    Layout.ONE_CLICK_RESULT_STATUS_WAITING_EDGE_BATCH,",
   );

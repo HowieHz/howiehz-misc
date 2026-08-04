@@ -3308,7 +3308,8 @@ function decodeGraphwarWasmStepGlitchSessionRawResult(
   if (
     (acceptedIndexes.length === 0 && finalTargetIndex !== 0xffff_ffff) ||
     (acceptedIndexes.length > 0 && finalTargetIndex !== acceptedIndexes.at(-1)) ||
-    (status === 1) !== acceptedIndexes.length > 0
+    (status === 1) !== acceptedIndexes.length > 0 ||
+    (status !== 1 && finalSourceCount !== 0)
   ) {
     throw new GraphwarWasmAdapterError(
       "invalid-session-identity",

@@ -1411,7 +1411,23 @@ export function composeStepGlitchOneClickSession(inputPointer: u32, inputByteLen
     if (status == Layout.STEP_GLITCH_PRODUCTION_STATUS_INVALID_INPUT || status == Layout.STEP_GLITCH_PRODUCTION_STATUS_UNSUPPORTED) {
       // A typed command failure cannot carry a partially accepted route. The
       // caller must restart from its cold path instead of splicing prefixes.
-      return createOneClickSessionResult(status, 0, 0, expandedStates, 0, 0, 0, 0, 0, 0, 0, 0, 0, u32.MAX_VALUE, finalSourceCount);
+      return createOneClickSessionResult(
+        status,
+        0,
+        0,
+        expandedStates,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        u32.MAX_VALUE,
+        0,
+      );
     }
     if (status == Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT) {
       const evidencePointer = load<u32>(scanResultPointer + Layout.STEP_GLITCH_PRODUCTION_RESULT_EVIDENCE_POINTER_OFFSET);
@@ -1476,8 +1492,8 @@ export function composeStepGlitchOneClickSession(inputPointer: u32, inputByteLen
       finalBlockedY,
       acceptedIndexPointer,
       acceptedIndexCount,
-      finalTargetIndex,
-      finalSourceCount,
+      u32.MAX_VALUE,
+      0,
     );
   }
   return createOneClickSessionResult(

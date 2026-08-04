@@ -43,6 +43,20 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     }
   });
 
+  it("keeps accepted target order across a multi-target session", async () => {
+    const firstCandidate = { isEnemy: true, hitCenter: targetPoint, hitRadius: 2, id: "first" };
+    const secondPoint = graphToImagePoint(createGraphPoint(-4, -14), bounds, boundsRect);
+    const secondCandidate = { isEnemy: true, hitCenter: secondPoint, hitRadius: 1, id: "second" };
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(new Uint8Array(planeCellCount), runtime),
+      candidates: [firstCandidate, secondCandidate],
+      hitCandidates: [firstCandidate, secondCandidate],
+    });
+
+    expect(result).toMatchObject({ targetIds: ["first", "second"], type: "success" });
+  });
+
   it("publishes exact evidence for an automatic glitch segment", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
     let published:

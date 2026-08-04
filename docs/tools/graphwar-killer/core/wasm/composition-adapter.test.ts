@@ -4,6 +4,7 @@ import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
   compareGraphwarWasmOneClickIncumbent,
+  consumeGraphwarWasmOneClickStepStateLayer,
   createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
   graphwarWasmCompositionLayout,
@@ -336,6 +337,67 @@ describe("Graphwar WASM composition adapter", () => {
       }),
     ).toThrow(/successor target/u);
     expect(table.layerCursor).toBe(0);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("keeps each reachable Step route paired with its terminal evidence", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    const result = consumeGraphwarWasmOneClickStepStateLayer(table, {
+      jobs: [
+        { id: 10, targetIndex: 0 },
+        { id: 11, targetIndex: 1 },
+      ],
+      layerIndex: 0,
+      results: [
+        { jobId: 11 },
+        {
+          jobId: 10,
+          route: [
+            { x: 0, y: 0 },
+            { x: 10, y: 1 },
+          ],
+          successor: { resolvedStateKey: "18446744073709551616", resolvedY: 1, targetIndex: 0 },
+        },
+      ],
+    });
+
+    expect(result.routes).toEqual([
+      {
+        jobId: 10,
+        nodeId: 0,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 1 },
+        ],
+        successor: { resolvedStateKey: "18446744073709551616", resolvedY: 1, targetIndex: 0 },
+      },
+      { jobId: 11 },
+    ]);
+    expect(result.jobNodeIds).toEqual([{ jobId: 11 }, { jobId: 10, nodeId: 0 }]);
+    expect(table.layerCursor).toBe(1);
+  });
+
+  it("rejects a Step route without matching terminal evidence before consuming the layer", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 1 });
+    expect(() =>
+      consumeGraphwarWasmOneClickStepStateLayer(table, {
+        jobs: [{ id: 10, targetIndex: 0 }],
+        layerIndex: 0,
+        results: [
+          {
+            jobId: 10,
+            route: [
+              { x: 0, y: 0 },
+              { x: 10, y: 1 },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/route and successor together/u);
+    expect(table.layerCursor).toBe(0);
+    expect(table.evidence).toEqual([]);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 

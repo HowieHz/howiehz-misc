@@ -601,6 +601,16 @@ export interface GraphwarWasmOneClickStepStateLayerResult extends GraphwarWasmOn
   readonly jobNodeIds: readonly { readonly jobId: number; readonly nodeId?: number }[];
 }
 
+/** Edge route and terminal Step evidence stay bound while a retained layer is consumed. */
+export type GraphwarWasmOneClickStepStateLayerRouteResult =
+  | { readonly jobId: number }
+  | {
+      readonly jobId: number;
+      readonly nodeId: number;
+      readonly route: readonly GraphwarWasmPoint[];
+      readonly successor: GraphwarWasmOneClickStepStateEvidence;
+    };
+
 /**
  * Adapter-retained Step evidence validated by WASM interning. Callers receive copies only; node identity and evidence
  * cannot be spliced by mutating a previously completed edge batch.
@@ -615,6 +625,63 @@ export interface GraphwarWasmOneClickStepStateTable {
   consumeLayer(input: GraphwarWasmOneClickStepStateLayerInput): GraphwarWasmOneClickStepStateLayerResult;
   /** Invalidates the retained cursor so a cancelled DAG cannot be resumed accidentally. */
   cancel(): void;
+}
+
+/** Consumes one stateful layer without allowing route/state evidence to be recombined by the caller. */
+export function consumeGraphwarWasmOneClickStepStateLayer(
+  table: GraphwarWasmOneClickStepStateTable,
+  input: Omit<GraphwarWasmOneClickStepStateLayerInput, "results"> & {
+    readonly results: readonly (GraphwarWasmOneClickStepStateEdgeResult & {
+      readonly route?: readonly GraphwarWasmPoint[];
+    })[];
+  },
+): GraphwarWasmOneClickStepStateLayerResult & {
+  readonly routes: readonly GraphwarWasmOneClickStepStateLayerRouteResult[];
+} {
+  const resultByJobId = new Map<number, (typeof input.results)[number]>();
+  for (const result of input.results) {
+    if (resultByJobId.has(result.jobId)) {
+      throw new GraphwarWasmAdapterError(
+        "duplicate-work-id",
+        `Step state layer route ${result.jobId} is duplicated`,
+        "input",
+      );
+    }
+    if ((result.route === undefined) !== (result.successor === undefined)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `Step state layer route ${result.jobId} must include route and successor together`,
+        "input",
+      );
+    }
+    resultByJobId.set(result.jobId, result);
+  }
+  const consumed = table.consumeLayer(input);
+  const nodeIdByJobId = new Map(consumed.jobNodeIds.map(({ jobId, nodeId }) => [jobId, nodeId]));
+  const routes = input.jobs.map(({ id }) => {
+    const result = resultByJobId.get(id);
+    if (!result) {
+      throw new GraphwarWasmAdapterError("invalid-work-batch", `Step state layer route ${id} is missing`, "input");
+    }
+    const nodeId = nodeIdByJobId.get(id);
+    if (result.route === undefined) {
+      return { jobId: id };
+    }
+    if (nodeId === undefined || result.successor === undefined) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `Step state layer route ${id} lost its successor node`,
+        "output",
+      );
+    }
+    return {
+      jobId: id,
+      nodeId,
+      route: result.route.map(({ x, y }) => ({ x, y })),
+      successor: { ...result.successor },
+    };
+  });
+  return { ...consumed, routes };
 }
 
 export interface GraphwarWasmOneClickEdgeJob {

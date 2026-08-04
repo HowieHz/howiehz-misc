@@ -13,6 +13,7 @@ import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
   compareGraphwarWasmOneClickIncumbent,
+  consumeGraphwarWasmOneClickStepStateLayer,
   createGraphwarWasmOneClickStepStateTable,
   expandGraphwarWasmOneClickStepDagJobs,
   runGraphwarWasmOneClickTrajectoryComposition,
@@ -2550,12 +2551,7 @@ async function buildOneClickClearStepDag(
     const result = await buildOneClickClearDagEdgeRoutes(context, jobs);
     emitOneClickClearDebugTimings(options, result.timings);
     const routesByJobId = new Map(result.routes.map((route) => [route.jobId, route]));
-    const successfulRoutes = jobs.flatMap((job) => {
-      const builtRoute = routesByJobId.get(job.id);
-      return builtRoute?.type === "step-stateful" && isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
-        ? [{ builtRoute, job }]
-        : [];
-    });
+    const jobsById = new Map(jobs.map((job) => [job.id, job]));
     if (options.wasmRuntime) {
       if (!wasmStateTable) {
         throw new GraphwarWasmFault("abi", "one-click Step state table is unavailable");
@@ -2568,7 +2564,7 @@ async function buildOneClickClearStepDag(
         }
         seenRouteIds.add(route.jobId);
       }
-      const merged = wasmStateTable.consumeLayer({
+      const merged = consumeGraphwarWasmOneClickStepStateLayer(wasmStateTable, {
         jobs: jobs.map(({ id, to: targetIndex }) => ({ id, targetIndex })),
         layerIndex: wasmStateTable.layerCursor,
         results: jobs.map((job) => {
@@ -2577,6 +2573,7 @@ async function buildOneClickClearStepDag(
             isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
             ? {
                 jobId: job.id,
+                route: builtRoute.route,
                 successor: {
                   resolvedStateKey: builtRoute.stepRouteEndState.resolvedStateKey,
                   resolvedY: builtRoute.stepRouteEndState.resolvedY,
@@ -2586,7 +2583,6 @@ async function buildOneClickClearStepDag(
             : { jobId: job.id };
         }),
       });
-      const nodeIdsByJobId = new Map(merged.jobNodeIds.map(({ jobId, nodeId }) => [jobId, nodeId]));
       for (const node of merged.newNodes) {
         if (node.id !== nodes.length) {
           throw new GraphwarWasmFault("abi", "one-click Step state merge returned a sparse node id");
@@ -2607,17 +2603,12 @@ async function buildOneClickClearStepDag(
         nodes.push(targetNode);
         targetNodes.push(targetNode);
       }
-      for (const { builtRoute, job } of successfulRoutes) {
-        const evidence = {
-          resolvedStateKey: builtRoute.stepRouteEndState.resolvedStateKey,
-          resolvedY: builtRoute.stepRouteEndState.resolvedY,
-          targetIndex: job.to,
-        };
-        const nodeId = nodeIdsByJobId.get(job.id);
-        if (nodeId === undefined) {
-          throw new GraphwarWasmFault("abi", "one-click Step state merge returned a missing node id");
+      for (const routeResult of merged.routes) {
+        if (!("route" in routeResult)) {
+          continue;
         }
-        const targetNode = nodes[nodeId];
+        const evidence = routeResult.successor;
+        const targetNode = nodes[routeResult.nodeId];
         if (
           !targetNode ||
           targetNode.type !== "step-stateful" ||
@@ -2627,10 +2618,27 @@ async function buildOneClickClearStepDag(
         ) {
           throw new GraphwarWasmFault("abi", "one-click Step state merge changed node evidence");
         }
-        addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, builtRoute.route);
+        const job = jobsById.get(routeResult.jobId);
+        if (!job) {
+          throw new GraphwarWasmFault("abi", "one-click Step state merge returned an unknown route job");
+        }
+        addOneClickClearDagEdge(
+          options,
+          edges,
+          outgoingEdges,
+          job.from,
+          targetNode.id,
+          routeResult.route.map(({ x, y }) => createPixelPoint(x, y)),
+        );
       }
       return;
     }
+    const successfulRoutes = jobs.flatMap((job) => {
+      const builtRoute = routesByJobId.get(job.id);
+      return builtRoute?.type === "step-stateful" && isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
+        ? [{ builtRoute, job }]
+        : [];
+    });
     for (const { builtRoute, job } of successfulRoutes) {
       const stepRouteEndState = builtRoute.stepRouteEndState;
       const stateNodes = typescriptNodesByTargetState?.[job.to];

@@ -3032,6 +3032,17 @@ function decodeGraphwarWasmStepGlitchSessionRawResult(
     "stepGlitch.session.acceptedIndexCount",
   );
   const acceptedIndexPointer = resultView.getUint32(STEP_GLITCH_SESSION_RESULT_ACCEPTED_INDEX_POINTER_OFFSET, true);
+  if (
+    acceptedIndexCount > 0 &&
+    (acceptedIndexPointer < outputMinimumPointer ||
+      acceptedIndexPointer + acceptedIndexCount * Uint32Array.BYTES_PER_ELEMENT > resultPointer)
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch session indexes are outside this command result",
+      "output",
+    );
+  }
   const acceptedIndexes = acceptedIndexCount
     ? [
         ...copyGraphwarWasmUint32Values(
@@ -3135,10 +3146,10 @@ function decodeGraphwarWasmStepGlitchSessionRawResult(
       evidenceHeaderRange.byteLength,
     );
     const pathCount = evidenceHeader.getUint32(20, true);
-    if (finalSourceCount > pathCount) {
+    if (finalSourceCount !== pathCount) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-identity",
-        "Step-glitch session source prefix exceeds evidence path",
+        "Step-glitch session source prefix does not cover the evidence path",
         "output",
       );
     }

@@ -167,6 +167,86 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it("rejects a session result whose source count truncates its evidence path", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 25) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 96);
+        const evidencePointer = resultView.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, 296);
+        resultView.setUint32(84, evidenceView.getUint32(20, true) - 1, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.sessionRaw({
+        finalValidation: { type: "none" },
+        targets: [
+          {
+            hitTarget: target,
+            routePoint: fixture.pixelPath[2],
+            sortGraphX: graphPath[2].x,
+            sourceIndex: 31,
+          },
+        ],
+        type: "session",
+      }),
+    ).toThrow(/source prefix/u);
+    spy.mockRestore();
+    expect(
+      context.sessionRaw({
+        finalValidation: { type: "none" },
+        targets: [
+          {
+            hitTarget: target,
+            routePoint: fixture.pixelPath[2],
+            sortGraphX: graphPath[2].x,
+            sourceIndex: 31,
+          },
+        ],
+        type: "session",
+      }).status,
+    ).toBe("hit");
+    context.dispose();
+  });
+
+  it("rejects session indexes that point into the result header", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture);
+    const target = { center: fixture.pixelPath[2], radius: 2 };
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 25) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 96);
+        resultView.setUint32(72, resultPointer, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      context.sessionRaw({
+        finalValidation: { type: "none" },
+        targets: [
+          {
+            hitTarget: target,
+            routePoint: fixture.pixelPath[2],
+            sortGraphX: graphPath[2].x,
+            sourceIndex: 37,
+          },
+        ],
+        type: "session",
+      }),
+    ).toThrow(/outside this command result/u);
+    spy.mockRestore();
+    context.dispose();
+  });
+
   it("runs smart composition through command 20 and rejects a stale source count", async () => {
     const fixture = createFixture("dy");
     const { context } = await createContext(fixture);

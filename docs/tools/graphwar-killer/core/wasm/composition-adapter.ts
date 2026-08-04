@@ -589,8 +589,17 @@ export interface GraphwarWasmOneClickStepStateMergeResult {
  */
 export interface GraphwarWasmOneClickStepStateTable {
   readonly evidence: readonly GraphwarWasmOneClickStepStateEvidence[];
+  /** Number of DAG layers consumed by this retained table. */
+  readonly layerCursor: number;
   readonly nodeCount: number;
   append(batch: readonly GraphwarWasmOneClickStepStateEvidence[]): GraphwarWasmOneClickStepStateMergeResult;
+  /** Consumes one ordered layer; retries or skipped layers are typed session faults. */
+  consumeLayer(
+    layerIndex: number,
+    batch: readonly GraphwarWasmOneClickStepStateEvidence[],
+  ): GraphwarWasmOneClickStepStateMergeResult;
+  /** Invalidates the retained cursor so a cancelled DAG cannot be resumed accidentally. */
+  cancel(): void;
 }
 
 export interface GraphwarWasmOneClickEdgeJob {
@@ -2096,6 +2105,8 @@ export function createGraphwarWasmOneClickStepStateTable(
 ): GraphwarWasmOneClickStepStateTable {
   const targetCount = validateGraphwarWasmU32(input.targetCount, "step state target count", "input");
   let retainedEvidence = input.initial?.map((entry) => ({ ...entry })) ?? [];
+  let layerCursor = 0;
+  let isActive = true;
   if (retainedEvidence.length > 0) {
     const initialMerge = mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
       batch: retainedEvidence,
@@ -2118,10 +2129,16 @@ export function createGraphwarWasmOneClickStepStateTable(
     get evidence() {
       return retainedEvidence.map((entry) => ({ ...entry }));
     },
+    get layerCursor() {
+      return layerCursor;
+    },
     get nodeCount() {
       return retainedEvidence.length;
     },
     append(batch) {
+      if (!isActive) {
+        throw new GraphwarWasmAdapterError("invalid-session-state", "Step state table is no longer active", "input");
+      }
       const copiedBatch = batch.map((entry) => ({ ...entry }));
       if (copiedBatch.length === 0) {
         return { batchNodeIds: [], newNodes: [], nodeCount: retainedEvidence.length };
@@ -2151,6 +2168,22 @@ export function createGraphwarWasmOneClickStepStateTable(
         newNodes: merged.newNodes.map(({ evidence, id }) => ({ evidence: { ...evidence }, id })),
         nodeCount: merged.nodeCount,
       };
+    },
+    consumeLayer(layerIndex, batch) {
+      const validatedLayerIndex = validateGraphwarWasmU32(layerIndex, "step state layer index", "input");
+      if (validatedLayerIndex !== layerCursor) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          `Step state layer ${validatedLayerIndex} is outside retained cursor ${layerCursor}`,
+          "input",
+        );
+      }
+      const merged = this.append(batch);
+      layerCursor += 1;
+      return merged;
+    },
+    cancel() {
+      isActive = false;
     },
   };
 }

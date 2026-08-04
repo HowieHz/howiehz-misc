@@ -224,6 +224,22 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("owns ordered Step DAG layer progress and rejects reuse after cancellation", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    const first = { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 };
+    expect(table.consumeLayer(0, [first])).toEqual({
+      batchNodeIds: [0],
+      newNodes: [{ evidence: first, id: 0 }],
+      nodeCount: 1,
+    });
+    expect(table.layerCursor).toBe(1);
+    expect(() => table.consumeLayer(0, [])).toThrow(/retained cursor/u);
+    table.cancel();
+    expect(() => table.consumeLayer(1, [])).toThrow(/no longer active/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("does not mutate retained Step evidence when a later batch conflicts", async () => {
     const runtime = await createRuntime();
     const table = createGraphwarWasmOneClickStepStateTable(runtime, {

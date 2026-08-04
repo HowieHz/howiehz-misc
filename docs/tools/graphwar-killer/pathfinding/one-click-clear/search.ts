@@ -2458,7 +2458,7 @@ async function buildOneClickClearStepDag(
       if (!wasmStateTable) {
         throw new GraphwarWasmFault("abi", "one-click Step state table is unavailable");
       }
-      const merged = wasmStateTable.append(batchEvidence);
+      const merged = wasmStateTable.consumeLayer(wasmStateTable.layerCursor, batchEvidence);
       if (merged.batchNodeIds.length !== batchEvidence.length) {
         throw new GraphwarWasmFault("abi", "one-click Step state merge returned an incomplete mapping");
       }

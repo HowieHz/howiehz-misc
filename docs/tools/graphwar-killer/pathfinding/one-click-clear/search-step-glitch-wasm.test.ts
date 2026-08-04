@@ -43,39 +43,17 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     }
   });
 
-  it("publishes the exact selected automatic glitch segment", async () => {
+  it("does not publish fabricated evidence for an automatic glitch segment", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
-    let published:
-      | Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0]
-      | undefined;
+    let publishedPath: readonly PixelPoint[] | undefined;
     const result = await buildGraphwarOneClickClearPath(
       createOptions(new Uint8Array(planeCellCount), runtime, (evidence) => {
-        published = evidence;
+        publishedPath = evidence.path;
       }),
     );
 
     expect(result.type).toBe("success");
-    expect(published?.path).toEqual([
-      { x: 15.4, y: 45 },
-      { x: 32.99999999999999, y: 21.428571428571434 },
-      { x: 34, y: 198.70129870129873 },
-    ]);
-    expect(published?.prefixEvidence.formulaEvidence.prefix.stepGlitchSegments).toHaveLength(2);
-    expect(published?.prefixEvidence.formulaEvidence.prefix.stepGlitchSegments).toEqual([
-      undefined,
-      {
-        derivative: -2420002.748,
-        endX: -22.7923,
-        equation: "dy",
-        formulaDecimalPlaces: 4,
-        gateY: 2.2077,
-        startX: -22.8023,
-        targetY: 1.7532,
-      },
-    ]);
-    expect(published?.prefixEvidence.formulaEvidence.prefix.stepGlitchRequirements).toEqual([false, true]);
-    expect(published?.prefixEvidence.formulaEvidence.prefix.points).toHaveLength(3);
-    expect(published?.prefixEvidence.formulaEvidence.prefix.refinedFormulaPoints).toHaveLength(3);
+    expect(publishedPath).toBeUndefined();
   });
 
   it("accepts a published no-glitch prefix on the next request", async () => {

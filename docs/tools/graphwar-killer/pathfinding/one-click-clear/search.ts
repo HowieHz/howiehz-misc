@@ -38,7 +38,6 @@ import type {
   GraphwarWasmStepGlitchOwnedEvidence,
 } from "../../core/wasm/step-glitch-adapter";
 import { resolveStepFormula } from "../../formula/generation/step-numeric-strategy";
-import type { StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
 import {
   graphwarByteArraysEqual,
   graphwarFinalReplaySnapshotMatches,
@@ -1111,11 +1110,15 @@ function publishOneClickClearWasmStepGlitchEvidence(
     }
     pathStartIndex = targetPathIndex + 1;
     const path = route.pathPoints.slice(0, targetPathIndex + 1);
+    // Selected automatic segments still lack exact continuation arrays; keep them on cold replay.
+    if (evidence.selectedSegment) {
+      continue;
+    }
     const formulaEvidence =
       path.length === evidence.path.length
         ? (evidence.formulaContext.stepGlitchFormulaEvidence ??
-          createGraphwarWasmFormulaEvidence(options, evidence, path.length))
-        : createGraphwarWasmFormulaEvidence(options, evidence, path.length);
+          createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, path.length))
+        : createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, path.length);
     if (!formulaEvidence) {
       continue;
     }
@@ -1141,87 +1144,6 @@ function publishOneClickClearWasmStepGlitchEvidence(
       }),
     );
   }
-}
-
-function createGraphwarWasmFormulaEvidence(
-  options: GraphwarOneClickClearSearchOptions,
-  evidence: GraphwarWasmStepGlitchOwnedEvidence,
-  pointCount: number,
-) {
-  return evidence.selectedSegment
-    ? createGraphwarWasmSelectedGlitchFormulaEvidence(options, evidence, pointCount)
-    : createGraphwarWasmNoGlitchFormulaEvidence(options, evidence, pointCount);
-}
-
-/** Transfers the exact selected automatic term; no segment is regenerated from soft trajectory samples. */
-function createGraphwarWasmSelectedGlitchFormulaEvidence(
-  options: GraphwarOneClickClearSearchOptions,
-  evidence: GraphwarWasmStepGlitchOwnedEvidence,
-  pointCount: number,
-): GraphwarStepGlitchFormulaEvidence | undefined {
-  const selected = evidence.selectedSegment;
-  const stepFormula = evidence.formulaMaterials.stepFormula;
-  const points = evidence.formulaInput.points;
-  const formulaPoints = evidence.formulaLaunch.formulaPoints;
-  if (!selected || !stepFormula || points.length !== formulaPoints.length) {
-    return undefined;
-  }
-  const segmentCount = pointCount - 1;
-  if (
-    pointCount < 2 ||
-    pointCount > points.length ||
-    pointCount > formulaPoints.length ||
-    selected.segmentIndex < 0 ||
-    selected.segmentIndex >= segmentCount ||
-    evidence.protection.length < segmentCount
-  ) {
-    return undefined;
-  }
-
-  const stepGlitchSegments: (StepGlitchSegment | undefined)[] = new Array(segmentCount).fill(undefined);
-  const stepGlitchRequirements = new Array<boolean>(segmentCount).fill(false);
-  for (const term of stepFormula.terms) {
-    if (!term.glitchSegment || term.sourceSegmentIndex >= segmentCount) {
-      continue;
-    }
-    if (stepGlitchSegments[term.sourceSegmentIndex] !== undefined) {
-      return undefined;
-    }
-    stepGlitchSegments[term.sourceSegmentIndex] = term.glitchSegment;
-    stepGlitchRequirements[term.sourceSegmentIndex] = true;
-  }
-  if (stepGlitchSegments[selected.segmentIndex] === undefined) {
-    return undefined;
-  }
-
-  return {
-    prefix: {
-      bounds: { ...evidence.formulaInput.bounds },
-      initialFormulaPoints: points.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
-      points: points.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
-      refinedFormulaPoints: formulaPoints.slice(0, pointCount).map((point) => createGraphPoint(point.x, point.y)),
-      segmentStartPoints: new Array<GraphPoint | undefined>(segmentCount).fill(undefined),
-      ...(evidence.formulaLaunch.launch.equation === "y"
-        ? {}
-        : { launchAngleRadians: evidence.formulaLaunch.launch.angleRadians }),
-      settings: {
-        ...evidence.formulaInput.settings,
-        ...(options.simulationMask ? { stepGlitchObstacleMask: options.simulationMask } : {}),
-      },
-      ...(evidence.formulaContext.soldierCenter
-        ? {
-            soldierCenter: createGraphPoint(
-              evidence.formulaContext.soldierCenter.x,
-              evidence.formulaContext.soldierCenter.y,
-            ),
-          }
-        : {}),
-      stepGlitchRequirements,
-      stepGlitchSegments,
-      stepSegmentDeltaYs: new Array<number | undefined>(segmentCount).fill(undefined),
-      signProtection: evidence.protection.slice(0, segmentCount),
-    },
-  };
 }
 
 /** Rebuilds only the no-glitch prefix shape; selected WASM glitch segments need a richer ABI before reuse is safe. */

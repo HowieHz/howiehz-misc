@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # https://github.com/pnpm/action-setup/releases/tag/v6.0.9
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # https://github.com/pnpm/action-setup/releases/tag/v6.0.10
         name: Install pnpm
         with:
           run_install: false
@@ -125,7 +125,7 @@ jobs:
             package.json
           sparse-checkout-cone-mode: false
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # https://github.com/pnpm/action-setup/releases/tag/v6.0.9
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # https://github.com/pnpm/action-setup/releases/tag/v6.0.10
         name: Install pnpm
         with:
           run_install: false

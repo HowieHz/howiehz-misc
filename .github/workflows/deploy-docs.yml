@@ -51,7 +51,7 @@ jobs:
           name: docs-dist
           path: docs/.vitepress/dist
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # https://github.com/pnpm/action-setup/releases/tag/v6.0.9
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # https://github.com/pnpm/action-setup/releases/tag/v6.0.10
         with:
           run_install: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # https://github.com/actions/setup-node/releases/tag/v7.0.0

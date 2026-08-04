@@ -583,6 +583,24 @@ export interface GraphwarWasmOneClickStepStateMergeResult {
   readonly nodeCount: number;
 }
 
+/** One edge-worker result; absence of successor evidence is the normal unreachable business result. */
+export interface GraphwarWasmOneClickStepStateEdgeResult {
+  readonly jobId: number;
+  readonly successor?: GraphwarWasmOneClickStepStateEvidence;
+}
+
+/** Complete retained Step layer batch. Jobs and results must have the same stable identity set. */
+export interface GraphwarWasmOneClickStepStateLayerInput {
+  readonly jobs: readonly { readonly id: number; readonly targetIndex: number }[];
+  readonly layerIndex: number;
+  readonly results: readonly GraphwarWasmOneClickStepStateEdgeResult[];
+}
+
+/** Layer merge result keeps each edge job bound to its adapter-owned successor node. */
+export interface GraphwarWasmOneClickStepStateLayerResult extends GraphwarWasmOneClickStepStateMergeResult {
+  readonly jobNodeIds: readonly { readonly jobId: number; readonly nodeId?: number }[];
+}
+
 /**
  * Adapter-retained Step evidence validated by WASM interning. Callers receive copies only; node identity and evidence
  * cannot be spliced by mutating a previously completed edge batch.
@@ -594,10 +612,7 @@ export interface GraphwarWasmOneClickStepStateTable {
   readonly nodeCount: number;
   append(batch: readonly GraphwarWasmOneClickStepStateEvidence[]): GraphwarWasmOneClickStepStateMergeResult;
   /** Consumes one ordered layer; retries or skipped layers are typed session faults. */
-  consumeLayer(
-    layerIndex: number,
-    batch: readonly GraphwarWasmOneClickStepStateEvidence[],
-  ): GraphwarWasmOneClickStepStateMergeResult;
+  consumeLayer(input: GraphwarWasmOneClickStepStateLayerInput): GraphwarWasmOneClickStepStateLayerResult;
   /** Invalidates the retained cursor so a cancelled DAG cannot be resumed accidentally. */
   cancel(): void;
 }
@@ -2169,8 +2184,8 @@ export function createGraphwarWasmOneClickStepStateTable(
         nodeCount: merged.nodeCount,
       };
     },
-    consumeLayer(layerIndex, batch) {
-      const validatedLayerIndex = validateGraphwarWasmU32(layerIndex, "step state layer index", "input");
+    consumeLayer(input) {
+      const validatedLayerIndex = validateGraphwarWasmU32(input.layerIndex, "step state layer index", "input");
       if (validatedLayerIndex !== layerCursor) {
         throw new GraphwarWasmAdapterError(
           "invalid-session-state",
@@ -2178,9 +2193,106 @@ export function createGraphwarWasmOneClickStepStateTable(
           "input",
         );
       }
-      const merged = this.append(batch);
+      if (input.jobs.length !== input.results.length) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-work-batch",
+          "Step state layer jobs and results must have the same count",
+          "input",
+        );
+      }
+      const jobsById = new Map<number, number>();
+      for (const [index, job] of input.jobs.entries()) {
+        const jobId = validateGraphwarWasmU32(job.id, `step state jobs[${index}].id`, "input");
+        const targetIndex = validateGraphwarWasmU32(job.targetIndex, `step state jobs[${index}].targetIndex`, "input");
+        if (targetIndex >= targetCount) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `Step state layer job ${jobId} targets outside the retained target table`,
+            "input",
+          );
+        }
+        if (jobsById.has(jobId)) {
+          throw new GraphwarWasmAdapterError(
+            "duplicate-work-id",
+            `Step state layer job ${jobId} is duplicated`,
+            "input",
+          );
+        }
+        jobsById.set(jobId, targetIndex);
+      }
+      const seenResultIds = new Set<number>();
+      const successfulResults: GraphwarWasmOneClickStepStateEdgeResult[] = [];
+      for (const [index, result] of input.results.entries()) {
+        const jobId = validateGraphwarWasmU32(result.jobId, `step state results[${index}].jobId`, "input");
+        const targetIndex = jobsById.get(jobId);
+        if (targetIndex === undefined) {
+          throw new GraphwarWasmAdapterError(
+            "unexpected-work-id",
+            `Step state result ${jobId} is not in the retained layer`,
+            "input",
+          );
+        }
+        if (seenResultIds.has(jobId)) {
+          throw new GraphwarWasmAdapterError(
+            "duplicate-work-id",
+            `Step state layer result ${jobId} is duplicated`,
+            "input",
+          );
+        }
+        seenResultIds.add(jobId);
+        if (result.successor) {
+          const successorTargetIndex = validateGraphwarWasmU32(
+            result.successor.targetIndex,
+            `step state results[${index}].successor.targetIndex`,
+            "input",
+          );
+          if (successorTargetIndex !== targetIndex) {
+            throw new GraphwarWasmAdapterError(
+              "invalid-session-identity",
+              `Step state result ${jobId} changed its successor target`,
+              "input",
+            );
+          }
+          successfulResults.push({
+            jobId,
+            successor: {
+              resolvedStateKey: result.successor.resolvedStateKey,
+              resolvedY: result.successor.resolvedY,
+              targetIndex: successorTargetIndex,
+            },
+          });
+        }
+      }
+      for (const jobId of jobsById.keys()) {
+        if (!seenResultIds.has(jobId)) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-work-batch",
+            `Step state layer is missing result ${jobId}`,
+            "input",
+          );
+        }
+      }
+      const merged = this.append(successfulResults.flatMap((result) => (result.successor ? [result.successor] : [])));
+      const nodeIdsByJobId = new Map<number, number>();
+      for (const [index, result] of successfulResults.entries()) {
+        const nodeId = merged.batchNodeIds[index];
+        if (nodeId === undefined) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-state",
+            `Step state layer result ${result.jobId} lost its successor node`,
+            "output",
+          );
+        }
+        nodeIdsByJobId.set(result.jobId, nodeId);
+      }
       layerCursor += 1;
-      return merged;
+      return {
+        ...merged,
+        jobNodeIds: input.results.map((result) => {
+          const nodeId = nodeIdsByJobId.get(result.jobId);
+          return nodeId === undefined ? { jobId: result.jobId } : { jobId: result.jobId, nodeId };
+        }),
+      };
     },
     cancel() {
       isActive = false;

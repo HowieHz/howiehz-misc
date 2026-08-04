@@ -2450,18 +2450,36 @@ async function buildOneClickClearStepDag(
         : [];
     });
     if (options.wasmRuntime) {
-      const batchEvidence = successfulRoutes.map<GraphwarWasmOneClickStepStateEvidence>(({ builtRoute, job }) => ({
-        resolvedStateKey: builtRoute.stepRouteEndState.resolvedStateKey,
-        resolvedY: builtRoute.stepRouteEndState.resolvedY,
-        targetIndex: job.to,
-      }));
       if (!wasmStateTable) {
         throw new GraphwarWasmFault("abi", "one-click Step state table is unavailable");
       }
-      const merged = wasmStateTable.consumeLayer(wasmStateTable.layerCursor, batchEvidence);
-      if (merged.batchNodeIds.length !== batchEvidence.length) {
-        throw new GraphwarWasmFault("abi", "one-click Step state merge returned an incomplete mapping");
+      const expectedJobIds = new Set(jobs.map(({ id }) => id));
+      const seenRouteIds = new Set<number>();
+      for (const route of result.routes) {
+        if (!expectedJobIds.has(route.jobId) || seenRouteIds.has(route.jobId)) {
+          throw new GraphwarWasmFault("abi", "one-click Step edge result changed its stable job identity");
+        }
+        seenRouteIds.add(route.jobId);
       }
+      const merged = wasmStateTable.consumeLayer({
+        jobs: jobs.map(({ id, to: targetIndex }) => ({ id, targetIndex })),
+        layerIndex: wasmStateTable.layerCursor,
+        results: jobs.map((job) => {
+          const builtRoute = routesByJobId.get(job.id);
+          return builtRoute?.type === "step-stateful" &&
+            isGraphwarOneClickClearStepRouteState(builtRoute.stepRouteEndState)
+            ? {
+                jobId: job.id,
+                successor: {
+                  resolvedStateKey: builtRoute.stepRouteEndState.resolvedStateKey,
+                  resolvedY: builtRoute.stepRouteEndState.resolvedY,
+                  targetIndex: job.to,
+                },
+              }
+            : { jobId: job.id };
+        }),
+      });
+      const nodeIdsByJobId = new Map(merged.jobNodeIds.map(({ jobId, nodeId }) => [jobId, nodeId]));
       for (const node of merged.newNodes) {
         if (node.id !== nodes.length) {
           throw new GraphwarWasmFault("abi", "one-click Step state merge returned a sparse node id");
@@ -2482,8 +2500,13 @@ async function buildOneClickClearStepDag(
         nodes.push(targetNode);
         targetNodes.push(targetNode);
       }
-      for (const [index, evidence] of batchEvidence.entries()) {
-        const nodeId = merged.batchNodeIds[index];
+      for (const { builtRoute, job } of successfulRoutes) {
+        const evidence = {
+          resolvedStateKey: builtRoute.stepRouteEndState.resolvedStateKey,
+          resolvedY: builtRoute.stepRouteEndState.resolvedY,
+          targetIndex: job.to,
+        };
+        const nodeId = nodeIdsByJobId.get(job.id);
         if (nodeId === undefined) {
           throw new GraphwarWasmFault("abi", "one-click Step state merge returned a missing node id");
         }
@@ -2497,12 +2520,7 @@ async function buildOneClickClearStepDag(
         ) {
           throw new GraphwarWasmFault("abi", "one-click Step state merge changed node evidence");
         }
-        const route = successfulRoutes[index]?.builtRoute.route;
-        const job = successfulRoutes[index]?.job;
-        if (!route || !job) {
-          throw new GraphwarWasmFault("abi", "one-click Step state merge lost route evidence");
-        }
-        addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, route);
+        addOneClickClearDagEdge(options, edges, outgoingEdges, job.from, targetNode.id, builtRoute.route);
       }
       return;
     }

@@ -228,15 +228,87 @@ describe("Graphwar WASM composition adapter", () => {
     const runtime = await createRuntime();
     const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
     const first = { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 };
-    expect(table.consumeLayer(0, [first])).toEqual({
+    expect(
+      table.consumeLayer({
+        jobs: [{ id: 7, targetIndex: 0 }],
+        layerIndex: 0,
+        results: [{ jobId: 7, successor: first }],
+      }),
+    ).toEqual({
       batchNodeIds: [0],
+      jobNodeIds: [{ jobId: 7, nodeId: 0 }],
       newNodes: [{ evidence: first, id: 0 }],
       nodeCount: 1,
     });
     expect(table.layerCursor).toBe(1);
-    expect(() => table.consumeLayer(0, [])).toThrow(/retained cursor/u);
+    expect(() => table.consumeLayer({ jobs: [], layerIndex: 0, results: [] })).toThrow(/retained cursor/u);
     table.cancel();
-    expect(() => table.consumeLayer(1, [])).toThrow(/no longer active/u);
+    expect(() => table.consumeLayer({ jobs: [], layerIndex: 1, results: [] })).toThrow(/no longer active/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    {
+      name: "missing result",
+      mutate: (jobs: readonly { id: number; targetIndex: number }[]) => ({
+        jobs,
+        layerIndex: 0,
+        results: [],
+      }),
+      message: /same count/u,
+    },
+    {
+      name: "stale result",
+      mutate: (jobs: readonly { id: number; targetIndex: number }[]) => ({
+        jobs,
+        layerIndex: 0,
+        results: [{ jobId: 999 }],
+      }),
+      message: /retained layer/u,
+    },
+  ])("rejects $name Step edge identity", async ({ mutate, message }) => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    const jobs = [{ id: 3, targetIndex: 1 }];
+    expect(() => table.consumeLayer(mutate(jobs))).toThrow(message);
+    expect(table.layerCursor).toBe(0);
+    expect(table.evidence).toEqual([]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects duplicate Step edge results even when the batch count matches", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    expect(() =>
+      table.consumeLayer({
+        jobs: [
+          { id: 3, targetIndex: 0 },
+          { id: 4, targetIndex: 1 },
+        ],
+        layerIndex: 0,
+        results: [{ jobId: 3 }, { jobId: 3 }],
+      }),
+    ).toThrow(/duplicated/u);
+    expect(table.layerCursor).toBe(0);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a Step successor whose target identity differs from its job", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    expect(() =>
+      table.consumeLayer({
+        jobs: [{ id: 4, targetIndex: 1 }],
+        layerIndex: 0,
+        results: [
+          {
+            jobId: 4,
+            successor: { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 },
+          },
+        ],
+      }),
+    ).toThrow(/successor target/u);
+    expect(table.layerCursor).toBe(0);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 

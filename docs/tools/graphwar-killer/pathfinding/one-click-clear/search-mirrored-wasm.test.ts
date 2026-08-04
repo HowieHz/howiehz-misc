@@ -986,6 +986,50 @@ describe("one-click-clear mirrored WASM guard", () => {
       beginOneClickClearSpy.mockRestore();
     }
   });
+
+  it("rejects duplicate Step edge result identities before merging a retained layer", async () => {
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const start = createPixelPoint(100, 225);
+    const candidates = [
+      { id: "first", isEnemy: true, hitCenter: createPixelPoint(300, 225), hitRadius: 4 },
+      { id: "second", isEnemy: true, hitCenter: createPixelPoint(500, 225), hitRadius: 4 },
+    ];
+    const options = {
+      boundaryExpansion: 0,
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      boundsRect,
+      buildDagEdges: async (request: GraphwarOneClickClearDagEdgeBuildRequest) => {
+        const job = request.jobs.find(isStepStatefulJob);
+        if (!job) {
+          return { routes: [], timings: [] };
+        }
+        const route = createSuccessfulStepRoute(job, [job.startPoint, job.targetPoint]);
+        return { routes: [route, { ...route }], timings: [] };
+      },
+      candidates,
+      deleteHitCheckRadiusPixels: 0,
+      formulaMode: createGraphwarTrajectoryFormulaMode({
+        algorithm: "step",
+        decimalPlaces: 4,
+        equation: "y",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+        steepness: 67,
+      }),
+      hitCandidates: candidates,
+      isDeleteOptimizationEnabled: false,
+      pathPoints: [start],
+      routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+      routeMode: "visibility-graph",
+      simulationBoundaryExpansion: 0,
+      simulationMaskCacheId: 0,
+      validateStepRoute: () => true,
+      wasmRequestNonce: 32,
+      wasmRuntime: runtime,
+    } satisfies GraphwarOneClickClearBuildOptions;
+
+    await expect(buildGraphwarOneClickClearPath(options)).rejects.toThrow(/stable job identity/u);
+  });
 });
 
 function isStatelessJob(

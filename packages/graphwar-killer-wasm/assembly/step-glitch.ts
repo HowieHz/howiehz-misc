@@ -639,9 +639,26 @@ function copyProductionReplayEvidence(
   const materialPointer = load<u32>(materialResultPointer + FormulaLayout.FORMULA_RESULT_MATERIAL_POINTER_OFFSET);
   const materialCount = load<u32>(materialResultPointer + FormulaLayout.FORMULA_RESULT_MATERIAL_COUNT_OFFSET);
   const materialStride = load<u32>(materialResultPointer + FormulaLayout.FORMULA_RESULT_MATERIAL_STRIDE_OFFSET);
+  const glitchPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET);
+  let selectedSegmentIndex: u32 = 0;
+  let hasSelectedSegment = false;
+  // Automatic replay has no fixed-window pointer; retain its source segment identity.
+  let materialIndex: u32 = 0;
+  while (materialIndex < materialCount) {
+    const materialRecord = materialPointer + materialIndex * materialStride;
+    if (
+      glitchPointer == 0 &&
+      load<i32>(materialRecord + FormulaLayout.STEP_MATERIAL_GLITCH_EQUATION_OFFSET) != 0
+    ) {
+      if (!hasSelectedSegment) {
+        selectedSegmentIndex = load<u32>(materialRecord + FormulaLayout.STEP_MATERIAL_SOURCE_SEGMENT_OFFSET);
+        hasSelectedSegment = true;
+      }
+    }
+    materialIndex += 1;
+  }
   const maskPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_POINTER_OFFSET);
   const maskByteLength = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_MASK_BYTE_LENGTH_OFFSET);
-  const glitchPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET);
   const overflowPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET);
   const segmentCount = pathCount - 1;
   const continuationPointer = load<u32>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_EVIDENCE_POINTER_OFFSET);
@@ -781,7 +798,9 @@ function copyProductionReplayEvidence(
   store<u32>(copiedLaunchResultPointer + FormulaLayout.FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET, copiedProtectionPointer);
   store<u32>(copiedLaunchResultPointer + FormulaLayout.FORMULA_LAUNCH_RESULT_FORMULA_POINT_X_POINTER_OFFSET, copiedFormulaPointXPointer);
   store<u32>(copiedLaunchResultPointer + FormulaLayout.FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET, copiedFormulaPointYPointer);
-  const flags = finalValidationPointer == 0 ? 0 : 1;
+  const flags =
+    (finalValidationPointer == 0 ? 0 : Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION) |
+    (hasSelectedSegment ? Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT : 0);
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC_OFFSET, Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC);
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION_OFFSET, Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION);
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAGS_OFFSET, flags);
@@ -859,6 +878,10 @@ function copyProductionReplayEvidence(
     load<f64>(trajectoryResultPointer + TrajectoryLayout.TRAJECTORY_RESULT_PATH_ERROR_OFFSET),
   );
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET, load<u32>(cursorPointer));
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET,
+    selectedSegmentIndex,
+  );
   return evidencePointer;
 }
 

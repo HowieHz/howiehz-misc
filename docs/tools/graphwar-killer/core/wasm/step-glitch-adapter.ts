@@ -124,8 +124,13 @@ const STEP_GLITCH_PRODUCTION_RESULT_RESERVED_OFFSET = 64;
 const STEP_GLITCH_PRODUCTION_RESULT_MAGIC = 0x5347_5052;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC = 0x5347_4556;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION = 1;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION = 1;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT = 2;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_ALLOWED_FLAGS =
+  STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION | STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 296;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET = 248;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET = 252;
 const FORMULA_INPUT_BYTE_LENGTH = 176;
 const FORMULA_RESULT_BYTE_LENGTH = 48;
 const FORMULA_LAUNCH_RESULT_BYTE_LENGTH = 80;
@@ -761,6 +766,12 @@ export type GraphwarWasmStepGlitchOwnedFinalValidation =
       type: "validated";
     };
 
+/** Exact automatic/fixed glitch term selected by the production replay. */
+export interface GraphwarWasmStepGlitchOwnedSelectedSegment {
+  readonly segment: Readonly<StepGlitchSegment>;
+  readonly segmentIndex: number;
+}
+
 /**
  * Stable evidence copied from one successful replay. Pointer-bearing records are decoded while the arena is live;
  * callers only retain these owned values.
@@ -782,6 +793,8 @@ export interface GraphwarWasmStepGlitchOwnedEvidence {
   readonly protection: readonly number[];
   /** Required target order retained by the scan context for multi-target composition provenance. */
   readonly requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
+  /** Optional selected term; absent means the replay used only ordinary Step terms. */
+  readonly selectedSegment?: GraphwarWasmStepGlitchOwnedSelectedSegment;
   /** Scan-only target identity retained for smart composition provenance checks. */
   readonly scanTarget?: GraphwarTrajectoryTargetCircle;
   readonly trackedTargetHitIndexes: readonly number[];
@@ -1615,6 +1628,16 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   outputMinimumPointer: number,
 ): GraphwarWasmStepGlitchOwnedEvidence {
   const header = new DataView(runtime.buffer, evidencePointer, evidenceByteLength);
+  const evidenceFlags = header.getUint32(8, true);
+  if ((evidenceFlags & ~STEP_GLITCH_PRODUCTION_EVIDENCE_ALLOWED_FLAGS) !== 0) {
+    productionEvidenceFault("Step-glitch evidence contains unsupported flags");
+  }
+  const hasFinalValidation = (evidenceFlags & STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION) !== 0;
+  const hasSelectedSegment = (evidenceFlags & STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT) !== 0;
+  const selectedSegmentIndex = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET, true);
+  if (!hasSelectedSegment && selectedSegmentIndex !== 0) {
+    productionEvidenceFault("Step-glitch evidence contains a segment index without selected-segment evidence");
+  }
   const pathCount = validateGraphwarWasmU32(header.getUint32(20, true), "stepGlitch.evidence.pathCount");
   const pointCount = validateGraphwarWasmU32(header.getUint32(36, true), "stepGlitch.evidence.pointCount");
   const visibleCount = validateGraphwarWasmU32(header.getUint32(48, true), "stepGlitch.evidence.visibleCount");
@@ -2051,6 +2074,13 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   );
   if (formulaLaunch.status !== "success")
     productionEvidenceFault("Step-glitch evidence contains an invalid launch result");
+  const selectedSegment = decodeOwnedSelectedSegment(
+    formulaLaunch.compiledMaterials,
+    hasSelectedSegment,
+    selectedSegmentIndex,
+    pathCount,
+    hasFixedWindows,
+  );
   if (
     !productionEvidencePointsEqual(
       formulaLaunch.formulaPoints,
@@ -2074,6 +2104,9 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     finalValidationLength,
     outputMinimumPointer,
   );
+  if (hasFinalValidation !== (finalValidation.type === "validated")) {
+    productionEvidenceFault("Step-glitch evidence final-validation flag does not match its payload");
+  }
   const trackedTargetHitIndexes = [
     ...readOwnedProductionEvidenceInt32Values(
       runtime,
@@ -2234,6 +2267,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
       center: createPixelPoint(target.center.x, target.center.y),
       radius: target.radius,
     })),
+    ...(selectedSegment ? { selectedSegment } : {}),
     ...(continuation ? { continuation } : {}),
     ...(command.type === "scan"
       ? {
@@ -2253,6 +2287,31 @@ function pointsFromFloatArrays(xs: readonly number[], ys: readonly number[]) {
   return Array.from(xs, (x, index) =>
     createGraphPoint(x, productionEvidenceValue(ys, index, `formulaPoints[${index}].y`)),
   );
+}
+
+function decodeOwnedSelectedSegment(
+  materials: CompiledGraphwarFormulaMaterials,
+  hasSelectedSegment: boolean,
+  segmentIndex: number,
+  pathCount: number,
+  hasFixedWindows: boolean,
+): GraphwarWasmStepGlitchOwnedSelectedSegment | undefined {
+  const stepFormula = materials.stepFormula;
+  const glitchTerms = stepFormula?.terms.filter((term) => term.glitchSegment !== undefined) ?? [];
+  if (!hasSelectedSegment) {
+    if (!hasFixedWindows && glitchTerms.length > 0) {
+      productionEvidenceFault("Step-glitch evidence contains a glitch term without selected-segment identity");
+    }
+    return undefined;
+  }
+  if (!stepFormula || segmentIndex >= pathCount - 1) {
+    productionEvidenceFault("Step-glitch selected segment is outside the formula path");
+  }
+  const term = glitchTerms.find((candidate) => candidate.sourceSegmentIndex === segmentIndex);
+  if (!term?.glitchSegment) {
+    productionEvidenceFault("Step-glitch selected segment is absent from formula materials");
+  }
+  return { segment: term.glitchSegment, segmentIndex };
 }
 
 function decodeOwnedProductionFinalValidation(

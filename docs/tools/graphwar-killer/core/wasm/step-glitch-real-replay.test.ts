@@ -72,6 +72,10 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     expect(scan.evidence?.magic).toBe(0x5347_4556);
     const evidenceBytes = scan.evidence?.bytes;
     if (!evidenceBytes) throw new Error("expected copied production evidence");
+    expect(scan.evidence?.owned.selectedSegment).toMatchObject({
+      segment: { equation: "dy" },
+      segmentIndex: 1,
+    });
     expect(scan.evidence?.owned.formulaContext).not.toHaveProperty("stepGlitchFormulaEvidence");
     const evidenceView = new DataView(evidenceBytes.buffer, evidenceBytes.byteOffset, evidenceBytes.byteLength);
     const continuation = scan.evidence?.owned.continuation;
@@ -760,6 +764,37 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
         new DataView(runtime.buffer).setUint32(formulaInputPointer + 12, 0, true);
       },
       name: "formula glitch-mode flag differs from the retained settings",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(8, 0x8000_0000, true);
+      },
+      name: "evidence contains an unsupported flag",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(8, evidenceView.getUint32(8, true) & ~2, true);
+      },
+      name: "selected segment index is present without its flag",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(8, evidenceView.getUint32(8, true) | 1, true);
+      },
+      name: "final validation flag is present without its payload",
+    },
+    {
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        new DataView(runtime.buffer).setUint32(evidencePointer + 252, 0xffff_ffff, true);
+      },
+      name: "selected segment index is outside the formula path",
     },
     {
       mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {

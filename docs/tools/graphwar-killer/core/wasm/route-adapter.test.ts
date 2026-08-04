@@ -11,6 +11,7 @@ import {
   createGraphwarStepPathfindingEdgeEvaluator,
   createGraphwarStepRouteSummedArea,
   evaluateGraphwarStepRouteTransition,
+  validateGraphwarStepRoutePath,
 } from "../../pathfinding/routing/step-route";
 import { buildGraphwarThetaStarPathForMask } from "../../pathfinding/routing/theta-star";
 import {
@@ -21,7 +22,7 @@ import {
   type GraphwarPathfindingPreview,
 } from "../../pathfinding/routing/visibility-graph";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
-import { imageToGraphPoint } from "../geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../geometry";
 import { mirrorPlaneGridPoint, type PlaneGridPoint } from "../plane-grid";
 import { graphwarToolDefaults } from "../tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../types";
@@ -114,6 +115,249 @@ describe("Graphwar WASM route context", () => {
       });
     }
     expect(runtime.arenaCursor).toBe(contextCursor);
+    context.dispose();
+  });
+
+  it.each([
+    { isMirrored: false, name: "direct" },
+    { isMirrored: true, name: "mirrored" },
+  ])("validates a complete Step path in one WASM command for $name", async ({ isMirrored }) => {
+    const runtime = await createRuntime();
+    const routeBounds = isMirrored ? { ...bounds, maxX: bounds.minX, minX: bounds.maxX } : bounds;
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds: routeBounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const graphPoints = [createGraphPoint(-20, 0), createGraphPoint(-5, 5), createGraphPoint(10, 5)];
+    const expected = validateGraphwarStepRoutePath({
+      boundaryInset: 0,
+      bounds: routeBounds,
+      boundsRect,
+      model,
+      points: graphPoints.map((point) => graphToImagePoint(point, routeBounds, boundsRect)),
+      summedArea: createGraphwarStepRouteSummedArea(context.routeMask),
+    });
+    const runRouteTask = vi.spyOn(runtime, "runRouteTask");
+    const actual = stepRoute.validatePath(graphPoints);
+
+    expect(actual).toEqual(expected);
+    expect(runRouteTask.mock.calls.filter(([command]) => command === 23)).toHaveLength(1);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(false);
+    expect(runtime.arenaCursor).toBeGreaterThan(runtime.arenaBase);
+    context.dispose();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("returns the first invalid Step segment and preserves normal failure semantics", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const graphPoints = [createGraphPoint(-20, 0), createGraphPoint(-5, 5), createGraphPoint(-5, 5)];
+    const expected = validateGraphwarStepRoutePath({
+      boundaryInset: 0,
+      bounds,
+      boundsRect,
+      model,
+      points: graphPoints.map((point) => graphToImagePoint(point, bounds, boundsRect)),
+      summedArea: createGraphwarStepRouteSummedArea(context.routeMask),
+    });
+    const runRouteTask = vi.spyOn(runtime, "runRouteTask");
+    const actual = stepRoute.validatePath(graphPoints);
+
+    expect(expected).toEqual({ invalidSegmentIndex: 1, ok: false, reason: "non-forward" });
+    expect(actual).toEqual(expected);
+    expect(runRouteTask.mock.calls.filter(([command]) => command === 23)).toHaveLength(1);
+    expect(runRouteTask.mock.calls.some(([command]) => command === 8)).toBe(false);
+    context.dispose();
+  });
+
+  it("keeps empty and single-point Step validation on the normal path", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const runRouteTask = vi.spyOn(runtime, "runRouteTask");
+    expect(stepRoute.validatePath([])).toEqual({ ok: false, reason: "numeric" });
+    expect(stepRoute.validatePath([createGraphPoint(-20, 0)])).toEqual({
+      ok: true,
+      resolvedEndY: 0,
+      routeStateKey: "0",
+    });
+    expect(runRouteTask.mock.calls.filter(([command]) => command === 23)).toHaveLength(1);
+    context.dispose();
+  });
+
+  it("rejects a WASM Step path result with an out-of-range failure segment", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 23) {
+        const result = new DataView(runtime.buffer, resultPointer, 40);
+        result.setUint32(4, 1, true);
+        result.setInt32(8, 100, true);
+        result.setFloat64(16, 0, true);
+        result.setInt32(24, 0, true);
+        result.setUint32(28, 0, true);
+        result.setUint32(32, 0, true);
+      }
+      return resultPointer;
+    });
+    expect(() => stepRoute.validatePath([createGraphPoint(-20, 0), createGraphPoint(-5, 5)])).toThrow(
+      /failure segment is outside its path/u,
+    );
+    context.dispose();
+  });
+
+  it("rejects terminal state evidence on a failed Step path", async () => {
+    const runtime = await createRuntime();
+    const model = createGraphwarStepRouteModel(0, {
+      decimalPlaces: 4,
+      equation: "y",
+      formulaPathSteepness: 2,
+      steepness: 2,
+    });
+    if (!model) {
+      throw new Error("Expected a valid Step route model");
+    }
+    const context = createGraphwarWasmRouteContext(runtime, {
+      boundaryExpansion: 0,
+      bounds,
+      boundsRect,
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 120, y: 225 },
+      routeTolerancePlanePixels: 0,
+      simulationTolerancePlanePixels: 0,
+      soldierHitRadiusPixels: 7,
+      sourceMaskType: "base",
+      sourceMask: new Uint8Array(planeCellCount),
+      stepRouteModel: {
+        ...model,
+        qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+      },
+    });
+    const stepRoute = context.stepRoute;
+    if (!stepRoute) {
+      throw new Error("Expected a retained Step route capability");
+    }
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 23) {
+        new DataView(runtime.buffer, resultPointer, 40).setInt32(24, 1, true);
+      }
+      return resultPointer;
+    });
+    expect(() => stepRoute.validatePath([createGraphPoint(-20, 0), createGraphPoint(-20, 5)])).toThrow(
+      /failed Step path validation contains terminal state/u,
+    );
     context.dispose();
   });
 

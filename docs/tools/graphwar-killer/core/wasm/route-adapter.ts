@@ -8,6 +8,7 @@ import type {
   GraphwarStepEnvelopeInvalidReason,
   PlaneMaskClosedRegion,
 } from "../../pathfinding/routing/step-envelope";
+import type { GraphwarStepRoutePathValidation } from "../../pathfinding/routing/step-route";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import { graphToImagePoint, imageToGraphPoint } from "../geometry";
 import {
@@ -27,6 +28,7 @@ import {
   validateGraphwarWasmFiniteNumber,
   validateGraphwarWasmMemoryRange,
   validateGraphwarWasmU32,
+  writeGraphwarWasmFloat64Values,
   writeGraphwarWasmUint32Values,
 } from "./abi";
 import {
@@ -56,6 +58,7 @@ const routeCommand = {
   stepTransition: 8,
   stepThetaStar: 9,
   stepVisibilityGraph: 10,
+  stepPathValidation: 23,
 } as const;
 const routeCreateInputByteLength = 52;
 const routeContextByteLength = graphwarWasmRouteContextByteLength;
@@ -76,12 +79,28 @@ const routeStepModelByteLength = 40;
 const routeStepTransitionInputByteLength = 64;
 const routeStepTransitionResultByteLength = 160;
 const routeStepTransitionResultMagic = 0x5354_4550;
+const routeStepPathValidationInputByteLength = 24;
+const routeStepPathValidationResultByteLength = 40;
+const routeStepPathValidationResultMagic = 0x5354_5056;
+const routeStepPathValidationResultInvalidSegmentIndexOffset = 8;
+const routeStepPathValidationResultResolvedEndYOffset = 16;
+const routeStepPathValidationResultStateSignOffset = 24;
+const routeStepPathValidationResultStatePointerOffset = 28;
+const routeStepPathValidationResultStateCountOffset = 32;
 const routeStepSearchInputByteLength = 104;
 const routeStepSearchResultByteLength = 56;
 const routeStepSearchResultMagic = 0x5354_4854;
 const routeBoundaryEdgeRecordU32Length = 5;
 const planeCellCount = 770 * 450;
 const summedAreaValueCount = 771 * 451;
+const stepRouteTransitionReasons = [
+  "non-forward",
+  "numeric",
+  "center-outside-segment",
+  "symmetric-start-before-segment",
+  "obstacle",
+  "non-finite",
+] as const;
 
 /** Quantizes image coordinates once, preserving the shared plane-grid edge semantics. */
 function quantizeSmartRouteCoordinate(value: number, origin: number, span: number, length: number) {
@@ -171,6 +190,7 @@ export interface GraphwarWasmStepRouteContext {
     next: GraphPoint,
     state: GraphwarWasmStepRouteState,
   ) => GraphwarWasmStepRouteTransitionResult;
+  validatePath: (points: readonly GraphPoint[]) => GraphwarStepRoutePathValidation;
   findThetaStarPath: (input: GraphwarWasmStepRouteSearchInput) => GraphwarWasmStepRouteSearchResult;
   findVisibilityGraphPath: (input: GraphwarWasmStepRouteSearchInput) => GraphwarWasmStepRouteSearchResult;
 }
@@ -712,6 +732,10 @@ export function createGraphwarWasmRouteContext(
           evaluateTransition(previous, next, state) {
             assertActive();
             return runStepRouteTransition(runtime, contextPointer, stepRouteModel, previous, next, state);
+          },
+          validatePath(points) {
+            assertActive();
+            return runStepRoutePathValidation(runtime, contextPointer, stepRouteModel, points);
           },
           findThetaStarPath(searchInput) {
             assertActive();
@@ -1362,15 +1386,7 @@ function runStepRouteTransition(
           "output",
         );
       }
-      const reasons = [
-        "non-forward",
-        "numeric",
-        "center-outside-segment",
-        "symmetric-start-before-segment",
-        "obstacle",
-        "non-finite",
-      ] as const;
-      return { reason: reasons[status - 1], type: "invalid" };
+      return { reason: stepRouteTransitionReasons[status - 1], type: "invalid" };
     }
 
     const resolvedStartY = validateGraphwarWasmFiniteNumber(
@@ -1452,6 +1468,134 @@ function runStepRouteTransition(
       },
       type: "success",
     };
+  } finally {
+    runtime.resetArena(commandMark);
+  }
+}
+
+/** Validates a complete Step path in one WASM command and copies its terminal state evidence. */
+function runStepRoutePathValidation(
+  runtime: GraphwarWasmKernelRuntime,
+  contextPointer: number,
+  model: GraphwarWasmStepRouteModelInput,
+  points: readonly GraphPoint[],
+): GraphwarStepRoutePathValidation {
+  const commandMinimumPointer = runtime.arenaCursor;
+  const commandMark = runtime.markArena();
+  try {
+    if (points.length === 0) {
+      return { ok: false, reason: "numeric" };
+    }
+    const pointCount = validateGraphwarWasmU32(points.length, "Step path point count", "input");
+    const graphX = writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(
+        points.map((point, index) => validateGraphwarWasmFiniteNumber(point.x, `points[${index}].x`, "input")),
+      ),
+      commandMinimumPointer,
+    );
+    const graphY = writeGraphwarWasmFloat64Values(
+      runtime,
+      new Float64Array(
+        points.map((point, index) => validateGraphwarWasmFiniteNumber(point.y, `points[${index}].y`, "input")),
+      ),
+      commandMinimumPointer,
+    );
+    const inputPointer = runtime.reserveArena(routeStepPathValidationInputByteLength, 8);
+    const inputView = new DataView(runtime.buffer, inputPointer, routeStepPathValidationInputByteLength);
+    inputView.setUint32(0, contextPointer, true);
+    inputView.setUint32(8, graphX.pointer, true);
+    inputView.setUint32(12, graphY.pointer, true);
+    inputView.setUint32(16, pointCount, true);
+
+    const resultPointer = runtime.runRouteTask(
+      routeCommand.stepPathValidation,
+      inputPointer,
+      routeStepPathValidationInputByteLength,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: routeStepPathValidationResultByteLength, pointer: resultPointer },
+      { alignment: 8, elementByteLength: 1, minimumPointer: commandMinimumPointer },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (resultView.getUint32(0, true) !== routeStepPathValidationResultMagic) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM Step path validation magic is invalid",
+        "output",
+      );
+    }
+    const status = validateGraphwarWasmEnumValue(
+      resultView.getUint32(4, true),
+      [0, 1, 2, 3, 4, 5, 6] as const,
+      "Step path validation status",
+    );
+    const invalidSegmentIndex = resultView.getInt32(routeStepPathValidationResultInvalidSegmentIndexOffset, true);
+    const stateSign = resultView.getInt32(routeStepPathValidationResultStateSignOffset, true);
+    const statePointer = resultView.getUint32(routeStepPathValidationResultStatePointerOffset, true);
+    const stateCount = resultView.getUint32(routeStepPathValidationResultStateCountOffset, true);
+    if (status !== 0) {
+      if (
+        resultView.getFloat64(routeStepPathValidationResultResolvedEndYOffset, true) !== 0 ||
+        stateSign !== 0 ||
+        statePointer !== 0 ||
+        stateCount !== 0
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          "Graphwar WASM failed Step path validation contains terminal state",
+          "output",
+        );
+      }
+      if (invalidSegmentIndex < 0 || invalidSegmentIndex >= pointCount - 1) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "Graphwar WASM Step path validation failure segment is outside its path",
+          "output",
+        );
+      }
+      return {
+        invalidSegmentIndex,
+        ok: false,
+        reason: stepRouteTransitionReasons[status - 1],
+      };
+    }
+    const resolvedEndY = validateGraphwarWasmFiniteNumber(
+      resultView.getFloat64(routeStepPathValidationResultResolvedEndYOffset, true),
+      "Step path validation resolvedEndY",
+      "output",
+    );
+    validateDisjointRouteContextRanges([
+      {
+        byteLength: routeStepPathValidationResultByteLength,
+        label: "Step path validation result",
+        pointer: resultPointer,
+      },
+      {
+        byteLength: stateCount * Uint32Array.BYTES_PER_ELEMENT,
+        label: "Step path validation state",
+        pointer: statePointer,
+      },
+    ]);
+    const routeState = copyStepRouteState(
+      runtime,
+      resolvedEndY,
+      stateSign,
+      statePointer,
+      stateCount,
+      commandMinimumPointer,
+      "Step path validation state",
+    );
+    validateStepRouteStateModel(model, routeState, "Step path validation state", "output");
+    if (invalidSegmentIndex !== -1) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "Graphwar WASM successful Step path validation has an invalid segment",
+        "output",
+      );
+    }
+    return { ok: true, resolvedEndY: routeState.resolvedY, routeStateKey: routeState.routeStateKey };
   } finally {
     runtime.resetArena(commandMark);
   }

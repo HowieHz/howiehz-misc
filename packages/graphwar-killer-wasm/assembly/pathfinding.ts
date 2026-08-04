@@ -2111,6 +2111,106 @@ function runStepTransition(inputPointer: u32, inputByteLength: u32): u32 {
   return resultPointer;
 }
 
+/** Validates every Step segment below one retained context and returns terminal state evidence. */
+function runStepPathValidation(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ROUTE_STEP_PATH_VALIDATION_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<f64>());
+  const contextPointer = load<u32>(inputPointer + Layout.ROUTE_STEP_PATH_VALIDATION_INPUT_CONTEXT_POINTER_OFFSET);
+  requireRouteContext(contextPointer);
+  const flags = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_FLAGS_OFFSET);
+  if ((flags & Layout.ROUTE_CONTEXT_FLAG_STEP_MODEL) == 0) trap();
+  const graphXPointer = load<u32>(inputPointer + Layout.ROUTE_STEP_PATH_VALIDATION_INPUT_GRAPH_X_POINTER_OFFSET);
+  const graphYPointer = load<u32>(inputPointer + Layout.ROUTE_STEP_PATH_VALIDATION_INPUT_GRAPH_Y_POINTER_OFFSET);
+  const pointCount = load<u32>(inputPointer + Layout.ROUTE_STEP_PATH_VALIDATION_INPUT_POINT_COUNT_OFFSET);
+  if (pointCount == 0 || pointCount > u32.MAX_VALUE / sizeof<f64>()) trap();
+  requireArenaRange(graphXPointer, pointCount * sizeof<f64>(), sizeof<f64>());
+  requireArenaRange(graphYPointer, pointCount * sizeof<f64>(), sizeof<f64>());
+
+  const modelPointer = load<u32>(contextPointer + Layout.ROUTE_CONTEXT_STEP_MODEL_POINTER_OFFSET);
+  requireArenaRange(modelPointer, Layout.ROUTE_STEP_MODEL_BYTE_LENGTH, sizeof<f64>());
+  let resolvedY = load<f64>(modelPointer + Layout.ROUTE_STEP_MODEL_ORIGIN_Y_OFFSET);
+  let stateSign: i32 = 0;
+  let statePointer: u32 = 0;
+  let stateCount: u32 = 0;
+  const transitionInputPointer = reserveArena(Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(transitionInputPointer, 0, Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH);
+  store<u32>(
+    transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_CONTEXT_POINTER_OFFSET,
+    contextPointer,
+  );
+
+  let index: u32 = 1;
+  while (index < pointCount) {
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_X_OFFSET,
+      load<f64>(graphXPointer + (index - 1) * sizeof<f64>()),
+    );
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_PREVIOUS_Y_OFFSET,
+      load<f64>(graphYPointer + (index - 1) * sizeof<f64>()),
+    );
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_X_OFFSET,
+      load<f64>(graphXPointer + index * sizeof<f64>()),
+    );
+    store<f64>(
+      transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_NEXT_Y_OFFSET,
+      load<f64>(graphYPointer + index * sizeof<f64>()),
+    );
+    store<f64>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_RESOLVED_Y_OFFSET, resolvedY);
+    store<i32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_SIGN_OFFSET, stateSign);
+    store<u32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_POINTER_OFFSET, statePointer);
+    store<u32>(transitionInputPointer + Layout.ROUTE_STEP_TRANSITION_INPUT_STATE_COUNT_OFFSET, stateCount);
+    const transitionPointer = runStepTransition(
+      transitionInputPointer,
+      Layout.ROUTE_STEP_TRANSITION_INPUT_BYTE_LENGTH,
+    );
+    const status = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATUS_OFFSET);
+    if (status != Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS) {
+      return createStepPathValidationResult(
+        status,
+        <i32>(index - 1),
+        0,
+        0,
+        0,
+        0,
+      );
+    }
+    resolvedY = load<f64>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_RESOLVED_END_Y_OFFSET);
+    stateSign = load<i32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_SIGN_OFFSET);
+    statePointer = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_POINTER_OFFSET);
+    stateCount = load<u32>(transitionPointer + Layout.ROUTE_STEP_TRANSITION_RESULT_STATE_COUNT_OFFSET);
+    index += 1;
+  }
+  return createStepPathValidationResult(Layout.ROUTE_STEP_TRANSITION_STATUS_SUCCESS, -1, resolvedY, stateSign, statePointer, stateCount);
+}
+
+function createStepPathValidationResult(
+  status: u32,
+  invalidSegmentIndex: i32,
+  resolvedEndY: f64,
+  stateSign: i32,
+  statePointer: u32,
+  stateCount: u32,
+): u32 {
+  const resultPointer = reserveArena(Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(resultPointer, 0, Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_BYTE_LENGTH);
+  store<u32>(
+    resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_MAGIC_OFFSET,
+    Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_MAGIC,
+  );
+  store<u32>(resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_STATUS_OFFSET, status);
+  store<i32>(
+    resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_INVALID_SEGMENT_INDEX_OFFSET,
+    invalidSegmentIndex,
+  );
+  store<f64>(resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_RESOLVED_END_Y_OFFSET, resolvedEndY);
+  store<i32>(resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_STATE_SIGN_OFFSET, stateSign);
+  store<u32>(resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_STATE_POINTER_OFFSET, statePointer);
+  store<u32>(resultPointer + Layout.ROUTE_STEP_PATH_VALIDATION_RESULT_STATE_COUNT_OFFSET, stateCount);
+  return resultPointer;
+}
+
 const THETA_HEAP_NODE_INDEX_OFFSET: u32 = 0;
 const THETA_HEAP_NODE_PRIORITY_OFFSET: u32 = 8;
 const THETA_HEAP_NODE_ROUTE_COST_OFFSET: u32 = 16;
@@ -6239,6 +6339,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   if (command == Layout.ROUTE_COMMAND_THETA_STAR) return runThetaStarSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_VISIBILITY_GRAPH) return runVisibilityGraphSearch(inputPointer, inputByteLength);
   if (command == Layout.ROUTE_COMMAND_STEP_TRANSITION) return runStepTransition(inputPointer, inputByteLength);
+  if (command == Layout.ROUTE_COMMAND_STEP_PATH_VALIDATION) {
+    return runStepPathValidation(inputPointer, inputByteLength);
+  }
   if (command == Layout.ROUTE_COMMAND_ONE_CLICK_STEP_STATE_DEDUP) {
     return internOneClickStepStateKeys(inputPointer, inputByteLength);
   }

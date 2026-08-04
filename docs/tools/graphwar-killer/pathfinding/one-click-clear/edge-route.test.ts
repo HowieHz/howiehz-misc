@@ -442,6 +442,7 @@ function createWasmRouteContext(
     simulationObstacleCount: 0,
     stepRoute: {
       evaluateTransition: () => ({ reason: "numeric", type: "invalid" }),
+      validatePath: () => ({ ok: false, reason: "numeric" as const }),
       findThetaStarPath: findStepPath,
       findVisibilityGraphPath: findStepPath,
     },

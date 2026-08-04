@@ -3826,24 +3826,9 @@ function validateOneClickClearStepRouteWithWasm(
     if (!stepRoute) {
       throw new GraphwarWasmFault("abi", "one-click Step route context lost its model during validation");
     }
-    let state = { resolvedY: firstGraphPoint.y, routeStateKey: "0" };
-    for (let index = 1; index < pathPoints.length; index += 1) {
-      const previousPoint = pathPoints[index - 1];
-      const nextPoint = pathPoints[index];
-      if (!previousPoint || !nextPoint) {
-        return { invalidSegmentIndex: index - 1, ok: false, reason: "numeric" };
-      }
-      const transition = stepRoute.evaluateTransition(
-        imageToGraphPoint(previousPoint, options.bounds, options.boundsRect),
-        imageToGraphPoint(nextPoint, options.bounds, options.boundsRect),
-        state,
-      );
-      if (transition.type !== "success") {
-        return { invalidSegmentIndex: index - 1, ok: false, reason: transition.reason };
-      }
-      state = transition.transition.routeState;
-    }
-    return { ok: true, resolvedEndY: state.resolvedY, routeStateKey: state.routeStateKey };
+    return stepRoute.validatePath(
+      pathPoints.map((point) => imageToGraphPoint(point, options.bounds, options.boundsRect)),
+    );
   } finally {
     routeContext.dispose();
   }

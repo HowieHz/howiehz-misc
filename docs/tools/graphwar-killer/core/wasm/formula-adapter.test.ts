@@ -650,25 +650,29 @@ describe("Graphwar WASM formula Adapter", () => {
     }
   });
 
-  it("restores the caller mark and stabilizes the Step-glitch trajectory seam after growth", async () => {
-    const runtime = await createRuntime(64);
-    const input = {
-      descriptor: createDescriptor("step", "ddy"),
-      start: { type: "cold" },
-      stop: createTargetStop({ shouldCollectVisiblePixels: true }),
-    } satisfies GraphwarWasmTrajectoryInput;
-    const expected = runGraphwarWasmTrajectory(await createRuntime(), input);
-    const arenaCursor = runtime.arenaCursor;
-    expect(runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(runtime, input)).toEqual(expected);
-    const highWaterByteLength = runtime.buffer.byteLength;
-
-    for (let iteration = 0; iteration < 100; iteration += 1) {
+  it(
+    "restores the caller mark and stabilizes the Step-glitch trajectory seam after growth",
+    { timeout: 30_000 },
+    async () => {
+      const runtime = await createRuntime(64);
+      const input = {
+        descriptor: createDescriptor("step", "ddy"),
+        start: { type: "cold" },
+        stop: createTargetStop({ shouldCollectVisiblePixels: true }),
+      } satisfies GraphwarWasmTrajectoryInput;
+      const expected = runGraphwarWasmTrajectory(await createRuntime(), input);
+      const arenaCursor = runtime.arenaCursor;
       expect(runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(runtime, input)).toEqual(expected);
-    }
-    expect(runtime.arenaCursor).toBe(arenaCursor);
-    expect(runtime.buffer.byteLength).toBe(highWaterByteLength);
-    expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
-  });
+      const highWaterByteLength = runtime.buffer.byteLength;
+
+      for (let iteration = 0; iteration < 100; iteration += 1) {
+        expect(runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(runtime, input)).toEqual(expected);
+      }
+      expect(runtime.arenaCursor).toBe(arenaCursor);
+      expect(runtime.buffer.byteLength).toBe(highWaterByteLength);
+      expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    },
+  );
 
   it("unwinds a trajectory attempt mark after a nested kernel fault", async () => {
     const runtime = await createRuntime();

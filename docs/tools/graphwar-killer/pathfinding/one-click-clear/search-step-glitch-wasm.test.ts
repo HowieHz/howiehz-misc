@@ -62,6 +62,46 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     expect(published.prefixEvidence.formulaEvidence.prefix.segmentStartPoints).toHaveLength(published.path.length - 1);
   });
 
+  it("reuses selected automatic evidence with cold-equivalent continuation", async () => {
+    let published:
+      | Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0]
+      | undefined;
+    const mask = new Uint8Array(planeCellCount);
+    const firstRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const first = await buildGraphwarOneClickClearPath(
+      createOptions(mask, firstRuntime, (evidence) => {
+        published = evidence;
+      }),
+    );
+    expect(first.type).toBe("success");
+    expect(published).toBeDefined();
+    if (first.type !== "success" || !published) return;
+
+    const nextTarget = graphToImagePoint(createGraphPoint(-18, 4), bounds, boundsRect);
+    const nextCandidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 2, id: "next" };
+    const coldRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const cold = await buildGraphwarOneClickClearPath({
+      ...createOptions(mask, coldRuntime),
+      candidates: [nextCandidate],
+      hitCandidates: [nextCandidate],
+      pathPoints: first.pathPoints,
+    });
+    const reusedRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const reused = await buildGraphwarOneClickClearPath({
+      ...createOptions(mask, reusedRuntime),
+      candidates: [nextCandidate],
+      hitCandidates: [nextCandidate],
+      pathPoints: first.pathPoints,
+      prefixTarget: published.targetSequence.at(-1),
+      stepGlitchPrefixEvidence: published.prefixEvidence,
+    });
+    expect(reused.type).toBe(cold.type);
+    if (cold.type === "success" && reused.type === "success") {
+      expect(reused.pathPoints).toEqual(cold.pathPoints);
+      expect(reused.trajectoryPoints).toEqual(cold.trajectoryPoints);
+    }
+  });
+
   it("accepts a published no-glitch prefix on the next request", async () => {
     let published:
       | Parameters<NonNullable<GraphwarOneClickClearBuildOptions["onValidatedStepGlitchPath"]>>[0]

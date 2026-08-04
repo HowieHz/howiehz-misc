@@ -293,6 +293,33 @@ describe("Graphwar WASM composition adapter", () => {
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
 
+  it("rejects a job id replayed in a later Step layer", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    expect(
+      table.consumeLayer({
+        jobs: [{ id: 7, targetIndex: 0 }],
+        layerIndex: 0,
+        results: [{ jobId: 7 }],
+      }),
+    ).toEqual({
+      batchNodeIds: [],
+      jobNodeIds: [{ jobId: 7 }],
+      newNodes: [],
+      nodeCount: 0,
+    });
+    expect(() =>
+      table.consumeLayer({
+        jobs: [{ id: 7, targetIndex: 1 }],
+        layerIndex: 1,
+        results: [{ jobId: 7 }],
+      }),
+    ).toThrow(/already consumed/u);
+    expect(table.layerCursor).toBe(1);
+    expect(table.evidence).toEqual([]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("rejects a Step successor whose target identity differs from its job", async () => {
     const runtime = await createRuntime();
     const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });

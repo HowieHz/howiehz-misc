@@ -2121,6 +2121,7 @@ export function createGraphwarWasmOneClickStepStateTable(
   const targetCount = validateGraphwarWasmU32(input.targetCount, "step state target count", "input");
   let retainedEvidence = input.initial?.map((entry) => ({ ...entry })) ?? [];
   let layerCursor = 0;
+  const consumedJobIds = new Set<number>();
   let isActive = true;
   if (retainedEvidence.length > 0) {
     const initialMerge = mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
@@ -2204,6 +2205,13 @@ export function createGraphwarWasmOneClickStepStateTable(
       for (const [index, job] of input.jobs.entries()) {
         const jobId = validateGraphwarWasmU32(job.id, `step state jobs[${index}].id`, "input");
         const targetIndex = validateGraphwarWasmU32(job.targetIndex, `step state jobs[${index}].targetIndex`, "input");
+        if (consumedJobIds.has(jobId)) {
+          throw new GraphwarWasmAdapterError(
+            "unexpected-work-id",
+            `Step state layer job ${jobId} was already consumed`,
+            "input",
+          );
+        }
         if (targetIndex >= targetCount) {
           throw new GraphwarWasmAdapterError(
             "invalid-session-identity",
@@ -2286,6 +2294,9 @@ export function createGraphwarWasmOneClickStepStateTable(
         nodeIdsByJobId.set(result.jobId, nodeId);
       }
       layerCursor += 1;
+      for (const jobId of jobsById.keys()) {
+        consumedJobIds.add(jobId);
+      }
       return {
         ...merged,
         jobNodeIds: input.results.map((result) => {

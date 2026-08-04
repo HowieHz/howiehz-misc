@@ -410,6 +410,9 @@ export interface GraphwarWasmOneClickTargetAssignmentInput {
 
 /** Ordered assignment result; sourceIndex is the caller-owned candidate identity. */
 export interface GraphwarWasmOneClickTargetAssignmentResult {
+  /** Candidate hit geometry retained by the adapter for the returned source identity. */
+  readonly hitCenter: GraphwarWasmPoint;
+  readonly hitRadius: number;
   readonly routePoint: GraphwarWasmPoint;
   readonly sourceIndex: number;
 }
@@ -2956,10 +2959,22 @@ function copyOneClickTargetAssignmentResult(
       );
     }
   }
-  return sourceIndexes.map((sourceIndex, index) => ({
-    routePoint: { x: routeXs[index] ?? 0, y: routeYs[index] ?? 0 },
-    sourceIndex,
-  }));
+  return sourceIndexes.map((sourceIndex, index) => {
+    const candidate = packed.candidateGeometryBySourceIndex.get(sourceIndex);
+    if (!candidate) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `assignment[${index}] source index has no retained candidate geometry`,
+        "output",
+      );
+    }
+    return {
+      hitCenter: { ...candidate.center },
+      hitRadius: candidate.radius,
+      routePoint: { x: routeXs[index] ?? 0, y: routeYs[index] ?? 0 },
+      sourceIndex,
+    };
+  });
 }
 
 function validateDagJob(job: GraphwarWasmOneClickDagJob, index: number, targetCount: number) {

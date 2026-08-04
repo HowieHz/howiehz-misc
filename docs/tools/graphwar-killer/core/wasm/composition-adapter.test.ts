@@ -231,8 +231,8 @@ describe("Graphwar WASM composition adapter", () => {
     });
 
     expect(result).toEqual([
-      { routePoint: { x: 199, y: 300 }, sourceIndex: 20 },
-      { routePoint: { x: 200, y: 225 }, sourceIndex: 10 },
+      { hitCenter: { x: 200, y: 300 }, hitRadius: 2, routePoint: { x: 199, y: 300 }, sourceIndex: 20 },
+      { hitCenter: { x: 200, y: 225 }, hitRadius: 2, routePoint: { x: 200, y: 225 }, sourceIndex: 10 },
     ]);
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
@@ -256,8 +256,12 @@ describe("Graphwar WASM composition adapter", () => {
       usableRect: { height: 450, width: 770, x: 0, y: 0 },
     });
 
-    expect(forward).toEqual([{ routePoint: { x: 1, y: 225 }, sourceIndex: 1 }]);
-    expect(mirrored).toEqual([{ routePoint: { x: 768, y: 225 }, sourceIndex: 2 }]);
+    expect(forward).toEqual([
+      { hitCenter: { x: 1.4999999995, y: 225 }, hitRadius: 0.8, routePoint: { x: 1, y: 225 }, sourceIndex: 1 },
+    ]);
+    expect(mirrored).toEqual([
+      { hitCenter: { x: 767.5000000005, y: 225 }, hitRadius: 0.8, routePoint: { x: 768, y: 225 }, sourceIndex: 2 },
+    ]);
   });
 
   it("rejects an assignment route point whose source candidate geometry was mutated", async () => {

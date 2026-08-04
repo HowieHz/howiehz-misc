@@ -2186,19 +2186,33 @@ function collectOneClickClearTargets(options: GraphwarOneClickClearSearchOptions
           })),
           pathTail,
           usableRect,
-        }).map((assigned) => ({ sourceIndex: assigned.sourceIndex, routePoint: assigned.routePoint }));
+        }).map((assigned) => {
+          const candidate = options.candidates[assigned.sourceIndex];
+          if (!candidate) {
+            throw new GraphwarWasmFault("abi", "one-click target assignment returned an unknown source index");
+          }
+          return {
+            hitCenter: candidate.hitCenter,
+            hitRadius: candidate.hitRadius,
+            routePoint: assigned.routePoint,
+            sourceIndex: assigned.sourceIndex,
+          };
+        });
   return assignedTargets.flatMap((assigned) => {
     const candidate = options.candidates[assigned.sourceIndex];
     if (!candidate) {
       throw new GraphwarWasmFault("abi", "one-click target assignment returned an unknown source index");
     }
     const routePoint = createPixelPoint(assigned.routePoint.x, assigned.routePoint.y);
+    const hitCenter = createPixelPoint(assigned.hitCenter.x, assigned.hitCenter.y);
     return [
       {
         ...candidate,
+        hitCenter,
+        hitRadius: assigned.hitRadius,
         hitCircle: {
-          center: candidate.hitCenter,
-          radius: candidate.hitRadius,
+          center: hitCenter,
+          radius: assigned.hitRadius,
         },
         routePoint,
         sourceIndex: assigned.sourceIndex,

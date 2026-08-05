@@ -36,12 +36,12 @@ import {
 /** Versioned flat records shared by the AssemblyScript composition exports. */
 export const graphwarWasmCompositionLayout = {
   oneClickEdgeJobByteLength: 56,
-  oneClickEdgeResultByteLength: 28,
+  oneClickEdgeResultByteLength: 48,
   oneClickInputByteLength: 96,
   oneClickInputEvidenceByteLength: 120,
   oneClickResultByteLength: 64,
   oneClickResumeByteLength: 16,
-  oneClickSessionByteLength: 120,
+  oneClickSessionByteLength: 160,
   oneClickTargetAssignmentInputByteLength: 120,
   oneClickTargetAssignmentResultByteLength: 24,
   smartInputByteLength: 88,
@@ -221,6 +221,10 @@ const oneClickEdgeResult = {
   routeCount: 16,
   sessionNonce: 20,
   requestNonce: 24,
+  stateKey: 28,
+  stateKeyLength: 32,
+  targetIndex: 36,
+  resolvedY: 40,
 } as const;
 
 const oneClickSession = {
@@ -250,6 +254,14 @@ const oneClickSession = {
   verticalVariationScale: 96,
   nodeCount: 104,
   routeContext: 108,
+  nodeTargets: 120,
+  nodeResolvedY: 124,
+  nodeKeyOffsets: 128,
+  nodeKeyLengths: 132,
+  nodeKeyBytes: 136,
+  nodeKeyByteLength: 140,
+  nodeEvidenceCount: 144,
+  layerCursor: 148,
 } as const;
 
 const oneClickResume = {
@@ -709,6 +721,8 @@ export interface GraphwarWasmOneClickEdgeResult {
   readonly route?: readonly GraphwarWasmPoint[];
   /** Request nonce prevents a result from an older outer task/attempt being accepted. */
   readonly sessionNonce: number;
+  /** Stateful Step successor evidence is inseparable from its reachable route. */
+  readonly successor?: GraphwarWasmOneClickStepStateEvidence;
 }
 
 export type GraphwarWasmOneClickClearResult =
@@ -741,6 +755,10 @@ export interface GraphwarWasmOneClickSession {
   readonly requestNonce: number;
   readonly targetOrder: readonly number[];
   readonly dagNodeCount?: number;
+  /** Retained state evidence is published only for explicit stateful sessions. */
+  readonly stepStateEvidence?: readonly GraphwarWasmOneClickStepStateEvidence[];
+  /** Number of accepted stateful edge batches. */
+  readonly layerCursor: number;
   cancel(): void;
   resume(results: readonly GraphwarWasmOneClickEdgeResult[]): GraphwarWasmOneClickClearResult;
 }
@@ -803,6 +821,15 @@ interface OneClickRetainedSession {
   readonly targetX: readonly number[];
   readonly targetYPointer: number;
   readonly targetY: readonly number[];
+  readonly nodeTargetsPointer: number;
+  readonly nodeResolvedYPointer: number;
+  readonly nodeKeyOffsetsPointer: number;
+  readonly nodeKeyLengthsPointer: number;
+  readonly nodeKeyBytesPointer: number;
+  readonly nodeKeyByteLength: number;
+  readonly nodeEvidenceCount: number;
+  readonly stepStateEvidence?: readonly GraphwarWasmOneClickStepStateEvidence[];
+  readonly layerCursor: number;
 }
 
 interface OneClickOutputBoundary {
@@ -1118,6 +1145,41 @@ function validateOneClickWorkEvidence(
         );
       }
     }
+    if (
+      (retainedSession.flags & oneClickExplicitDagFlag) !== 0 &&
+      (retainedSession.flags & oneClickStepStatefulFlag) !== 0
+    ) {
+      const job = retainedSession.edgeJobs[result.jobId];
+      const successor = result.successor;
+      if (result.reachable !== (successor !== undefined)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `stateful edge ${result.jobId} changed route/evidence presence`,
+          "output",
+        );
+      }
+      if (successor) {
+        const expected = job?.toNodeId === undefined ? undefined : retainedSession.stepStateEvidence?.[job.toNodeId];
+        if (
+          !expected ||
+          successor.targetIndex !== expected.targetIndex ||
+          successor.resolvedStateKey !== expected.resolvedStateKey ||
+          !Object.is(successor.resolvedY, expected.resolvedY)
+        ) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `stateful edge ${result.jobId} changed successor evidence`,
+            "output",
+          );
+        }
+      }
+    } else if (result.successor !== undefined) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `non-stateful edge ${result.jobId} carries successor evidence`,
+        "output",
+      );
+    }
   }
 }
 
@@ -1201,6 +1263,40 @@ function validateOneClickRetainedContent(
       throw new GraphwarWasmAdapterError(
         "invalid-session-identity",
         `one-click edge ${jobId} route does not match resume evidence`,
+        "output",
+      );
+    }
+    if (
+      (retainedSession.flags & oneClickExplicitDagFlag) !== 0 &&
+      (retainedSession.flags & oneClickStepStatefulFlag) !== 0
+    ) {
+      const job = retainedSession.edgeJobs[jobId];
+      const successor = result.successor;
+      const expected = job?.toNodeId === undefined ? undefined : retainedSession.stepStateEvidence?.[job.toNodeId];
+      if (result.reachable !== (successor !== undefined)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `one-click stateful edge ${jobId} changed route/evidence presence`,
+          "output",
+        );
+      }
+      if (
+        successor &&
+        (!expected ||
+          successor.targetIndex !== expected.targetIndex ||
+          successor.resolvedStateKey !== expected.resolvedStateKey ||
+          !Object.is(successor.resolvedY, expected.resolvedY))
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `one-click stateful edge ${jobId} changed successor evidence`,
+          "output",
+        );
+      }
+    } else if (result.successor !== undefined) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `one-click edge ${jobId} carries successor evidence`,
         "output",
       );
     }
@@ -1424,6 +1520,130 @@ function copyOneClickFloat64Values(
     source,
   );
   return Array.from(new Float64Array(range.buffer, range.byteOffset, length));
+}
+
+function copyOneClickStepStateEvidence(
+  runtime: GraphwarWasmMemorySource,
+  pointers: {
+    readonly targets: number;
+    readonly resolvedY: number;
+    readonly keyOffsets: number;
+    readonly keyLengths: number;
+    readonly keyBytes: number;
+    readonly keyByteLength: number;
+  },
+  count: number,
+  boundary: OneClickOutputBoundary,
+  source: OneClickRangeSource,
+): GraphwarWasmOneClickStepStateEvidence[] {
+  if (count === 0) {
+    if (
+      pointers.targets !== 0 ||
+      pointers.resolvedY !== 0 ||
+      pointers.keyOffsets !== 0 ||
+      pointers.keyLengths !== 0 ||
+      pointers.keyBytes !== 0 ||
+      pointers.keyByteLength !== 0
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "empty Step evidence has retained pointers",
+        "output",
+      );
+    }
+    return [];
+  }
+  if (pointers.keyByteLength === 0) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "Step evidence has no key bytes", "output");
+  }
+  const targets = copyOneClickUint32Values(runtime, pointers.targets, count, boundary, "session node targets", source);
+  const resolvedY = copyOneClickFloat64Values(
+    runtime,
+    pointers.resolvedY,
+    count,
+    boundary,
+    "session node resolved Y",
+    source,
+  );
+  const keyOffsets = copyOneClickUint32Values(
+    runtime,
+    pointers.keyOffsets,
+    count + 1,
+    boundary,
+    "session node key offsets",
+    source,
+  );
+  const keyLengths = copyOneClickUint32Values(
+    runtime,
+    pointers.keyLengths,
+    count,
+    boundary,
+    "session node key lengths",
+    source,
+  );
+  const keyRange = readOneClickRange(
+    runtime,
+    pointers.keyBytes,
+    pointers.keyByteLength,
+    1,
+    boundary,
+    "session node key bytes",
+    source,
+  );
+  const keyBytes = new Uint8Array(keyRange.buffer, keyRange.byteOffset, keyRange.byteLength);
+  const seen = new Set<string>();
+  return Array.from({ length: count }, (_, index) => {
+    const start = keyOffsets[index] ?? 0;
+    const end = keyOffsets[index + 1] ?? 0;
+    const length = keyLengths[index] ?? 0;
+    const y = resolvedY[index];
+    const targetIndex = targets[index];
+    if (
+      targetIndex === undefined ||
+      y === undefined ||
+      start > end ||
+      end > keyBytes.length ||
+      end - start !== length
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `session node evidence ${index} is malformed`,
+        "output",
+      );
+    }
+    let resolvedStateKey = "";
+    for (let keyIndex = start; keyIndex < end; keyIndex += 1) {
+      const code = keyBytes[keyIndex];
+      if (code === undefined || code > 0x7f) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          `session node evidence ${index} key is not ASCII`,
+          "output",
+        );
+      }
+      resolvedStateKey += String.fromCharCode(code);
+    }
+    try {
+      if (BigInt(resolvedStateKey).toString() !== resolvedStateKey) throw new Error("non-canonical");
+    } catch {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        `session node evidence ${index} key is not canonical`,
+        "output",
+      );
+    }
+    const identity = `${targetIndex}:${resolvedStateKey}`;
+    if (seen.has(identity)) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "session node evidence identity is duplicated",
+        "output",
+      );
+    }
+    seen.add(identity);
+    validateGraphwarWasmFiniteNumber(y, `session node evidence ${index} resolved Y`, "output");
+    return { resolvedStateKey, resolvedY: y, targetIndex };
+  });
 }
 
 function copyOneClickPoints(
@@ -4322,6 +4542,12 @@ function createOneClickSession(
       return Array.from(currentTargetOrder);
     },
     dagNodeCount: decoded.dagNodeCount,
+    get stepStateEvidence() {
+      return currentRetainedSession?.stepStateEvidence?.map((evidence) => ({ ...evidence }));
+    },
+    get layerCursor() {
+      return currentRetainedSession?.layerCursor ?? 0;
+    },
     cancel() {
       finish(false);
     },
@@ -4330,7 +4556,11 @@ function createOneClickSession(
         throw new GraphwarWasmAdapterError("invalid-session-state", "one-click session is no longer active", "input");
       }
       try {
-        const work = packEdgeResults(runtime, results, currentEdgeJobs, nonce, requestNonce);
+        const isStatefulDag =
+          (currentRetainedSession?.flags ?? 0) & oneClickExplicitDagFlag
+            ? ((currentRetainedSession?.flags ?? 0) & oneClickStepStatefulFlag) !== 0
+            : false;
+        const work = packEdgeResults(runtime, results, currentEdgeJobs, nonce, requestNonce, isStatefulDag);
         const envelopePointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickResumeByteLength, 4);
         const envelope = new DataView(
           runtime.buffer,
@@ -4389,6 +4619,7 @@ function packEdgeResults(
   jobs: readonly GraphwarWasmOneClickEdgeJob[],
   expectedSessionNonce: number,
   expectedRequestNonce: number,
+  isStatefulDag: boolean,
 ): PackedOneClickEdgeResults {
   if (results.length > jobs.length) {
     throw new GraphwarWasmAdapterError(
@@ -4464,6 +4695,64 @@ function packEdgeResults(
         );
       }
     }
+    const successor = result.successor;
+    if (isStatefulDag) {
+      if (result.reachable !== (successor !== undefined)) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-state",
+          `stateful edge result ${jobId} must bind route and successor evidence together`,
+          "input",
+        );
+      }
+      if (successor) {
+        const successorTargetIndex = validateGraphwarWasmU32(
+          successor.targetIndex,
+          `edgeResults[${index}].successor.targetIndex`,
+          "input",
+        );
+        if (successorTargetIndex !== job.to) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `edge result ${jobId} changed its successor target`,
+            "input",
+          );
+        }
+        validateGraphwarWasmFiniteNumber(successor.resolvedY, `edgeResults[${index}].successor.resolvedY`, "input");
+        try {
+          if (BigInt(successor.resolvedStateKey).toString() !== successor.resolvedStateKey)
+            throw new Error("non-canonical");
+        } catch {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `edgeResults[${index}].successor.resolvedStateKey is not canonical`,
+            "input",
+          );
+        }
+        if ([...successor.resolvedStateKey].some((character) => character.charCodeAt(0) > 0x7f)) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-identity",
+            `edgeResults[${index}].successor.resolvedStateKey is not ASCII`,
+            "input",
+          );
+        }
+      }
+    } else if (successor !== undefined) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        `stateless edge result ${jobId} carries Step successor evidence`,
+        "input",
+      );
+    }
+    const packedSuccessorKey = successor
+      ? writeGraphwarWasmBytes(
+          runtime,
+          Uint8Array.from([...successor.resolvedStateKey].map((character) => character.charCodeAt(0))),
+          runtime.arenaBase,
+        )
+      : { pointer: 0, length: 0 };
+    if (packedSuccessorKey.length > 0) {
+      ranges.push({ alignment: 1, length: packedSuccessorKey.length, pointer: packedSuccessorKey.pointer });
+    }
     const routeX = writeGraphwarWasmFloat64Values(
       runtime,
       new Float64Array(route.map(({ x }) => x)),
@@ -4500,9 +4789,20 @@ function packEdgeResults(
     view.setUint32(oneClickEdgeResult.routeCount, route.length, true);
     view.setUint32(oneClickEdgeResult.sessionNonce, sessionNonce, true);
     view.setUint32(oneClickEdgeResult.requestNonce, requestNonce, true);
+    view.setUint32(oneClickEdgeResult.stateKey, packedSuccessorKey.pointer, true);
+    view.setUint32(oneClickEdgeResult.stateKeyLength, packedSuccessorKey.length, true);
+    view.setUint32(oneClickEdgeResult.targetIndex, successor?.targetIndex ?? 0, true);
+    view.setFloat64(oneClickEdgeResult.resolvedY, successor?.resolvedY ?? 0, true);
     normalizedResults.push(
       result.reachable
-        ? { jobId, reachable: true, requestNonce, route, sessionNonce }
+        ? {
+            jobId,
+            reachable: true,
+            requestNonce,
+            route,
+            sessionNonce,
+            ...(successor ? { successor: { ...successor } } : {}),
+          }
         : { jobId, reachable: false, requestNonce, sessionNonce },
     );
   }
@@ -4641,6 +4941,59 @@ function readOneClickSession(
       "output",
     );
   }
+  const isStatefulDag = isExplicitDag && (flags & oneClickStepStatefulFlag) !== 0;
+  const layerCursor = validateGraphwarWasmU32(
+    view.getUint32(oneClickSession.layerCursor, true),
+    "session layer cursor",
+    "output",
+  );
+  const nodeTargetsPointer = readPointer(oneClickSession.nodeTargets, "session node targets pointer");
+  const nodeResolvedYPointer = readPointer(oneClickSession.nodeResolvedY, "session node resolved Y pointer");
+  const nodeKeyOffsetsPointer = readPointer(oneClickSession.nodeKeyOffsets, "session node key offsets pointer");
+  const nodeKeyLengthsPointer = readPointer(oneClickSession.nodeKeyLengths, "session node key lengths pointer");
+  const nodeKeyBytesPointer = readPointer(oneClickSession.nodeKeyBytes, "session node key bytes pointer");
+  const nodeKeyByteLength = validateGraphwarWasmU32(
+    view.getUint32(oneClickSession.nodeKeyByteLength, true),
+    "session node key byte length",
+    "output",
+  );
+  const nodeEvidenceCount = validateGraphwarWasmU32(
+    view.getUint32(oneClickSession.nodeEvidenceCount, true),
+    "session node evidence count",
+    "output",
+  );
+  const stepStateEvidence = isStatefulDag
+    ? copyOneClickStepStateEvidence(
+        runtime,
+        {
+          targets: nodeTargetsPointer,
+          resolvedY: nodeResolvedYPointer,
+          keyOffsets: nodeKeyOffsetsPointer,
+          keyLengths: nodeKeyLengthsPointer,
+          keyBytes: nodeKeyBytesPointer,
+          keyByteLength: nodeKeyByteLength,
+        },
+        nodeEvidenceCount,
+        sessionBoundary,
+        sessionArraySource,
+      )
+    : [];
+  if (!isStatefulDag) {
+    if (
+      layerCursor !== 0 ||
+      nodeTargetsPointer !== 0 ||
+      nodeResolvedYPointer !== 0 ||
+      nodeKeyOffsetsPointer !== 0 ||
+      nodeKeyLengthsPointer !== 0 ||
+      nodeKeyBytesPointer !== 0 ||
+      nodeKeyByteLength !== 0 ||
+      nodeEvidenceCount !== 0
+    ) {
+      throw new GraphwarWasmAdapterError("invalid-session-state", "stateless session carries Step evidence", "output");
+    }
+  } else if (stepStateEvidence.length !== dagNodeCount) {
+    throw new GraphwarWasmAdapterError("invalid-session-identity", "stateful session evidence count changed", "output");
+  }
   const targetOrderValue = validateGraphwarWasmU32(
     view.getUint32(oneClickSession.targetOrder, true),
     "session target order pointer",
@@ -4718,6 +5071,34 @@ function readOneClickSession(
       targetX,
       targetY,
     });
+    const expectedLayerCursor =
+      retainedSession.layerCursor +
+      (isStatefulDag &&
+      (boundary.expectedWork?.length ?? 0) > 0 &&
+      (boundary.expectedWork?.length ?? 0) === retainedSession.edgeJobCount - retainedSession.completedCount
+        ? 1
+        : 0);
+    if (layerCursor !== expectedLayerCursor) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "one-click retained state layer cursor changed unexpectedly",
+        "output",
+      );
+    }
+    if (
+      stepStateEvidence.length !== (retainedSession.stepStateEvidence?.length ?? 0) ||
+      stepStateEvidence.some((evidence, index) => {
+        const previous = retainedSession.stepStateEvidence?.[index];
+        return (
+          !previous ||
+          evidence.targetIndex !== previous.targetIndex ||
+          evidence.resolvedStateKey !== previous.resolvedStateKey ||
+          !Object.is(evidence.resolvedY, previous.resolvedY)
+        );
+      })
+    ) {
+      throw new GraphwarWasmAdapterError("invalid-session-identity", "one-click Step evidence changed", "output");
+    }
   }
   const sessionJobPointer = validateGraphwarWasmU32(
     view.getUint32(oneClickSession.edgeJobs, true),
@@ -4794,6 +5175,15 @@ function readOneClickSession(
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeXPointer },
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeCountPointer },
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeYPointer },
+    ...(isStatefulDag
+      ? [
+          { alignment: 4, length: dagNodeCount * Uint32Array.BYTES_PER_ELEMENT, pointer: nodeTargetsPointer },
+          { alignment: 8, length: dagNodeCount * Float64Array.BYTES_PER_ELEMENT, pointer: nodeResolvedYPointer },
+          { alignment: 4, length: (dagNodeCount + 1) * Uint32Array.BYTES_PER_ELEMENT, pointer: nodeKeyOffsetsPointer },
+          { alignment: 4, length: dagNodeCount * Uint32Array.BYTES_PER_ELEMENT, pointer: nodeKeyLengthsPointer },
+          { alignment: 1, length: nodeKeyByteLength, pointer: nodeKeyBytesPointer },
+        ]
+      : []),
     ...(routeContextPointer === 0
       ? []
       : [{ alignment: 8, length: graphwarWasmRouteContextByteLength, pointer: routeContextPointer }]),
@@ -4827,6 +5217,28 @@ function readOneClickSession(
     for (const [key, value] of Object.entries(expected)) {
       if (value !== retainedSession[key as keyof typeof expected]) {
         throw new GraphwarWasmAdapterError("invalid-session-identity", `one-click retained ${key} changed`, "output");
+      }
+    }
+    const retainedEvidence = retainedSession.stepStateEvidence;
+    if (
+      (retainedSession.flags & oneClickExplicitDagFlag) !== 0 &&
+      (retainedSession.flags & oneClickStepStatefulFlag) !== 0
+    ) {
+      if (
+        nodeTargetsPointer !== retainedSession.nodeTargetsPointer ||
+        nodeResolvedYPointer !== retainedSession.nodeResolvedYPointer ||
+        nodeKeyOffsetsPointer !== retainedSession.nodeKeyOffsetsPointer ||
+        nodeKeyLengthsPointer !== retainedSession.nodeKeyLengthsPointer ||
+        nodeKeyBytesPointer !== retainedSession.nodeKeyBytesPointer ||
+        nodeKeyByteLength !== retainedSession.nodeKeyByteLength ||
+        nodeEvidenceCount !== retainedSession.nodeEvidenceCount ||
+        stepStateEvidence.length !== (retainedEvidence?.length ?? 0)
+      ) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "one-click Step evidence storage changed",
+          "output",
+        );
       }
     }
   }
@@ -5047,6 +5459,15 @@ function readOneClickSession(
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeXPointer },
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeCountPointer },
     { alignment: 4, length: sessionJobCount * Uint32Array.BYTES_PER_ELEMENT, pointer: routeYPointer },
+    ...(isStatefulDag
+      ? [
+          { alignment: 4, length: dagNodeCount * Uint32Array.BYTES_PER_ELEMENT, pointer: nodeTargetsPointer },
+          { alignment: 8, length: dagNodeCount * Float64Array.BYTES_PER_ELEMENT, pointer: nodeResolvedYPointer },
+          { alignment: 4, length: (dagNodeCount + 1) * Uint32Array.BYTES_PER_ELEMENT, pointer: nodeKeyOffsetsPointer },
+          { alignment: 4, length: dagNodeCount * Uint32Array.BYTES_PER_ELEMENT, pointer: nodeKeyLengthsPointer },
+          { alignment: 1, length: nodeKeyByteLength, pointer: nodeKeyBytesPointer },
+        ]
+      : []),
   ].filter(({ length }) => length > 0);
   for (const [jobId, flag] of completedFlags.entries()) {
     if (flag !== 1) continue;
@@ -5129,6 +5550,15 @@ function readOneClickSession(
       targetX: Array.from(targetX),
       targetYPointer,
       targetY: Array.from(targetY),
+      nodeTargetsPointer,
+      nodeResolvedYPointer,
+      nodeKeyOffsetsPointer,
+      nodeKeyLengthsPointer,
+      nodeKeyBytesPointer,
+      nodeKeyByteLength,
+      nodeEvidenceCount,
+      stepStateEvidence: isStatefulDag ? stepStateEvidence.map((evidence) => ({ ...evidence })) : undefined,
+      layerCursor,
     },
     targetOrder,
   };

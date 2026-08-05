@@ -499,7 +499,16 @@ export const ONE_CLICK_EDGE_JOB_F64_LENGTH: u32 = 4;
 export const ONE_CLICK_EDGE_JOB_FROM_NODE_OFFSET: u32 = 48;
 export const ONE_CLICK_EDGE_JOB_TO_NODE_OFFSET: u32 = 52;
 export const ONE_CLICK_EDGE_JOB_BYTE_LENGTH: u32 = 56;
-export const ONE_CLICK_EDGE_RESULT_BYTE_LENGTH: u32 = 28;
+/**
+ * Edge results keep the legacy route/session fields at offsets 0..27. Stateful
+ * Step results append one atomic successor evidence record; stateless and
+ * unreachable results leave this extension zeroed.
+ */
+export const ONE_CLICK_EDGE_RESULT_STATE_KEY_POINTER_OFFSET: u32 = 28;
+export const ONE_CLICK_EDGE_RESULT_STATE_KEY_LENGTH_OFFSET: u32 = 32;
+export const ONE_CLICK_EDGE_RESULT_TARGET_INDEX_OFFSET: u32 = 36;
+export const ONE_CLICK_EDGE_RESULT_RESOLVED_Y_OFFSET: u32 = 40;
+export const ONE_CLICK_EDGE_RESULT_BYTE_LENGTH: u32 = 48;
 export const ONE_CLICK_SESSION_MAGIC_OFFSET: u32 = 0;
 export const ONE_CLICK_SESSION_MAGIC: u32 = 0x4f_4353_53;
 export const ONE_CLICK_SESSION_NONCE_OFFSET: u32 = 4;
@@ -527,7 +536,17 @@ export const ONE_CLICK_SESSION_REQUEST_NONCE_OFFSET: u32 = 88;
 export const ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET: u32 = 96;
 export const ONE_CLICK_SESSION_NODE_COUNT_OFFSET: u32 = 104;
 export const ONE_CLICK_SESSION_ROUTE_CONTEXT_POINTER_OFFSET: u32 = 108;
-export const ONE_CLICK_SESSION_BYTE_LENGTH: u32 = 120;
+/** Retained Step node evidence, indexed by node id for explicit stateful DAGs. */
+export const ONE_CLICK_SESSION_NODE_TARGETS_POINTER_OFFSET: u32 = 120;
+export const ONE_CLICK_SESSION_NODE_RESOLVED_Y_POINTER_OFFSET: u32 = 124;
+export const ONE_CLICK_SESSION_NODE_KEY_OFFSETS_POINTER_OFFSET: u32 = 128;
+export const ONE_CLICK_SESSION_NODE_KEY_LENGTHS_POINTER_OFFSET: u32 = 132;
+export const ONE_CLICK_SESSION_NODE_KEY_BYTES_POINTER_OFFSET: u32 = 136;
+export const ONE_CLICK_SESSION_NODE_KEY_BYTE_LENGTH_OFFSET: u32 = 140;
+export const ONE_CLICK_SESSION_NODE_EVIDENCE_COUNT_OFFSET: u32 = 144;
+/** Number of accepted stateful edge batches; monotonic while the session waits. */
+export const ONE_CLICK_SESSION_LAYER_CURSOR_OFFSET: u32 = 148;
+export const ONE_CLICK_SESSION_BYTE_LENGTH: u32 = 160;
 export const ONE_CLICK_SESSION_PHASE_WAITING_EDGE_BATCH: u32 = 1;
 export const ONE_CLICK_SESSION_PHASE_COMPLETE: u32 = 2;
 export const ONE_CLICK_RESUME_SESSION_POINTER_OFFSET: u32 = 0;

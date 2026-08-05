@@ -6480,6 +6480,12 @@ const ONE_CLICK_EDGE_RESULT_Y_POINTER_OFFSET: u32 = 12;
 const ONE_CLICK_EDGE_RESULT_COUNT_OFFSET: u32 = 16;
 const ONE_CLICK_EDGE_RESULT_SESSION_NONCE_OFFSET: u32 = 20;
 const ONE_CLICK_EDGE_RESULT_REQUEST_NONCE_OFFSET: u32 = 24;
+const ONE_CLICK_EDGE_RESULT_STATE_KEY_POINTER_OFFSET: u32 =
+  Layout.ONE_CLICK_EDGE_RESULT_STATE_KEY_POINTER_OFFSET;
+const ONE_CLICK_EDGE_RESULT_STATE_KEY_LENGTH_OFFSET: u32 =
+  Layout.ONE_CLICK_EDGE_RESULT_STATE_KEY_LENGTH_OFFSET;
+const ONE_CLICK_EDGE_RESULT_TARGET_INDEX_OFFSET: u32 = Layout.ONE_CLICK_EDGE_RESULT_TARGET_INDEX_OFFSET;
+const ONE_CLICK_EDGE_RESULT_RESOLVED_Y_OFFSET: u32 = Layout.ONE_CLICK_EDGE_RESULT_RESOLVED_Y_OFFSET;
 
 let activeOneClickSessionPointer: u32 = 0;
 let nextOneClickSessionNonce: u32 = 1;
@@ -8133,6 +8139,27 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   const routeXPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
   const routeYPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
   const routeCountPointer = jobCount == 0 ? 0 : reserveArena(jobCount * sizeof<u32>(), sizeof<u32>());
+  // Stateful sessions retain the complete node evidence beside the session
+  // record. This keeps successor identity available after the caller's input
+  // scratch is rewound and makes route/state evidence one atomic session fact.
+  let sessionNodeTargetsPointer: u32 = 0;
+  let sessionNodeResolvedYPointer: u32 = 0;
+  let sessionNodeKeyOffsetsPointer: u32 = 0;
+  let sessionNodeKeyLengthsPointer: u32 = 0;
+  let sessionNodeKeyBytesPointer: u32 = 0;
+  if (isExplicitDag && isStepStateful && dagNodeCount != 0) {
+    if (dagNodeEvidenceCount != dagNodeCount) trap();
+    sessionNodeTargetsPointer = reserveArena(dagNodeCount * sizeof<u32>(), sizeof<u32>());
+    sessionNodeResolvedYPointer = reserveArena(dagNodeCount * sizeof<f64>(), sizeof<f64>());
+    sessionNodeKeyOffsetsPointer = reserveArena((dagNodeCount + 1) * sizeof<u32>(), sizeof<u32>());
+    sessionNodeKeyLengthsPointer = reserveArena(dagNodeCount * sizeof<u32>(), sizeof<u32>());
+    sessionNodeKeyBytesPointer = reserveArena(dagNodeKeyByteLength, 1);
+    memory.copy(sessionNodeTargetsPointer, dagNodeTargetsPointer, dagNodeCount * sizeof<u32>());
+    memory.copy(sessionNodeResolvedYPointer, dagNodeResolvedYPointer, dagNodeCount * sizeof<f64>());
+    memory.copy(sessionNodeKeyOffsetsPointer, dagNodeKeyOffsetsPointer, (dagNodeCount + 1) * sizeof<u32>());
+    memory.copy(sessionNodeKeyLengthsPointer, dagNodeKeyLengthsPointer, dagNodeCount * sizeof<u32>());
+    memory.copy(sessionNodeKeyBytesPointer, dagNodeKeyBytesPointer, dagNodeKeyByteLength);
+  }
   if (jobCount != 0) {
     memory.fill(completedFlagsPointer, 0, jobCount);
     memory.fill(routeXPointer, 0, jobCount * sizeof<u32>());
@@ -8214,6 +8241,14 @@ export function beginOneClickClear(inputPointer: u32, inputByteLength: u32): u32
   store<f64>(sessionPointer + Layout.ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET, verticalVariationScale);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET, nodeCount);
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_ROUTE_CONTEXT_POINTER_OFFSET, routeContextPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_TARGETS_POINTER_OFFSET, sessionNodeTargetsPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_RESOLVED_Y_POINTER_OFFSET, sessionNodeResolvedYPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_OFFSETS_POINTER_OFFSET, sessionNodeKeyOffsetsPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_LENGTHS_POINTER_OFFSET, sessionNodeKeyLengthsPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_BYTES_POINTER_OFFSET, sessionNodeKeyBytesPointer);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_BYTE_LENGTH_OFFSET, dagNodeKeyByteLength);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_EVIDENCE_COUNT_OFFSET, isExplicitDag && isStepStateful ? dagNodeCount : 0);
+  store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_LAYER_CURSOR_OFFSET, 0);
   if (jobCount == 0) {
     store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_PHASE_OFFSET, Layout.ONE_CLICK_SESSION_PHASE_COMPLETE);
     activeOneClickSessionPointer = 0;
@@ -8280,6 +8315,78 @@ export function cancelOneClickClear(expectedRequestNonce: u32): void {
   activeOneClickSessionPointer = 0;
 }
 
+/** Checks one retained node key without constructing a managed AssemblyScript string. */
+function oneClickStepStateKeyEquals(
+  leftPointer: u32,
+  leftLength: u32,
+  rightPointer: u32,
+  rightLength: u32,
+): bool {
+  if (leftLength != rightLength) return false;
+  let index: u32 = 0;
+  while (index < leftLength) {
+    if (load<u8>(leftPointer + index) != load<u8>(rightPointer + index)) return false;
+    index += 1;
+  }
+  return true;
+}
+
+/** Validates atomic successor evidence against the node identity carried by an explicit DAG job. */
+function validateOneClickStepSuccessorEvidence(
+  sessionPointer: u32,
+  jobPointer: u32,
+  toNodeId: u32,
+  toTargetIndex: u32,
+  stateKeyPointer: u32,
+  stateKeyLength: u32,
+  resolvedY: f64,
+): void {
+  const nodeCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET);
+  const evidenceCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_EVIDENCE_COUNT_OFFSET);
+  if (evidenceCount != nodeCount || toNodeId >= evidenceCount) trap();
+  const nodeTargetsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_TARGETS_POINTER_OFFSET);
+  const nodeResolvedYPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_RESOLVED_Y_POINTER_OFFSET);
+  const nodeKeyOffsetsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_OFFSETS_POINTER_OFFSET);
+  const nodeKeyLengthsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_LENGTHS_POINTER_OFFSET);
+  const nodeKeyBytesPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_BYTES_POINTER_OFFSET);
+  const nodeKeyByteLength = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_BYTE_LENGTH_OFFSET);
+  if (
+    nodeTargetsPointer == 0 ||
+    nodeResolvedYPointer == 0 ||
+    nodeKeyOffsetsPointer == 0 ||
+    nodeKeyLengthsPointer == 0 ||
+    nodeKeyBytesPointer == 0 ||
+    nodeKeyByteLength == 0
+  )
+    trap();
+  requireArenaRange(nodeTargetsPointer, evidenceCount * sizeof<u32>(), sizeof<u32>());
+  requireArenaRange(nodeResolvedYPointer, evidenceCount * sizeof<f64>(), sizeof<f64>());
+  requireArenaRange(nodeKeyOffsetsPointer, (evidenceCount + 1) * sizeof<u32>(), sizeof<u32>());
+  requireArenaRange(nodeKeyLengthsPointer, evidenceCount * sizeof<u32>(), sizeof<u32>());
+  requireArenaRange(nodeKeyBytesPointer, nodeKeyByteLength, 1);
+  if (stateKeyPointer == 0 || stateKeyLength == 0) trap();
+  requireArenaRange(stateKeyPointer, stateKeyLength, 1);
+  if (!isCanonicalStepStateKey(stateKeyPointer, stateKeyLength) || !isFiniteValue(resolvedY)) trap();
+  const nodeKeyStart = load<u32>(nodeKeyOffsetsPointer + toNodeId * sizeof<u32>());
+  const nodeKeyEnd = load<u32>(nodeKeyOffsetsPointer + (toNodeId + 1) * sizeof<u32>());
+  const nodeKeyLength = load<u32>(nodeKeyLengthsPointer + toNodeId * sizeof<u32>());
+  if (nodeKeyStart > nodeKeyEnd || nodeKeyEnd > nodeKeyByteLength || nodeKeyEnd - nodeKeyStart != nodeKeyLength) trap();
+  if (
+    load<u32>(nodeTargetsPointer + toNodeId * sizeof<u32>()) != toTargetIndex ||
+    reinterpret<u64>(load<f64>(nodeResolvedYPointer + toNodeId * sizeof<f64>())) != reinterpret<u64>(resolvedY) ||
+    !oneClickStepStateKeyEquals(nodeKeyBytesPointer + nodeKeyStart, nodeKeyLength, stateKeyPointer, stateKeyLength)
+  )
+    trap();
+  // Keep the job argument in the helper signature so the call site cannot
+  // accidentally validate a successor against a different edge descriptor.
+  if (
+    jobPointer == 0 ||
+    load<u32>(jobPointer + ONE_CLICK_EDGE_TO_OFFSET) != toTargetIndex ||
+    load<u32>(jobPointer + ONE_CLICK_EDGE_TO_NODE_OFFSET) != toNodeId
+  )
+    trap();
+}
+
 /** Consumes one complete edge batch by stable job id and selects the longest reachable target chain. */
 export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
@@ -8301,6 +8408,9 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   const verticalVariationScale = load<f64>(sessionPointer + Layout.ONE_CLICK_SESSION_VERTICAL_VARIATION_SCALE_OFFSET);
   compositionRequireFinite(verticalVariationScale);
   if (verticalVariationScale < 0) trap();
+  const sessionFlags = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_FLAGS_OFFSET);
+  const isExplicitDag = (sessionFlags & Layout.ONE_CLICK_INPUT_FLAG_EXPLICIT_DAG) != 0;
+  const isStatefulDag = isExplicitDag && (sessionFlags & Layout.ONE_CLICK_INPUT_FLAG_STEP_STATEFUL) != 0;
   const jobCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_COUNT_OFFSET);
   if (jobCount == 0 || jobCount > u32.MAX_VALUE / sizeof<u32>()) trap();
   const completedPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_FLAGS_POINTER_OFFSET);
@@ -8314,6 +8424,32 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   requireArenaRange(routeYByJobPointer, jobCount * sizeof<u32>(), sizeof<u32>());
   let completedCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET);
   if (completedCount > jobCount || workCount > jobCount - completedCount) trap();
+  const pendingCountBeforeWork = jobCount - completedCount;
+  if (isStatefulDag) {
+    const nodeCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET);
+    const evidenceCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_EVIDENCE_COUNT_OFFSET);
+    if (nodeCount == 0 || evidenceCount != nodeCount) trap();
+    const nodeTargetsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_TARGETS_POINTER_OFFSET);
+    const nodeResolvedYPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_RESOLVED_Y_POINTER_OFFSET);
+    const nodeKeyOffsetsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_OFFSETS_POINTER_OFFSET);
+    const nodeKeyLengthsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_LENGTHS_POINTER_OFFSET);
+    const nodeKeyBytesPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_BYTES_POINTER_OFFSET);
+    const nodeKeyByteLength = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_KEY_BYTE_LENGTH_OFFSET);
+    if (
+      nodeTargetsPointer == 0 ||
+      nodeResolvedYPointer == 0 ||
+      nodeKeyOffsetsPointer == 0 ||
+      nodeKeyLengthsPointer == 0 ||
+      nodeKeyBytesPointer == 0 ||
+      nodeKeyByteLength == 0
+    )
+      trap();
+    requireArenaRange(nodeTargetsPointer, nodeCount * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(nodeResolvedYPointer, nodeCount * sizeof<f64>(), sizeof<f64>());
+    requireArenaRange(nodeKeyOffsetsPointer, (nodeCount + 1) * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(nodeKeyLengthsPointer, nodeCount * sizeof<u32>(), sizeof<u32>());
+    requireArenaRange(nodeKeyBytesPointer, nodeKeyByteLength, 1);
+  }
   if (workCount == 0) {
     if (workPointer != 0) trap();
   } else {
@@ -8340,6 +8476,32 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
       compositionValidatePointArrays(xPointer, yPointer, routeCount);
       if (routeCount < 2) trap();
     }
+    const stateKeyPointer = load<u32>(result + ONE_CLICK_EDGE_RESULT_STATE_KEY_POINTER_OFFSET);
+    const stateKeyLength = load<u32>(result + ONE_CLICK_EDGE_RESULT_STATE_KEY_LENGTH_OFFSET);
+    const targetIndex = load<u32>(result + ONE_CLICK_EDGE_RESULT_TARGET_INDEX_OFFSET);
+    const resolvedY = load<f64>(result + ONE_CLICK_EDGE_RESULT_RESOLVED_Y_OFFSET);
+    if (!isStatefulDag) {
+      if (stateKeyPointer != 0 || stateKeyLength != 0 || targetIndex != 0 || resolvedY != 0) trap();
+    } else if (reachable == 0) {
+      // An unreachable edge is a normal business result and must not leave a
+      // half-successor that could be reused on a later layer.
+      if (stateKeyPointer != 0 || stateKeyLength != 0 || targetIndex != 0 || resolvedY != 0) trap();
+    } else {
+      const jobsPointer = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_JOB_POINTER_OFFSET);
+      const job = jobsPointer + jobId * Layout.ONE_CLICK_EDGE_JOB_BYTE_LENGTH;
+      const toNodeId = load<u32>(job + ONE_CLICK_EDGE_TO_NODE_OFFSET);
+      const toTargetIndex = load<u32>(job + ONE_CLICK_EDGE_TO_OFFSET);
+      if (targetIndex != toTargetIndex) trap();
+      validateOneClickStepSuccessorEvidence(
+        sessionPointer,
+        job,
+        toNodeId,
+        toTargetIndex,
+        stateKeyPointer,
+        stateKeyLength,
+        resolvedY,
+      );
+    }
     store<u8>(completedPointer + jobId, 1);
     store<u32>(routeXByJobPointer + jobId * sizeof<u32>(), xPointer);
     store<u32>(routeYByJobPointer + jobId * sizeof<u32>(), yPointer);
@@ -8348,6 +8510,11 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
     workIndex += 1;
   }
   store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET, completedCount);
+  if (isStatefulDag && workCount != 0 && workCount == pendingCountBeforeWork) {
+    const layerCursor = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_LAYER_CURSOR_OFFSET);
+    if (layerCursor == u32.MAX_VALUE) trap();
+    store<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_LAYER_CURSOR_OFFSET, layerCursor + 1);
+  }
 
   if (completedCount < jobCount) {
     const pendingCount = jobCount - completedCount;

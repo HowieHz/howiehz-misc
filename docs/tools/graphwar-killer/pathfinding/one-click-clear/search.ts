@@ -1093,6 +1093,9 @@ async function buildOneClickClearStepGlitchPathWithWasm(
         runOneClickClearStepGlitchWasmReplay(options, formulaMode, simulationMask, optimizedRoute),
       );
       workUnits += replay.expandedStates;
+      if (replay.status === "invalid-input" || replay.status === "unsupported") {
+        return createOneClickClearFailure("preflight-blocked", startedAt, workUnits);
+      }
       if (replay.status !== "hit" || !replay.evidence) {
         return createOneClickClearFailure("no-usable-target", startedAt, workUnits);
       }

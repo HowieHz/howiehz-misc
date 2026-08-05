@@ -547,6 +547,27 @@ describe("Step glitch one-click-clear target retries", () => {
     expect(wasmMockState.contexts.at(-1)?.replayRaw).not.toHaveBeenCalled();
   });
 
+  it("maps final WASM replay invalid input to preflight without TS fallback", async () => {
+    wasmMockState.outcomes.push("hit", "miss", "invalid-input");
+    const start = toPixel(-11, 0);
+    const target = toPixel(-6, 0);
+
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(
+        start,
+        [{ isEnemy: true, hitCenter: target, hitRadius: 12, id: "target" }],
+        createEmptyMask(),
+        "visibility-graph",
+        true,
+      ),
+      wasmRuntime: {} as GraphwarWasmKernelRuntime,
+    });
+
+    expect(result).toMatchObject({ reason: "preflight-blocked", type: "failure" });
+    expect(wasmMockState.contexts.at(-1)?.replayRaw).toHaveBeenCalledOnce();
+    expect(samplingMockState.pathTargetSequenceCalls).toBe(0);
+  });
+
   it("does not publish after cancellation during the retained WASM attempt", async () => {
     wasmMockState.outcomes.push("hit", "hit");
     let isCancelled = false;

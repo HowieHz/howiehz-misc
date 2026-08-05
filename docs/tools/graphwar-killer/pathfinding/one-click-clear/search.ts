@@ -2888,6 +2888,7 @@ async function selectOneClickClearStepDagPathWithWasm(
               requestNonce: composition.handle.requestNonce,
               route: edge.route,
               sessionNonce: composition.handle.nonce,
+              successor: getOneClickClearWasmStepSuccessor(dag, edge, "stateful one-click retry"),
             }
           : {
               jobId: job.id,
@@ -3015,6 +3016,7 @@ async function applyWasmPreferredStepDagPath(
             requestNonce: session.requestNonce,
             route: edge.route,
             sessionNonce: session.nonce,
+            successor: getOneClickClearWasmStepSuccessor(dag, edge, "stateful one-click composition"),
           }
         : {
             jobId: job.id,
@@ -3065,6 +3067,23 @@ function getOneClickClearWasmStepNodeEvidence(dag: OneClickClearDag, phase: stri
     }
     return { ...evidence };
   });
+}
+
+/** Binds each retained edge route to its terminal Step node evidence. */
+function getOneClickClearWasmStepSuccessor(
+  dag: OneClickClearDag,
+  edge: OneClickClearDagEdge,
+  phase: string,
+): GraphwarWasmOneClickStepStateEvidence {
+  const node = dag.nodes[edge.to];
+  if (!node || node.type !== "step-stateful") {
+    throw new GraphwarWasmFault("abi", `${phase} lost edge successor evidence`);
+  }
+  return {
+    resolvedStateKey: node.stepRouteState.resolvedStateKey,
+    resolvedY: node.stepRouteState.resolvedY,
+    targetIndex: node.targetIndex,
+  };
 }
 
 /** Step fallback identity keeps target, canonical key, and signed-zero height atomic. */

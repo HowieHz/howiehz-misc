@@ -659,12 +659,16 @@ function copyProductionOptionalPointRange(
 
 /** Copies one successful replay into a single arena-owned range and rewrites all nested pointers into that range. */
 function copyProductionReplayEvidence(
+  contextPointer: u32,
   metadataPointer: u32,
   replayResultPointer: u32,
   pathXPointer: u32,
   pathYPointer: u32,
   pathCount: u32,
   finalValidationPointer: u32,
+  selectedSourceIndex: u32,
+  targetAnchorX: f64,
+  targetAnchorY: f64,
 ): u32 {
   const formulaInputPointer = load<u32>(
     metadataPointer + TrajectoryLayout.TRAJECTORY_REPLAY_METADATA_FORMULA_INPUT_POINTER_OFFSET,
@@ -710,8 +714,10 @@ function copyProductionReplayEvidence(
   const materialPointer = load<u32>(materialResultPointer + FormulaLayout.FORMULA_RESULT_MATERIAL_POINTER_OFFSET);
   const materialCount = load<u32>(materialResultPointer + FormulaLayout.FORMULA_RESULT_MATERIAL_COUNT_OFFSET);
   const materialStride = load<u32>(materialResultPointer + FormulaLayout.FORMULA_RESULT_MATERIAL_STRIDE_OFFSET);
+  if (materialStride != FormulaLayout.STEP_MATERIAL_BYTE_LENGTH) trap();
   const glitchPointer = load<u32>(formulaInputPointer + FormulaLayout.FORMULA_INPUT_GLITCH_SEGMENT_POINTER_OFFSET);
   let selectedSegmentIndex: u32 = 0;
+  let selectedMaterialIndex: u32 = 0;
   let hasSelectedSegment = false;
   // Automatic replay has no fixed-window pointer; retain its source segment identity.
   let materialIndex: u32 = 0;
@@ -723,6 +729,7 @@ function copyProductionReplayEvidence(
     ) {
       if (!hasSelectedSegment) {
         selectedSegmentIndex = load<u32>(materialRecord + FormulaLayout.STEP_MATERIAL_SOURCE_SEGMENT_OFFSET);
+        selectedMaterialIndex = materialIndex;
         hasSelectedSegment = true;
       }
     }
@@ -931,9 +938,16 @@ function copyProductionReplayEvidence(
   store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET, copiedSegmentStartXPointer);
   store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET, copiedSegmentStartYPointer);
   store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET, copiedDeltaYPointer);
+  const hasContextIdentity = hasStepGlitchContextIdentity(contextPointer);
   const flags =
     (finalValidationPointer == 0 ? 0 : Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION) |
-    (hasSelectedSegment ? Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT : 0);
+    (hasSelectedSegment ? Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT : 0) |
+    (hasSelectedSegment && hasContextIdentity
+      ? Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_CONTINUATION
+      : 0);
+  if (hasSelectedSegment && hasContextIdentity) {
+    if (selectedSourceIndex == u32.MAX_VALUE || !isFiniteValue(targetAnchorX) || !isFiniteValue(targetAnchorY)) trap();
+  }
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC_OFFSET, Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC);
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION_OFFSET, Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION);
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAGS_OFFSET, flags);
@@ -1036,6 +1050,62 @@ function copyProductionReplayEvidence(
     copiedDeltaYPresencePointer,
   );
   store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_COUNT_OFFSET, segmentCount);
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SOURCE_INDEX_OFFSET,
+    hasSelectedSegment && hasContextIdentity ? selectedSourceIndex : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_INDEX_OFFSET,
+    hasSelectedSegment && hasContextIdentity ? selectedMaterialIndex : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_POINTER_OFFSET,
+    hasSelectedSegment && hasContextIdentity
+      ? copiedMaterialPointer + selectedMaterialIndex * materialStride
+      : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_BYTE_LENGTH_OFFSET,
+    hasSelectedSegment && hasContextIdentity ? materialStride : 0,
+  );
+  store<f64>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_X_OFFSET,
+    hasSelectedSegment && hasContextIdentity ? targetAnchorX : 0,
+  );
+  store<f64>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_Y_OFFSET,
+    hasSelectedSegment && hasContextIdentity ? targetAnchorY : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_OUTER_TASK_ID_OFFSET,
+    hasSelectedSegment && hasContextIdentity
+      ? load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_OUTER_TASK_ID_OFFSET)
+      : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_REQUEST_ID_OFFSET,
+    hasSelectedSegment && hasContextIdentity
+      ? load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUEST_ID_OFFSET)
+      : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_ATTEMPT_ID_OFFSET,
+    hasSelectedSegment && hasContextIdentity
+      ? load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_ATTEMPT_ID_OFFSET)
+      : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_BACKEND_GENERATION_OFFSET,
+    hasSelectedSegment && hasContextIdentity
+      ? load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_BACKEND_GENERATION_OFFSET)
+      : 0,
+  );
+  store<u32>(
+    evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SESSION_NONCE_OFFSET,
+    hasSelectedSegment && hasContextIdentity
+      ? load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SESSION_NONCE_OFFSET)
+      : 0,
+  );
   return evidencePointer;
 }
 
@@ -1162,13 +1232,19 @@ function isProductionTargetRequired(contextPointer: u32, targetValuesPointer: u3
 
 /** Production scan keeps DFS, candidate ordering and numerical replay in the same WASM call. */
 export function scanStepGlitch(inputPointer: u32, inputByteLength: u32): u32 {
-  if (inputByteLength != Layout.STEP_GLITCH_SCAN_INPUT_BYTE_LENGTH) trap();
+  if (
+    inputByteLength != Layout.STEP_GLITCH_SCAN_INPUT_BYTE_LENGTH &&
+    inputByteLength != Layout.STEP_GLITCH_SCAN_INPUT_LEGACY_BYTE_LENGTH
+  ) trap();
   requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
   const contextPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SCAN_INPUT_CONTEXT_POINTER_OFFSET);
   requireStepGlitchContext(contextPointer);
   if (load<u32>(inputPointer + Layout.STEP_GLITCH_SCAN_INPUT_RESERVED_OFFSET) != 0) trap();
   const targetValuesPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_SCAN_INPUT_TARGET_VALUES_POINTER_OFFSET);
   const targetValuesLength = load<u32>(inputPointer + Layout.STEP_GLITCH_SCAN_INPUT_TARGET_VALUES_LENGTH_OFFSET);
+  const sourceIndex = inputByteLength == Layout.STEP_GLITCH_SCAN_INPUT_BYTE_LENGTH
+    ? load<u32>(inputPointer + Layout.STEP_GLITCH_SCAN_INPUT_SOURCE_INDEX_OFFSET)
+    : u32.MAX_VALUE;
   if (targetValuesLength != Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUE_COUNT) trap();
   requireElementRange(targetValuesPointer, targetValuesLength, sizeof<f64>(), sizeof<f64>());
   let targetValueIndex: u32 = 0;
@@ -1256,12 +1332,16 @@ export function scanStepGlitch(inputPointer: u32, inputByteLength: u32): u32 {
     );
   }
   const evidencePointer = copyProductionReplayEvidence(
+    contextPointer,
     metadataPointer,
     replayResultPointer,
     pathXPointer,
     pathYPointer,
     pathCount,
     finalValidationPointer,
+    sourceIndex,
+    load<f64>(targetValuesPointer + 3 * sizeof<f64>()),
+    load<f64>(targetValuesPointer + 4 * sizeof<f64>()),
   );
   return createProductionResult(
     Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT,
@@ -1397,6 +1477,7 @@ export function composeStepGlitchOneClickSession(inputPointer: u32, inputByteLen
     store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_CONTEXT_POINTER_OFFSET, layerContextPointer);
     store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_TARGET_VALUES_POINTER_OFFSET, targetValuesPointer);
     store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_TARGET_VALUES_LENGTH_OFFSET, Layout.STEP_GLITCH_REAL_DFS_INPUT_TARGET_VALUE_COUNT);
+    store<u32>(scanInputPointer + Layout.STEP_GLITCH_SCAN_INPUT_SOURCE_INDEX_OFFSET, sourceIndex);
     // Final validation belongs to final input target. A same-x duplicate that
     // is skipped keeps the explicit command-19 final replay in the Adapter.
     if (targetIndex + 1 == targetCount) {
@@ -1588,7 +1669,18 @@ export function replayStepGlitch(inputPointer: u32, inputByteLength: u32): u32 {
   if (hasAcceptedPoint == 0) {
     return createProductionResult(Layout.STEP_GLITCH_PRODUCTION_STATUS_MISS, 0, 0, 0, reachedTargetCount, 0, 0, 0, hasBlockedPoint, load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET), load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET));
   }
-  const evidencePointer = copyProductionReplayEvidence(metadataPointer, replayResultPointer, pathXPointer, pathYPointer, pathCount, finalValidationPointer);
+  const evidencePointer = copyProductionReplayEvidence(
+    contextPointer,
+    metadataPointer,
+    replayResultPointer,
+    pathXPointer,
+    pathYPointer,
+    pathCount,
+    finalValidationPointer,
+    u32.MAX_VALUE,
+    0,
+    0,
+  );
   return createProductionResult(Layout.STEP_GLITCH_PRODUCTION_STATUS_HIT, evidencePointer, load<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET), 0, reachedTargetCount, hasAcceptedPoint, load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_X_OFFSET), load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_ACCEPTED_Y_OFFSET), hasBlockedPoint, load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_X_OFFSET), load<f64>(replayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_BLOCKED_Y_OFFSET));
 }
 
@@ -1858,12 +1950,16 @@ export function composeStepGlitchSmartPath(inputPointer: u32, inputByteLength: u
     );
   }
   const evidencePointer = copyProductionReplayEvidence(
+    contextPointer,
     finalMetadataPointer,
     finalReplayResultPointer,
     currentXPointer,
     currentYPointer,
     currentCount,
     finalValidationPointer,
+    u32.MAX_VALUE,
+    0,
+    0,
   );
   const finalReachedTargetCount =
     load<u32>(finalReplayResultPointer + Layout.STEP_GLITCH_REPLAY_RESULT_REACHED_ORDERED_COUNT_OFFSET) +
@@ -2313,7 +2409,10 @@ function buildFarthestFreeX(maskPointer: u32, boundaryExpansion: u32, isMirrored
 
 /** Creates one retained geometry context; the Adapter owns the surrounding arena mark. */
 export function createStepGlitchGeometryContext(inputPointer: u32, inputByteLength: u32): u32 {
-  if (inputByteLength != Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH) trap();
+  if (
+    inputByteLength != Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH &&
+    inputByteLength != Layout.STEP_GLITCH_CREATE_LEGACY_INPUT_BYTE_LENGTH
+  ) trap();
   requireArenaRange(inputPointer, inputByteLength, sizeof<u32>());
   const valuesPointer = load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_VALUES_POINTER_OFFSET);
   const valuesLength = load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_VALUES_LENGTH_OFFSET);
@@ -2328,6 +2427,27 @@ export function createStepGlitchGeometryContext(inputPointer: u32, inputByteLeng
   const requiredTargetLength = load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_REQUIRED_TARGET_LENGTH_OFFSET);
   const prefixEvidencePointer = load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_PREFIX_EVIDENCE_POINTER_OFFSET);
   const prefixEvidenceByteLength = load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_PREFIX_EVIDENCE_BYTE_LENGTH_OFFSET);
+  const outerTaskId = inputByteLength == Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH
+    ? load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_OUTER_TASK_ID_OFFSET)
+    : 0;
+  const requestId = inputByteLength == Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH
+    ? load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_REQUEST_ID_OFFSET)
+    : 0;
+  const attemptId = inputByteLength == Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH
+    ? load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_ATTEMPT_ID_OFFSET)
+    : 0;
+  const backendGeneration = inputByteLength == Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH
+    ? load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_BACKEND_GENERATION_OFFSET)
+    : 0;
+  const sessionNonce = inputByteLength == Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH
+    ? load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_SESSION_NONCE_OFFSET)
+    : 0;
+  if (
+    inputByteLength == Layout.STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH &&
+    load<u32>(inputPointer + Layout.STEP_GLITCH_CREATE_IDENTITY_RESERVED_OFFSET) != 0
+  ) trap();
+  const hasIdentity = outerTaskId != 0 || requestId != 0 || attemptId != 0 || backendGeneration != 0 || sessionNonce != 0;
+  if (hasIdentity && sessionNonce == 0) trap();
   const cellCount = <u32>getGraphwarPlaneLength() * <u32>getGraphwarPlaneHeight();
   if (
     valuesLength != Layout.STEP_GLITCH_CONTEXT_VALUE_COUNT ||
@@ -2382,6 +2502,11 @@ export function createStepGlitchGeometryContext(inputPointer: u32, inputByteLeng
   store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_PREFIX_EVIDENCE_BYTE_LENGTH_OFFSET, prefixEvidenceByteLength);
   store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FARTHEST_FREE_X_POINTER_OFFSET, farthestFreeXPointer);
   store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FARTHEST_FREE_X_LENGTH_OFFSET, cellCount);
+  store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_OUTER_TASK_ID_OFFSET, outerTaskId);
+  store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUEST_ID_OFFSET, requestId);
+  store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_ATTEMPT_ID_OFFSET, attemptId);
+  store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_BACKEND_GENERATION_OFFSET, backendGeneration);
+  store<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SESSION_NONCE_OFFSET, sessionNonce);
   return contextPointer;
 }
 
@@ -2443,6 +2568,19 @@ function getFarthestFreeX(contextPointer: u32, searchX: i32, row: i32): i32 {
   return <i32>load<i16>(indexPointer + <u32>(row * width + searchX) * sizeof<i16>());
 }
 
+/** Identity is optional for legacy cold scans; once present, the nonce makes the state unambiguous. */
+function hasStepGlitchContextIdentity(contextPointer: u32): bool {
+  const outerTaskId = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_OUTER_TASK_ID_OFFSET);
+  const requestId = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_REQUEST_ID_OFFSET);
+  const attemptId = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_ATTEMPT_ID_OFFSET);
+  const backendGeneration = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_BACKEND_GENERATION_OFFSET);
+  const sessionNonce = load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_SESSION_NONCE_OFFSET);
+  if (load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_IDENTITY_RESERVED_OFFSET) != 0) trap();
+  const hasIdentity = outerTaskId != 0 || requestId != 0 || attemptId != 0 || backendGeneration != 0 || sessionNonce != 0;
+  if (hasIdentity && sessionNonce == 0) trap();
+  return hasIdentity;
+}
+
 function requireStepGlitchContext(contextPointer: u32): void {
   requireArenaRange(contextPointer, Layout.STEP_GLITCH_CONTEXT_BYTE_LENGTH, sizeof<f64>());
   if (
@@ -2453,6 +2591,7 @@ function requireStepGlitchContext(contextPointer: u32): void {
     load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FARTHEST_FREE_X_LENGTH_OFFSET) !=
       <u32>getGraphwarPlaneLength() * <u32>getGraphwarPlaneHeight()
   ) trap();
+  hasStepGlitchContextIdentity(contextPointer);
   requireElementRange(
     load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FARTHEST_FREE_X_POINTER_OFFSET),
     load<u32>(contextPointer + Layout.STEP_GLITCH_CONTEXT_FARTHEST_FREE_X_LENGTH_OFFSET),

@@ -5,7 +5,7 @@ import { imagePointToPlaneGridPoint, planeColumnToForwardColumn } from "../../co
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import { buildFormula } from "../../formula/generation/build";
-import type { CompiledGraphwarFormulaMaterials } from "../../formula/generation/build";
+import type { CompiledGraphwarFormulaMaterials, CompiledStepTerm } from "../../formula/generation/build";
 import type { FormulaEvaluationOptions, StepGlitchSegment } from "../../formula/generation/step-numeric-strategy";
 import { graphwarByteArraysEqual } from "../../formula/trajectory/final-replay-snapshot";
 import type { GraphwarFinalReplaySnapshot } from "../../formula/trajectory/final-replay-snapshot";
@@ -76,8 +76,20 @@ const STEP_GLITCH_COMMAND_SCAN = 18;
 const STEP_GLITCH_COMMAND_REPLAY = 19;
 const STEP_GLITCH_COMMAND_COMPOSE_SMART_PATH = 20;
 const STEP_GLITCH_COMMAND_COMPOSE_ONE_CLICK_SESSION = 25;
-const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 52;
-const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 72;
+const STEP_GLITCH_CREATE_INPUT_BYTE_LENGTH = 76;
+const STEP_GLITCH_CONTEXT_BYTE_LENGTH = 96;
+const STEP_GLITCH_CREATE_OUTER_TASK_ID_OFFSET = 52;
+const STEP_GLITCH_CREATE_REQUEST_ID_OFFSET = 56;
+const STEP_GLITCH_CREATE_ATTEMPT_ID_OFFSET = 60;
+const STEP_GLITCH_CREATE_BACKEND_GENERATION_OFFSET = 64;
+const STEP_GLITCH_CREATE_SESSION_NONCE_OFFSET = 68;
+const STEP_GLITCH_CREATE_IDENTITY_RESERVED_OFFSET = 72;
+const STEP_GLITCH_CONTEXT_OUTER_TASK_ID_OFFSET = 72;
+const STEP_GLITCH_CONTEXT_REQUEST_ID_OFFSET = 76;
+const STEP_GLITCH_CONTEXT_ATTEMPT_ID_OFFSET = 80;
+const STEP_GLITCH_CONTEXT_BACKEND_GENERATION_OFFSET = 84;
+const STEP_GLITCH_CONTEXT_SESSION_NONCE_OFFSET = 88;
+const STEP_GLITCH_CONTEXT_IDENTITY_RESERVED_OFFSET = 92;
 const STEP_GLITCH_CONTEXT_MAGIC = 0x5347_4354;
 const STEP_GLITCH_CONTEXT_FLAG_MIRRORED = 1;
 const STEP_GLITCH_PREFIX_EVIDENCE_BYTE_LENGTH = 164;
@@ -107,7 +119,8 @@ const STEP_GLITCH_REAL_DFS_TRACE_BYTE_LENGTH = 212;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_NONE = 0;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_COLD = 1;
 const STEP_GLITCH_REAL_DFS_PREFIX_PREPARATION_EVIDENCE = 2;
-const STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH = 24;
+const STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH = 28;
+const STEP_GLITCH_PRODUCTION_SCAN_INPUT_SOURCE_INDEX_OFFSET = 24;
 const STEP_GLITCH_PRODUCTION_REPLAY_INPUT_BYTE_LENGTH = 64;
 const STEP_GLITCH_PRODUCTION_COMPOSITION_INPUT_BYTE_LENGTH = 64;
 const STEP_GLITCH_PRODUCTION_COMPOSITION_FLAG_DELETE_OPTIMIZATION = 1;
@@ -126,11 +139,26 @@ const STEP_GLITCH_PRODUCTION_EVIDENCE_MAGIC = 0x5347_4556;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_VERSION = 1;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION = 1;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT = 2;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_CONTINUATION = 4;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_ALLOWED_FLAGS =
-  STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION | STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT;
-const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 320;
+  STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION |
+  STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT |
+  STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_CONTINUATION;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_HEADER_BYTE_LENGTH = 376;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_BYTE_LENGTH_OFFSET = 248;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET = 252;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SOURCE_INDEX_OFFSET = 320;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_INDEX_OFFSET = 324;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_POINTER_OFFSET = 328;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_BYTE_LENGTH_OFFSET = 332;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_X_OFFSET = 336;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_Y_OFFSET = 344;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_OUTER_TASK_ID_OFFSET = 352;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_REQUEST_ID_OFFSET = 356;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_ATTEMPT_ID_OFFSET = 360;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_BACKEND_GENERATION_OFFSET = 364;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_SESSION_NONCE_OFFSET = 368;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_RESERVED_OFFSET = 372;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET = 296;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_Y_POINTER_OFFSET = 300;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_PRESENCE_POINTER_OFFSET = 304;
@@ -219,10 +247,20 @@ export type GraphwarWasmStepGlitchPrefixTargetInput =
   | { type: "none" }
   | { target: GraphwarTrajectoryTargetCircle; type: "target" };
 
+/** Optional continuation provenance; the nonce makes a retained identity present rather than a zero sentinel. */
+export interface GraphwarWasmStepGlitchContinuationIdentity {
+  readonly outerTaskId: number;
+  readonly requestId: number;
+  readonly attemptId: number;
+  readonly backendGeneration: number;
+  readonly sessionNonce: number;
+}
+
 /** Retained scanner context 的完整输入；TS diagnostics 与旧 TS mask index 不跨 WASM 边界。 */
 export interface GraphwarWasmStepGlitchContextInput {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
+  continuationIdentity?: GraphwarWasmStepGlitchContinuationIdentity;
   formulaMode: GraphwarTrajectoryFormulaMode;
   prefixEvidence: GraphwarWasmStepGlitchPrefixEvidenceInput;
   prefixTarget: GraphwarWasmStepGlitchPrefixTargetInput;
@@ -260,6 +298,7 @@ export type GraphwarWasmStepGlitchCommandInput =
       finalValidation: GraphwarWasmStepGlitchFinalValidationInput;
       hitTarget: GraphwarTrajectoryTargetCircle;
       targetPoint: PixelPoint;
+      sourceIndex?: number;
       type: "scan";
     }
   | {
@@ -374,6 +413,7 @@ export type GraphwarWasmPackedStepGlitchFinalValidation =
 export type GraphwarWasmPackedStepGlitchCommandInput =
   | {
       finalValidation: GraphwarWasmPackedStepGlitchFinalValidation;
+      sourceIndex: number;
       targetValues: GraphwarWasmMemorySlice;
       type: "scan";
     }
@@ -781,8 +821,12 @@ export type GraphwarWasmStepGlitchOwnedFinalValidation =
 
 /** Exact automatic/fixed glitch term selected by the production replay. */
 export interface GraphwarWasmStepGlitchOwnedSelectedSegment {
+  readonly material?: Uint8Array;
+  readonly materialIndex?: number;
   readonly segment: Readonly<StepGlitchSegment>;
   readonly segmentIndex: number;
+  readonly sourceIndex?: number;
+  readonly targetAnchor?: PixelPoint;
 }
 
 /**
@@ -800,6 +844,7 @@ export interface GraphwarWasmStepGlitchOwnedEvidence {
   readonly formulaInput: GraphwarWasmStepGlitchOwnedFormulaInput;
   readonly formulaLaunch: GraphwarWasmFormulaLaunchResult & { status: "success" };
   readonly formulaMaterials: CompiledGraphwarFormulaMaterials;
+  readonly continuationIdentity?: GraphwarWasmStepGlitchContinuationIdentity;
   readonly continuation?: GraphwarWasmStepGlitchOwnedContinuation;
   readonly path: readonly PixelPoint[];
   readonly pointerEncoding: "relative-to-evidence";
@@ -1059,14 +1104,69 @@ export function createGraphwarWasmStepGlitchContextInput(
   };
 }
 
+function normalizeStepGlitchContinuationIdentity(
+  identity: GraphwarWasmStepGlitchContinuationIdentity | undefined,
+): GraphwarWasmStepGlitchContinuationIdentity | undefined {
+  if (identity === undefined) return undefined;
+  if (identity === null || typeof identity !== "object") {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch continuation identity must be a complete object",
+      "input",
+    );
+  }
+  const fields = [
+    ["outerTaskId", identity.outerTaskId],
+    ["requestId", identity.requestId],
+    ["attemptId", identity.attemptId],
+    ["backendGeneration", identity.backendGeneration],
+    ["sessionNonce", identity.sessionNonce],
+  ] as const;
+  if (fields.some(([, value]) => !Number.isInteger(value) || value < 0 || value > 0xffff_ffff)) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch continuation identity fields must be uint32 values",
+      "input",
+    );
+  }
+  if (identity.sessionNonce === 0) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Step-glitch continuation identity requires a nonzero session nonce",
+      "input",
+    );
+  }
+  return {
+    attemptId: identity.attemptId,
+    backendGeneration: identity.backendGeneration,
+    outerTaskId: identity.outerTaskId,
+    requestId: identity.requestId,
+    sessionNonce: identity.sessionNonce,
+  };
+}
+
+function stepGlitchContinuationIdentitiesEqual(
+  left: GraphwarWasmStepGlitchContinuationIdentity,
+  right: GraphwarWasmStepGlitchContinuationIdentity,
+) {
+  return (
+    left.outerTaskId === right.outerTaskId &&
+    left.requestId === right.requestId &&
+    left.attemptId === right.attemptId &&
+    left.backendGeneration === right.backendGeneration &&
+    left.sessionNonce === right.sessionNonce
+  );
+}
+
 /** Maps target options without splitting the optional final-validation identity. */
 export function createGraphwarWasmStepGlitchScanCommandInput(
-  target: GraphwarStepGlitchTargetOptions,
+  target: GraphwarStepGlitchTargetOptions & { sourceIndex?: number },
 ): Extract<GraphwarWasmStepGlitchCommandInput, { type: "scan" }> {
   return {
     finalValidation: target.finalValidation ? { ...target.finalValidation, type: "validate" } : { type: "none" },
     hitTarget: target.hitTarget,
     targetPoint: target.targetPoint,
+    ...(target.sourceIndex === undefined ? {} : { sourceIndex: target.sourceIndex }),
     type: "scan",
   };
 }
@@ -1077,6 +1177,7 @@ export function packGraphwarWasmStepGlitchContextInput(
   input: GraphwarWasmStepGlitchContextInput,
   minimumPointer = 0,
 ): GraphwarWasmStepGlitchContextPackResult {
+  normalizeStepGlitchContinuationIdentity(input.continuationIdentity);
   if (!hasFiniteBounds(input.bounds) || !hasFiniteBoundsRect(input.boundsRect) || input.sourcePath.length === 0) {
     return { status: "invalid-input" };
   }
@@ -1344,6 +1445,10 @@ function decodeGraphwarWasmStepGlitchProductionRawResult(
 
 function productionEvidenceFault(message: string): never {
   throw new GraphwarWasmAdapterError("invalid-session-state", message, "output");
+}
+
+function productionEvidenceIdentityFault(message: string): never {
+  throw new GraphwarWasmAdapterError("invalid-session-identity", message, "output");
 }
 
 function checkedProductionEvidenceByteLength(count: number, stride: number, fieldName: string) {
@@ -1647,9 +1752,75 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   }
   const hasFinalValidation = (evidenceFlags & STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION) !== 0;
   const hasSelectedSegment = (evidenceFlags & STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT) !== 0;
+  const hasSelectedContinuation = (evidenceFlags & STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_CONTINUATION) !== 0;
+  if (hasSelectedContinuation && !hasSelectedSegment) {
+    productionEvidenceIdentityFault("Step-glitch continuation evidence requires selected-segment evidence");
+  }
   const selectedSegmentIndex = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SEGMENT_INDEX_OFFSET, true);
   if (!hasSelectedSegment && selectedSegmentIndex !== 0) {
     productionEvidenceFault("Step-glitch evidence contains a segment index without selected-segment evidence");
+  }
+  const selectedSourceIndex = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_SOURCE_INDEX_OFFSET, true);
+  const selectedMaterialIndex = header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_INDEX_OFFSET, true);
+  const selectedMaterialPointer = header.getUint32(
+    STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_POINTER_OFFSET,
+    true,
+  );
+  const selectedMaterialByteLength = header.getUint32(
+    STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_BYTE_LENGTH_OFFSET,
+    true,
+  );
+  const targetAnchorX = header.getFloat64(STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_X_OFFSET, true);
+  const targetAnchorY = header.getFloat64(STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_Y_OFFSET, true);
+  const evidenceIdentity = {
+    attemptId: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_ATTEMPT_ID_OFFSET, true),
+    backendGeneration: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_BACKEND_GENERATION_OFFSET, true),
+    outerTaskId: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_OUTER_TASK_ID_OFFSET, true),
+    requestId: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_REQUEST_ID_OFFSET, true),
+    sessionNonce: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SESSION_NONCE_OFFSET, true),
+  } satisfies GraphwarWasmStepGlitchContinuationIdentity;
+  if (header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_RESERVED_OFFSET, true) !== 0) {
+    productionEvidenceFault("Step-glitch continuation evidence has a nonzero reserved field");
+  }
+  const expectedIdentity = normalizeStepGlitchContinuationIdentity(context.continuationIdentity);
+  if (!hasSelectedContinuation) {
+    if (
+      selectedSourceIndex !== 0 ||
+      selectedMaterialIndex !== 0 ||
+      selectedMaterialPointer !== 0 ||
+      selectedMaterialByteLength !== 0 ||
+      !Object.is(targetAnchorX, 0) ||
+      !Object.is(targetAnchorY, 0) ||
+      evidenceIdentity.outerTaskId !== 0 ||
+      evidenceIdentity.requestId !== 0 ||
+      evidenceIdentity.attemptId !== 0 ||
+      evidenceIdentity.backendGeneration !== 0 ||
+      evidenceIdentity.sessionNonce !== 0
+    ) {
+      productionEvidenceIdentityFault("Step-glitch evidence has continuation provenance without its flag");
+    }
+    if (expectedIdentity && hasSelectedSegment) {
+      productionEvidenceIdentityFault("Selected Step-glitch evidence omitted continuation provenance");
+    }
+  } else {
+    if (!expectedIdentity || !hasSelectedSegment || selectedSourceIndex === 0xffff_ffff) {
+      productionEvidenceIdentityFault("Selected Step-glitch continuation identity is incomplete");
+    }
+    if (!stepGlitchContinuationIdentitiesEqual(evidenceIdentity, expectedIdentity)) {
+      productionEvidenceIdentityFault("Selected Step-glitch continuation identity differs from its context");
+    }
+    if (command.type !== "scan") {
+      productionEvidenceIdentityFault("Selected Step-glitch continuation is only valid for a scan target");
+    }
+    if (!Number.isFinite(targetAnchorX) || !Number.isFinite(targetAnchorY)) {
+      productionEvidenceIdentityFault("Selected Step-glitch continuation target anchor is non-finite");
+    }
+    if (
+      command.sourceIndex !== selectedSourceIndex ||
+      !pixelPointsEqual(command.targetPoint, createPixelPoint(targetAnchorX, targetAnchorY))
+    ) {
+      productionEvidenceIdentityFault("Selected Step-glitch continuation target identity differs from its command");
+    }
   }
   const pathCount = validateGraphwarWasmU32(header.getUint32(20, true), "stepGlitch.evidence.pathCount");
   const pointCount = validateGraphwarWasmU32(header.getUint32(36, true), "stepGlitch.evidence.pointCount");
@@ -2167,6 +2338,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   }
   if (
     materialResultView.getUint32(FORMULA_RESULT_MATERIAL_POINTER_OFFSET, true) === 0 ||
+    materialResultView.getUint32(FORMULA_RESULT_MATERIAL_POINTER_OFFSET, true) !== header.getUint32(84, true) ||
     materialResultView.getUint32(FORMULA_RESULT_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true) ||
     materialResultView.getUint32(FORMULA_RESULT_PROTECTION_COUNT_OFFSET, true) !== protectionCount
   ) {
@@ -2181,13 +2353,57 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   );
   if (formulaLaunch.status !== "success")
     productionEvidenceFault("Step-glitch evidence contains an invalid launch result");
-  const selectedSegment = decodeOwnedSelectedSegment(
+  let selectedSegment = decodeOwnedSelectedSegment(
     formulaLaunch.compiledMaterials,
     hasSelectedSegment,
     selectedSegmentIndex,
     pathCount,
     hasFixedWindows,
   );
+  if (hasSelectedContinuation) {
+    if (!selectedSegment) productionEvidenceIdentityFault("Selected Step-glitch continuation has no selected material");
+    const materialPointer = header.getUint32(84, true);
+    const materialCount = validateGraphwarWasmU32(header.getUint32(88, true), "stepGlitch.evidence.materialCount");
+    const materialStride = validateGraphwarWasmU32(header.getUint32(92, true), "stepGlitch.evidence.materialStride");
+    if (
+      materialStride !== 112 ||
+      selectedMaterialByteLength !== materialStride ||
+      selectedMaterialIndex >= materialCount ||
+      selectedMaterialPointer !== materialPointer + selectedMaterialIndex * materialStride
+    ) {
+      productionEvidenceIdentityFault("Selected Step-glitch continuation material identity is invalid");
+    }
+    validateOwnedProductionEvidenceRange(
+      runtime,
+      evidencePointer,
+      evidenceByteLength,
+      selectedMaterialPointer,
+      selectedMaterialByteLength,
+      8,
+      "stepGlitch.evidence.selectedMaterial",
+      outputMinimumPointer,
+    );
+    const selectedMaterial = new Uint8Array(
+      runtime.buffer,
+      selectedMaterialPointer,
+      selectedMaterialByteLength,
+    ).slice();
+    validateSelectedStepMaterialRecord(
+      selectedMaterial,
+      selectedSegment.segment,
+      formulaLaunch.compiledMaterials.stepFormula?.terms.find(
+        (term) => term.sourceSegmentIndex === selectedSegment?.segmentIndex,
+      ),
+      expectedSettings.decimalPlaces,
+    );
+    selectedSegment = {
+      ...selectedSegment,
+      material: selectedMaterial,
+      materialIndex: selectedMaterialIndex,
+      sourceIndex: selectedSourceIndex,
+      targetAnchor: createPixelPoint(targetAnchorX, targetAnchorY),
+    };
+  }
   if (
     !productionEvidencePointsEqual(
       formulaLaunch.formulaPoints,
@@ -2403,6 +2619,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     },
     formulaLaunch,
     formulaMaterials: formulaLaunch.compiledMaterials,
+    ...(hasSelectedContinuation ? { continuationIdentity: evidenceIdentity } : {}),
     path,
     pointerEncoding: "relative-to-evidence",
     protection,
@@ -2455,6 +2672,55 @@ function decodeOwnedSelectedSegment(
     productionEvidenceFault("Step-glitch selected segment is absent from formula materials");
   }
   return { segment: term.glitchSegment, segmentIndex };
+}
+
+function validateSelectedStepMaterialRecord(
+  bytes: Uint8Array,
+  segment: Readonly<StepGlitchSegment>,
+  term: CompiledStepTerm | undefined,
+  formulaDecimalPlaces: number,
+) {
+  if (!term?.glitchSegment || bytes.byteLength !== 112) {
+    productionEvidenceIdentityFault("Selected Step-glitch material record is incomplete");
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const expectedDecimalPlaces = segment.formulaDecimalPlaces ?? formulaDecimalPlaces;
+  const glitchEquation = segment.equation === "dy" ? 2 : 3;
+  const sameFloat = (offset: number, expected: number) => Object.is(view.getFloat64(offset, true), expected);
+  if (
+    !sameFloat(0, term.formulaCenterX) ||
+    !sameFloat(8, term.firstDerivativeCoefficient) ||
+    !sameFloat(16, term.secondDerivativeCoefficient) ||
+    !sameFloat(24, term.yCoefficient) ||
+    view.getUint32(32, true) !== term.sourceSegmentIndex ||
+    view.getUint32(36, true) !== (term.isDerivativeOverflowProtected ? 1 : 0) ||
+    view.getInt32(40, true) !== glitchEquation ||
+    view.getInt32(44, true) !== expectedDecimalPlaces ||
+    !sameFloat(48, segment.startX) ||
+    !sameFloat(56, segment.endX) ||
+    !sameFloat(64, segment.targetY)
+  ) {
+    productionEvidenceIdentityFault("Selected Step-glitch material identity differs from its compiled term");
+  }
+  if (segment.equation === "dy") {
+    if (
+      !sameFloat(72, segment.derivative) ||
+      !sameFloat(80, segment.gateY) ||
+      !Object.is(view.getFloat64(88, true), 0) ||
+      !Object.is(view.getFloat64(96, true), 0) ||
+      !Object.is(view.getFloat64(104, true), 0)
+    ) {
+      productionEvidenceIdentityFault("Selected first-order Step-glitch material identity differs from its segment");
+    }
+  } else if (
+    !sameFloat(72, segment.acceleration) ||
+    !sameFloat(80, segment.accelerationGateY) ||
+    !sameFloat(88, segment.braking) ||
+    !sameFloat(96, segment.brakingGateY) ||
+    !sameFloat(104, segment.pulseEndX)
+  ) {
+    productionEvidenceIdentityFault("Selected second-order Step-glitch material identity differs from its segment");
+  }
 }
 
 function decodeOwnedProductionFinalValidation(
@@ -3004,6 +3270,11 @@ function rewriteProductionEvidencePointersRelativeToBase(
     [68, header.getUint32(68, true), "launchResult"],
     [76, header.getUint32(76, true), "materialResult"],
     [84, header.getUint32(84, true), "material"],
+    [
+      STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_POINTER_OFFSET,
+      header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_POINTER_OFFSET, true),
+      "selectedMaterial",
+    ],
     [240, header.getUint32(240, true), "finalValidation"],
     [256, header.getUint32(256, true), "formulaPointX"],
     [260, header.getUint32(260, true), "formulaPointY"],
@@ -3149,6 +3420,7 @@ function runGraphwarWasmStepGlitchProductionRaw(
       inputView.setUint32(12, finalValidation.pointer, true);
       inputView.setUint32(16, finalValidation.length, true);
       inputView.setUint32(20, 0, true);
+      inputView.setUint32(STEP_GLITCH_PRODUCTION_SCAN_INPUT_SOURCE_INDEX_OFFSET, packed.input.sourceIndex, true);
       commandId = STEP_GLITCH_COMMAND_SCAN;
       inputByteLength = STEP_GLITCH_PRODUCTION_SCAN_INPUT_BYTE_LENGTH;
     } else if (command.type === "replay") {
@@ -3416,6 +3688,7 @@ function decodeGraphwarWasmStepGlitchSessionRawResult(
       finalValidation: finalTargetIndex === command.targets.length - 1 ? command.finalValidation : { type: "none" },
       hitTarget: finalTarget.hitTarget,
       targetPoint: finalTarget.routePoint,
+      sourceIndex: finalTarget.sourceIndex,
       type: "scan",
     };
     const decoded = decodeGraphwarWasmStepGlitchProductionRawResult(
@@ -3462,6 +3735,7 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
     const boundsSnapshot = { ...input.bounds };
     const boundsRectSnapshot = { ...input.boundsRect };
     const formulaSettingsSnapshot = { ...input.formulaMode.settings };
+    const continuationIdentitySnapshot = normalizeStepGlitchContinuationIdentity(input.continuationIdentity);
     const sourcePathSnapshot = input.sourcePath.map((point) => createPixelPoint(point.x, point.y));
     const requiredTargetsSnapshot = input.requiredTargets.map((target) => ({
       center: createPixelPoint(target.center.x, target.center.y),
@@ -3474,6 +3748,7 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
       requiredTargets: requiredTargetsSnapshot,
       simulationMask: input.simulationMask.slice(),
       sourcePath: sourcePathSnapshot,
+      ...(continuationIdentitySnapshot ? { continuationIdentity: continuationIdentitySnapshot } : {}),
     };
     const prefixTargetSnapshot =
       input.prefixTarget.type === "target"
@@ -3513,6 +3788,16 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
     inputView.setUint32(40, packed.requiredTargetRecords.length, true);
     inputView.setUint32(44, prefixEvidenceDescriptor.pointer, true);
     inputView.setUint32(48, prefixEvidenceDescriptor.length, true);
+    inputView.setUint32(STEP_GLITCH_CREATE_OUTER_TASK_ID_OFFSET, continuationIdentitySnapshot?.outerTaskId ?? 0, true);
+    inputView.setUint32(STEP_GLITCH_CREATE_REQUEST_ID_OFFSET, continuationIdentitySnapshot?.requestId ?? 0, true);
+    inputView.setUint32(STEP_GLITCH_CREATE_ATTEMPT_ID_OFFSET, continuationIdentitySnapshot?.attemptId ?? 0, true);
+    inputView.setUint32(
+      STEP_GLITCH_CREATE_BACKEND_GENERATION_OFFSET,
+      continuationIdentitySnapshot?.backendGeneration ?? 0,
+      true,
+    );
+    inputView.setUint32(STEP_GLITCH_CREATE_SESSION_NONCE_OFFSET, continuationIdentitySnapshot?.sessionNonce ?? 0, true);
+    inputView.setUint32(STEP_GLITCH_CREATE_IDENTITY_RESERVED_OFFSET, 0, true);
 
     const contextPointer = runtime.runRouteTask(
       STEP_GLITCH_COMMAND_CREATE_CONTEXT,
@@ -3543,7 +3828,18 @@ export function createGraphwarWasmStepGlitchGeometryTestContext(
       contextView.getUint32(44, true) !== packed.requiredTargetRecords.pointer ||
       contextView.getUint32(48, true) !== packed.requiredTargetRecords.length ||
       contextView.getUint32(52, true) !== prefixEvidenceDescriptor.pointer ||
-      contextView.getUint32(56, true) !== prefixEvidenceDescriptor.length
+      contextView.getUint32(56, true) !== prefixEvidenceDescriptor.length ||
+      contextView.getUint32(STEP_GLITCH_CONTEXT_OUTER_TASK_ID_OFFSET, true) !==
+        (continuationIdentitySnapshot?.outerTaskId ?? 0) ||
+      contextView.getUint32(STEP_GLITCH_CONTEXT_REQUEST_ID_OFFSET, true) !==
+        (continuationIdentitySnapshot?.requestId ?? 0) ||
+      contextView.getUint32(STEP_GLITCH_CONTEXT_ATTEMPT_ID_OFFSET, true) !==
+        (continuationIdentitySnapshot?.attemptId ?? 0) ||
+      contextView.getUint32(STEP_GLITCH_CONTEXT_BACKEND_GENERATION_OFFSET, true) !==
+        (continuationIdentitySnapshot?.backendGeneration ?? 0) ||
+      contextView.getUint32(STEP_GLITCH_CONTEXT_SESSION_NONCE_OFFSET, true) !==
+        (continuationIdentitySnapshot?.sessionNonce ?? 0) ||
+      contextView.getUint32(STEP_GLITCH_CONTEXT_IDENTITY_RESERVED_OFFSET, true) !== 0
     ) {
       throw new GraphwarWasmAdapterError(
         "invalid-session-identity",
@@ -5594,6 +5890,13 @@ export function packGraphwarWasmStepGlitchCommandInput(
   if (!packedFinalValidation) {
     return { status: "invalid-input" };
   }
+  if (context.continuationIdentity !== undefined && (command.type === "replay" || command.type === "compose")) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Selected Step-glitch continuation context cannot service a cold replay command",
+      "input",
+    );
+  }
   if (command.type === "session") {
     if (command.targets.length === 0 || command.targets.length > 0xffff_ffff) {
       return { status: "invalid-input" };
@@ -5730,9 +6033,21 @@ export function packGraphwarWasmStepGlitchCommandInput(
   if (!graphXAdvancesStrictly(sourceGraphPoint.x, targetGraphPoint.x)) {
     return { status: "invalid-input" };
   }
+  const sourceIndex =
+    command.sourceIndex === undefined
+      ? 0xffff_ffff
+      : validateGraphwarWasmU32(command.sourceIndex, "scan.sourceIndex", "input");
+  if (context.continuationIdentity !== undefined && sourceIndex === 0xffff_ffff) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-session-identity",
+      "Selected Step-glitch continuation requires a source index",
+      "input",
+    );
+  }
   return {
     input: {
       finalValidation: packedFinalValidation,
+      sourceIndex,
       targetValues: writeGraphwarWasmFloat64Values(
         arena,
         new Float64Array([

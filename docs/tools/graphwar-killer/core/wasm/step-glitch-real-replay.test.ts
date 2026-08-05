@@ -17,6 +17,7 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants"
 import { graphToImagePoint, imageToGraphPoint } from "../geometry";
 import { createGraphPoint, createPixelPoint } from "../types";
 import type { BoundsRect, EquationMode, GraphBounds } from "../types";
+import { GraphwarWasmAdapterError } from "./abi";
 import { readGraphwarKernelBytes } from "./kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "./runtime";
 import {
@@ -129,6 +130,78 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     expect(replay.evidence?.owned.trajectory.trackedTargetHitIndexes[0]).toBeGreaterThan(0);
     expect(replay.evidence?.bytes).not.toBe(evidenceBytes);
     expect(runtime.getArenaDiagnostics().isCanaryIntact).toBe(true);
+    context.dispose();
+  });
+
+  it("binds automatic selected continuation evidence to its session identity", async () => {
+    const fixture = createFixture("dy");
+    const continuationIdentity = {
+      attemptId: 3,
+      backendGeneration: 5,
+      outerTaskId: 7,
+      requestId: 11,
+      sessionNonce: 13,
+    };
+    const { context } = await createContext(fixture, { continuationIdentity });
+    const targetPoint = fixture.pixelPath[2];
+    const target = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const scan = context.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({
+        hitTarget: target,
+        sourceIndex: 19,
+        targetPoint,
+      }),
+    );
+    expect(scan.status).toBe("hit");
+    if (scan.status !== "hit" || !scan.evidence) throw new Error("expected strict continuation evidence");
+    expect(scan.evidence.owned.continuationIdentity).toEqual(continuationIdentity);
+    expect(scan.evidence.owned.selectedSegment).toMatchObject({
+      materialIndex: 1,
+      segmentIndex: 1,
+      sourceIndex: 19,
+      targetAnchor: targetPoint,
+    });
+    expect(scan.evidence.owned.selectedSegment?.material).toHaveLength(112);
+    context.dispose();
+  });
+
+  it("rejects stale selected continuation identity instead of reusing the cold path", async () => {
+    const fixture = createFixture("dy");
+    const { context, runtime } = await createContext(fixture, {
+      continuationIdentity: {
+        attemptId: 3,
+        backendGeneration: 5,
+        outerTaskId: 7,
+        requestId: 11,
+        sessionNonce: 13,
+      },
+    });
+    const targetPoint = fixture.pixelPath[2];
+    const target = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 18) {
+        const resultView = new DataView(runtime.buffer, resultPointer, 72);
+        const evidencePointer = resultView.getUint32(8, true);
+        new DataView(runtime.buffer).setUint32(evidencePointer + 352, 99, true);
+      }
+      return resultPointer;
+    });
+    const error = await Promise.resolve()
+      .then(() =>
+        context.scanRaw(
+          createGraphwarWasmStepGlitchScanCommandInput({
+            hitTarget: target,
+            sourceIndex: 19,
+            targetPoint,
+          }),
+        ),
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(GraphwarWasmAdapterError);
+    expect((error as GraphwarWasmAdapterError).code).toBe("invalid-session-identity");
+    spy.mockRestore();
     context.dispose();
   });
 
@@ -2329,6 +2402,13 @@ function createFixture(
 async function createContext(
   fixture: ReturnType<typeof createFixture>,
   options?: {
+    continuationIdentity?: {
+      attemptId: number;
+      backendGeneration: number;
+      outerTaskId: number;
+      requestId: number;
+      sessionNonce: number;
+    };
     prefixEvidence?: ReturnType<typeof createCompatiblePrefixEvidence>["evidence"];
     prefixTarget?: GraphwarTrajectoryTargetCircle;
     simulationBoundaryExpansion?: number;
@@ -2336,19 +2416,22 @@ async function createContext(
   },
 ) {
   const runtime = await instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 64 });
+  const contextInput = createGraphwarWasmStepGlitchContextInput({
+    bounds: fixture.bounds,
+    boundsRect,
+    formulaMode: fixture.formulaMode,
+    ...(options?.prefixEvidence ? { prefixEvidence: options.prefixEvidence } : {}),
+    ...(options?.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
+    requiredTargets: fixture.requiredTargets,
+    simulationBoundaryExpansion: options?.simulationBoundaryExpansion,
+    simulationMask: fixture.mask,
+    sourcePath: options?.sourcePath ?? fixture.pixelPath.slice(0, 2),
+  });
   const result = createGraphwarWasmStepGlitchGeometryTestContext(
     runtime,
-    createGraphwarWasmStepGlitchContextInput({
-      bounds: fixture.bounds,
-      boundsRect,
-      formulaMode: fixture.formulaMode,
-      ...(options?.prefixEvidence ? { prefixEvidence: options.prefixEvidence } : {}),
-      ...(options?.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
-      requiredTargets: fixture.requiredTargets,
-      simulationBoundaryExpansion: options?.simulationBoundaryExpansion,
-      simulationMask: fixture.mask,
-      sourcePath: options?.sourcePath ?? fixture.pixelPath.slice(0, 2),
-    }),
+    options?.continuationIdentity
+      ? { ...contextInput, continuationIdentity: options.continuationIdentity }
+      : contextInput,
   );
   expect(result.status).toBe("ready");
   if (result.status !== "ready") {

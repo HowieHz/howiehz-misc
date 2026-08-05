@@ -346,12 +346,19 @@ describe("Graphwar pathfinding runner incumbents", () => {
     worker.emit({
       attempt: request.attempt,
       id: request.id,
-      progress: { diagnostics, incumbent },
+      progress: { diagnostics, incumbent, sequence: 1 },
       type: "one-click-clear-incumbent",
     });
 
-    expect(onIncumbent).toHaveBeenCalledWith({ diagnostics, incumbent });
+    expect(onIncumbent).toHaveBeenCalledWith({ diagnostics, incumbent, sequence: 1 });
     expect(diagnostics.backendExecution).toEqual({ effective: "typescript", requested: "typescript" });
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      progress: { diagnostics, incumbent, sequence: 1 },
+      type: "one-click-clear-incumbent",
+    });
+    expect(onIncumbent).toHaveBeenCalledTimes(1);
     worker.emit({
       attempt: request.attempt,
       id: request.id,

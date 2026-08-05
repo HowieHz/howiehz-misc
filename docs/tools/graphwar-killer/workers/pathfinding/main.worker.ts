@@ -1506,6 +1506,7 @@ async function buildOneClickClearPath(
     pathSearchPolicy = pathSearchSelection;
   }
   let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
+  let incumbentSequence = 0;
   let validatedStepGlitchEvidence:
     | {
         path: readonly PixelPoint[];
@@ -1543,7 +1544,7 @@ async function buildOneClickClearPath(
                 postResponse({
                   attempt,
                   id: requestId,
-                  progress: { incumbent },
+                  progress: { incumbent, sequence: ++incumbentSequence },
                   type: "one-click-clear-incumbent",
                 });
                 return;
@@ -1554,7 +1555,7 @@ async function buildOneClickClearPath(
               postResponse({
                 attempt,
                 id: requestId,
-                progress: { diagnostics: debugMetrics, incumbent },
+                progress: { diagnostics: debugMetrics, incumbent, sequence: ++incumbentSequence },
                 type: "one-click-clear-incumbent",
               });
               debugMetrics.timings.incumbentMessageSendElapsedMs += nowMs() - messageStartedAt;

@@ -417,6 +417,7 @@ describe("Anytime one-click-clear progress", () => {
           },
         },
         incumbent,
+        sequence: 1,
       },
       type: "one-click-clear-incumbent",
     });

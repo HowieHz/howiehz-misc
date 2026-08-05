@@ -126,6 +126,8 @@ export interface GraphwarOneClickClearPathWorkerResult {
 export interface GraphwarOneClickClearProgress {
   /** 调试模式下与 incumbent 同一检查点的累计诊断。 */
   diagnostics?: GraphwarPathfindingDiagnostics;
+  /** Request-local monotonic event identity; stale/duplicate progress is discarded by the runner. */
+  sequence?: number;
   incumbent: GraphwarOneClickClearIncumbent;
 }
 

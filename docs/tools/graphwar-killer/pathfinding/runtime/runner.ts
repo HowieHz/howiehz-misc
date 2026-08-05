@@ -68,6 +68,8 @@ interface PendingPathfindingWorkerTaskBase {
   onPreview?: (preview: GraphwarPathfindingPreview) => void;
   /** 一键清图当前最优方案回调；请求取消或换代后不会再调用。 */
   onIncumbent?: GraphwarPathfindingRunOptions["onIncumbent"];
+  /** Last accepted request-local incumbent event sequence. */
+  lastIncumbentSequence?: number;
   /** Promise 失败回调。 */
   reject: (reason?: unknown) => void;
   /** Promise 成功回调。 */
@@ -499,6 +501,17 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
       ) {
         rejectPendingProtocolResponse();
         return;
+      }
+      const sequence = response.progress.sequence;
+      if (sequence !== undefined) {
+        if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+          rejectPendingProtocolResponse();
+          return;
+        }
+        if (pendingTask.lastIncumbentSequence !== undefined && sequence <= pendingTask.lastIncumbentSequence) {
+          return;
+        }
+        pendingTask.lastIncumbentSequence = sequence;
       }
       if (response.progress.diagnostics) {
         response.progress.diagnostics.backendExecution = pendingTask.backendExecution;

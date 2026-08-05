@@ -205,6 +205,130 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
     context.dispose();
   });
 
+  it.each([
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceLength = view.getUint32(12, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, evidenceLength);
+        const materialPointer = evidenceView.getUint32(84, true);
+        const materialIndex = evidenceView.getUint32(324, true);
+        const materialStride = evidenceView.getUint32(92, true);
+        new Uint8Array(runtime.buffer)[materialPointer + materialIndex * materialStride] ^= 1;
+      },
+      name: "selected material bytes",
+    },
+    {
+      expectedCode: "invalid-session-state",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(88, evidenceView.getUint32(88, true) + 1, true);
+      },
+      name: "material count echo",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(252, 0, true);
+        evidenceView.setUint32(324, 0, true);
+        evidenceView.setUint32(328, evidenceView.getUint32(84, true), true);
+      },
+      name: "noncanonical selected material index",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(304, evidenceView.getUint32(304, true) + 1, true);
+      },
+      name: "segment-start presence pointer",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        evidenceView.setUint32(312, evidenceView.getUint32(312, true) + 1, true);
+      },
+      name: "delta-y presence pointer",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const formulaInputPointer = evidenceView.getUint32(60, true);
+        const formulaInputView = new DataView(runtime.buffer, formulaInputPointer, 176);
+        const overflowPointer = formulaInputView.getUint32(52, true);
+        const overflowView = new DataView(runtime.buffer, overflowPointer, 16);
+        overflowView.setFloat64(0, overflowView.getFloat64(0, true) + 1, true);
+      },
+      name: "overflow range origin",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const formulaInputPointer = evidenceView.getUint32(60, true);
+        const formulaInputView = new DataView(runtime.buffer, formulaInputPointer, 176);
+        const overflowPointer = formulaInputView.getUint32(52, true);
+        const overflowView = new DataView(runtime.buffer, overflowPointer, 16);
+        overflowView.setFloat64(8, overflowView.getFloat64(8, true) + 1, true);
+      },
+      name: "overflow range geometry bound",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const formulaInputPointer = evidenceView.getUint32(60, true);
+        const formulaInputView = new DataView(runtime.buffer, formulaInputPointer, 176);
+        formulaInputView.setFloat64(96, formulaInputView.getFloat64(96, true) + 1, true);
+      },
+      name: "soldier center provenance",
+    },
+  ])("rejects corrupted strict selected continuation evidence: $name", async ({ expectedCode, mutate }) => {
+    const fixture = createFixture("dy");
+    const continuationIdentity = {
+      attemptId: 3,
+      backendGeneration: 5,
+      outerTaskId: 7,
+      requestId: 11,
+      sessionNonce: 13,
+    };
+    const { context, runtime } = await createContext(fixture, { continuationIdentity });
+    const targetPoint = fixture.pixelPath[2];
+    const target = { center: targetPoint, radius: 2 } satisfies GraphwarTrajectoryTargetCircle;
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    const spy = vi.spyOn(runtime, "runRouteTask").mockImplementation((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      if (command === 18) mutate(new DataView(runtime.buffer, resultPointer, 72), runtime);
+      return resultPointer;
+    });
+    const error = await Promise.resolve()
+      .then(() =>
+        context.scanRaw(
+          createGraphwarWasmStepGlitchScanCommandInput({
+            hitTarget: target,
+            sourceIndex: 19,
+            targetPoint,
+          }),
+        ),
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(GraphwarWasmAdapterError);
+    expect((error as GraphwarWasmAdapterError).code).toBe(expectedCode);
+    spy.mockRestore();
+    context.dispose();
+  });
+
   it("owns multi-target session traversal and preserves same-x duplicate provenance", async () => {
     const fixture = createFixture("dy");
     const { context, runtime } = await createContext(fixture);
@@ -2420,6 +2544,7 @@ async function createContext(
     bounds: fixture.bounds,
     boundsRect,
     formulaMode: fixture.formulaMode,
+    ...(options?.continuationIdentity ? { continuationIdentity: options.continuationIdentity } : {}),
     ...(options?.prefixEvidence ? { prefixEvidence: options.prefixEvidence } : {}),
     ...(options?.prefixTarget ? { prefixTarget: options.prefixTarget } : {}),
     requiredTargets: fixture.requiredTargets,
@@ -2427,12 +2552,7 @@ async function createContext(
     simulationMask: fixture.mask,
     sourcePath: options?.sourcePath ?? fixture.pixelPath.slice(0, 2),
   });
-  const result = createGraphwarWasmStepGlitchGeometryTestContext(
-    runtime,
-    options?.continuationIdentity
-      ? { ...contextInput, continuationIdentity: options.continuationIdentity }
-      : contextInput,
-  );
+  const result = createGraphwarWasmStepGlitchGeometryTestContext(runtime, contextInput);
   expect(result.status).toBe("ready");
   if (result.status !== "ready") {
     throw new Error("expected retained Step-glitch context");

@@ -657,6 +657,21 @@ function copyProductionOptionalPointRange(
   }
 }
 
+/** Independent two-lane byte identity for the selected raw material record. */
+function storeSelectedMaterialFingerprint(materialPointer: u32, byteLength: u32, outputPointer: u32): void {
+  let first: u32 = 0x811c9dc5;
+  let second: u32 = 0x9e3779b9;
+  let offset: u32 = 0;
+  while (offset < byteLength) {
+    const value = <u32>load<u8>(materialPointer + offset);
+    first = (first ^ value) * <u32>0x01000193;
+    second = (second ^ value) * <u32>0x85ebca6b;
+    offset += 1;
+  }
+  store<u32>(outputPointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_FINGERPRINT_A_OFFSET, first);
+  store<u32>(outputPointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_FINGERPRINT_B_OFFSET, second);
+}
+
 /** Copies one successful replay into a single arena-owned range and rewrites all nested pointers into that range. */
 function copyProductionReplayEvidence(
   contextPointer: u32,
@@ -839,6 +854,13 @@ function copyProductionReplayEvidence(
     ? 0
     : copyProductionEvidenceRange(evidencePointer, finalSize, cursorPointer, overflowPointer, checkedProductionEvidenceBytes(2, sizeof<f64>()), sizeof<f64>());
   const copiedMaterialPointer = copyProductionEvidenceRange(evidencePointer, finalSize, cursorPointer, materialPointer, materialBytes, sizeof<u64>());
+  if (hasSelectedSegment && hasStepGlitchContextIdentity(contextPointer)) {
+    storeSelectedMaterialFingerprint(
+      materialPointer + selectedMaterialIndex * materialStride,
+      materialStride,
+      evidencePointer,
+    );
+  }
   const copiedContinuationPointer = copyProductionEvidenceRange(evidencePointer, finalSize, cursorPointer, continuationPointer, continuationLength, sizeof<u64>());
   if (copiedContinuationPointer != 0) {
     store<u32>(

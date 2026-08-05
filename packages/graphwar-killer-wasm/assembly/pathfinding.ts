@@ -66,6 +66,7 @@ import {
 
 const ROUTE_POLICY_VALUE_COUNT: u32 = 12;
 const THETA_STAR_LOOKAHEAD_OFFSET_COUNT: u32 = 8;
+let oneClickIncumbentEventSessionPointer: u32 = 0;
 
 @inline
 function trap(): void {
@@ -149,6 +150,128 @@ function compareOneClickIncumbent(inputPointer: u32, inputByteLength: u32): u32 
   memory.fill(resultPointer, 0, Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_BYTE_LENGTH);
   store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_INCUMBENT_COMPARE_MAGIC);
   store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_COMPARE_RESULT_STATUS_OFFSET, isBetter ? 1 : 0);
+  return resultPointer;
+}
+
+/** Retains one request's incumbent score and emits a monotonic event sequence from WASM. */
+function runOneClickIncumbentEvent(inputPointer: u32, inputByteLength: u32): u32 {
+  if (inputByteLength != Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_BYTE_LENGTH) trap();
+  requireArenaRange(inputPointer, inputByteLength, sizeof<u64>());
+  if (
+    load<u32>(inputPointer) != Layout.ONE_CLICK_INCUMBENT_EVENT_MAGIC ||
+    load<u32>(inputPointer + 4) != Layout.ONE_CLICK_INCUMBENT_EVENT_VERSION
+  )
+    trap();
+  const operation = load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_OPERATION_OFFSET);
+  if (operation == Layout.ONE_CLICK_INCUMBENT_EVENT_BEGIN_OPERATION) {
+    if (
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_SESSION_POINTER_OFFSET) != 0 ||
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_TARGET_COUNT_OFFSET) != 0 ||
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_POINT_COUNT_OFFSET) != 0 ||
+      load<f64>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_PATH_ERROR_OFFSET) != 0 ||
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_PATH_ERROR_FLAG_OFFSET) != 0 ||
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_RESERVED_OFFSET) != 0
+    )
+      trap();
+    const sessionPointer = reserveArena(Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BYTE_LENGTH, sizeof<u64>());
+    memory.fill(sessionPointer, 0, Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BYTE_LENGTH);
+    store<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_MAGIC_OFFSET, Layout.ONE_CLICK_INCUMBENT_EVENT_MAGIC);
+    store<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_VERSION_OFFSET, Layout.ONE_CLICK_INCUMBENT_EVENT_VERSION);
+    store<u32>(
+      sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_REQUEST_NONCE_OFFSET,
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_REQUEST_NONCE_OFFSET),
+    );
+    store<u32>(
+      sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_ATTEMPT_ID_OFFSET,
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_ATTEMPT_ID_OFFSET),
+    );
+    store<u32>(
+      sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_GENERATION_OFFSET,
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_GENERATION_OFFSET),
+    );
+    store<u32>(
+      sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_OUTER_TASK_ID_OFFSET,
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_OUTER_TASK_ID_OFFSET),
+    );
+    store<u32>(
+      sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_POINT_COUNT_OFFSET,
+      u32.MAX_VALUE,
+    );
+    oneClickIncumbentEventSessionPointer = sessionPointer;
+    const resultPointer = reserveArena(Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_BYTE_LENGTH, sizeof<u32>());
+    memory.fill(resultPointer, 0, Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_BYTE_LENGTH);
+    store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_INCUMBENT_EVENT_MAGIC);
+    store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_SESSION_POINTER_OFFSET, sessionPointer);
+    return resultPointer;
+  }
+  if (operation != Layout.ONE_CLICK_INCUMBENT_EVENT_CONSIDER_OPERATION) trap();
+  const sessionPointer = load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_SESSION_POINTER_OFFSET);
+  if (sessionPointer == 0 || sessionPointer != oneClickIncumbentEventSessionPointer) trap();
+  if (
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_MAGIC_OFFSET) != Layout.ONE_CLICK_INCUMBENT_EVENT_MAGIC ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_VERSION_OFFSET) != Layout.ONE_CLICK_INCUMBENT_EVENT_VERSION ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_REQUEST_NONCE_OFFSET) !=
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_REQUEST_NONCE_OFFSET) ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_ATTEMPT_ID_OFFSET) !=
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_ATTEMPT_ID_OFFSET) ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_GENERATION_OFFSET) !=
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_GENERATION_OFFSET) ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_OUTER_TASK_ID_OFFSET) !=
+      load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_OUTER_TASK_ID_OFFSET) ||
+    load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_RESERVED_OFFSET) != 0 ||
+    load<u32>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_RESERVED_OFFSET) != 0
+  )
+    trap();
+  const candidatePathErrorFlag = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_PATH_ERROR_FLAG_OFFSET,
+  );
+  const candidatePathError = load<f64>(inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_PATH_ERROR_OFFSET);
+  if (
+    candidatePathErrorFlag > 1 ||
+    (candidatePathErrorFlag == 0 && candidatePathError != 0) ||
+    (candidatePathErrorFlag != 0 &&
+      (!isFiniteValue(candidatePathError) || candidatePathError == f64.NEGATIVE_INFINITY || candidatePathError < 0))
+  )
+    trap();
+  const candidateTargetCount = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_TARGET_COUNT_OFFSET,
+  );
+  const candidatePointCount = load<u32>(
+    inputPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_INPUT_CANDIDATE_POINT_COUNT_OFFSET,
+  );
+  const currentTargetCount = load<u32>(
+    sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_TARGET_COUNT_OFFSET,
+  );
+  const currentPointCount = load<u32>(
+    sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_POINT_COUNT_OFFSET,
+  );
+  const currentPathErrorFlag = load<u32>(
+    sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_PATH_ERROR_FLAG_OFFSET,
+  );
+  const currentPathError = load<f64>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_PATH_ERROR_OFFSET);
+  let isBetter = candidateTargetCount > currentTargetCount;
+  if (!isBetter && candidateTargetCount == currentTargetCount) {
+    isBetter = candidatePointCount < currentPointCount;
+    if (!isBetter && candidatePointCount == currentPointCount && candidatePathErrorFlag != 0 && currentPathErrorFlag != 0) {
+      isBetter = candidatePathError < currentPathError;
+    }
+  }
+  let sequence = load<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_SEQUENCE_OFFSET);
+  if (isBetter) {
+    if (sequence == u32.MAX_VALUE) trap();
+    sequence += 1;
+    store<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_SEQUENCE_OFFSET, sequence);
+    store<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_TARGET_COUNT_OFFSET, candidateTargetCount);
+    store<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_POINT_COUNT_OFFSET, candidatePointCount);
+    store<f64>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_PATH_ERROR_OFFSET, candidatePathError);
+    store<u32>(sessionPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_SESSION_BEST_PATH_ERROR_FLAG_OFFSET, candidatePathErrorFlag);
+  }
+  const resultPointer = reserveArena(Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_BYTE_LENGTH, sizeof<u32>());
+  memory.fill(resultPointer, 0, Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_BYTE_LENGTH);
+  store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_MAGIC_OFFSET, Layout.ONE_CLICK_INCUMBENT_EVENT_MAGIC);
+  store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_STATUS_OFFSET, isBetter ? 1 : 0);
+  store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_SEQUENCE_OFFSET, sequence);
+  store<u32>(resultPointer + Layout.ONE_CLICK_INCUMBENT_EVENT_RESULT_SESSION_POINTER_OFFSET, sessionPointer);
   return resultPointer;
 }
 
@@ -6416,6 +6539,9 @@ export function runRouteTask(command: u32, inputPointer: u32, inputByteLength: u
   }
   if (command == Layout.ROUTE_COMMAND_ONE_CLICK_INCUMBENT_COMPARE) {
     return compareOneClickIncumbent(inputPointer, inputByteLength);
+  }
+  if (command == Layout.ROUTE_COMMAND_ONE_CLICK_INCUMBENT_EVENT) {
+    return runOneClickIncumbentEvent(inputPointer, inputByteLength);
   }
   if (command == Layout.ROUTE_COMMAND_ONE_CLICK_STEP_STATE_DEDUP) {
     return internOneClickStepStateKeys(inputPointer, inputByteLength);

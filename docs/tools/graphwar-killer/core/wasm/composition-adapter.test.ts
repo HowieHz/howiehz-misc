@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  beginGraphwarWasmOneClickIncumbentEventSession,
   compareGraphwarWasmOneClickIncumbent,
   consumeGraphwarWasmOneClickStepStateLayer,
   createGraphwarWasmOneClickStepStateTable,
@@ -20,6 +21,27 @@ import { instantiateGraphwarWasmRuntime } from "./runtime";
 const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
 
 describe("Graphwar WASM composition adapter", () => {
+  it("retains incumbent score and event sequence in one WASM session", async () => {
+    const runtime = await createRuntime();
+    const session = beginGraphwarWasmOneClickIncumbentEventSession(runtime, {
+      attemptId: 7,
+      backendGeneration: 3,
+      outerTaskId: 11,
+      requestNonce: 19,
+    });
+    expect(session.consider({ pointCount: 4, targetCount: 1 })).toEqual({
+      event: { sequence: 1 },
+      isBetter: true,
+    });
+    expect(session.consider({ pointCount: 5, targetCount: 1 })).toEqual({ isBetter: false });
+    expect(session.consider({ pointCount: 5, targetCount: 2 })).toEqual({
+      event: { sequence: 2 },
+      isBetter: true,
+    });
+    session.dispose();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
   it("owns one-click incumbent ordering and keeps omitted path errors neutral", async () => {
     const runtime = await createRuntime();
     expect(

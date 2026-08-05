@@ -1506,6 +1506,7 @@ async function buildOneClickClearPath(
     pathSearchPolicy = pathSearchSelection;
   }
   let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
+  // Kept only for test/mocked search callbacks; production WASM and TS search paths provide the event identity.
   let incumbentSequence = 0;
   let validatedStepGlitchEvidence:
     | {
@@ -1536,15 +1537,17 @@ async function buildOneClickClearPath(
       deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
       hitCandidates: input.hitCandidates,
       isCancelled: () => false,
+      wasmAttemptIdentity: attempt,
       onDebugTiming: (timing) => timings.push(timing),
       ...(shouldReportIncumbents
         ? {
-            onValidatedIncumbent: (incumbent) => {
+            onValidatedIncumbent: (incumbent, event) => {
+              const sequence = event?.sequence ?? ++incumbentSequence;
               if (!debugMetrics) {
                 postResponse({
                   attempt,
                   id: requestId,
-                  progress: { incumbent, sequence: ++incumbentSequence },
+                  progress: { incumbent, sequence },
                   type: "one-click-clear-incumbent",
                 });
                 return;
@@ -1555,7 +1558,7 @@ async function buildOneClickClearPath(
               postResponse({
                 attempt,
                 id: requestId,
-                progress: { diagnostics: debugMetrics, incumbent, sequence: ++incumbentSequence },
+                progress: { diagnostics: debugMetrics, incumbent, sequence },
                 type: "one-click-clear-incumbent",
               });
               debugMetrics.timings.incumbentMessageSendElapsedMs += nowMs() - messageStartedAt;

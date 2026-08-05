@@ -53,6 +53,9 @@ export const graphwarWasmCompositionLayout = {
   oneClickStepDagExpansionJobByteLength: 48,
   oneClickIncumbentCompareInputByteLength: 56,
   oneClickIncumbentCompareResultByteLength: 12,
+  oneClickIncumbentEventInputByteLength: 56,
+  oneClickIncumbentEventSessionByteLength: 56,
+  oneClickIncumbentEventResultByteLength: 20,
 } as const;
 
 const smartInputMagic = 0x534d_4152;
@@ -92,6 +95,21 @@ const oneClickIncumbentCompareMagic = 0x4f_4349_43;
 const oneClickIncumbentCompareVersion = 1;
 const oneClickIncumbentCompareInputAlignmentReservedOffset = 36;
 const oneClickIncumbentCompareInputReservedOffset = 52;
+const oneClickIncumbentEventCommand = 25;
+const oneClickIncumbentEventMagic = 0x4f_4349_45;
+const oneClickIncumbentEventVersion = 1;
+const oneClickIncumbentEventBeginOperation = 1;
+const oneClickIncumbentEventConsiderOperation = 2;
+const oneClickIncumbentEventInputSessionPointerOffset = 12;
+const oneClickIncumbentEventInputRequestNonceOffset = 16;
+const oneClickIncumbentEventInputAttemptIdOffset = 20;
+const oneClickIncumbentEventInputGenerationOffset = 24;
+const oneClickIncumbentEventInputOuterTaskIdOffset = 28;
+const oneClickIncumbentEventInputCandidateTargetCountOffset = 32;
+const oneClickIncumbentEventInputCandidatePointCountOffset = 36;
+const oneClickIncumbentEventInputCandidatePathErrorOffset = 40;
+const oneClickIncumbentEventInputCandidatePathErrorFlagOffset = 48;
+const oneClickIncumbentEventInputReservedOffset = 52;
 
 const smartInput = {
   flags: 8,
@@ -2056,6 +2074,26 @@ export interface GraphwarWasmOneClickIncumbentScore {
   readonly targetCount: number;
 }
 
+export interface GraphwarWasmOneClickIncumbentEventIdentity {
+  readonly attemptId: number;
+  readonly backendGeneration: number;
+  readonly outerTaskId: number;
+  readonly requestNonce: number;
+}
+
+export interface GraphwarWasmOneClickIncumbentEvent {
+  readonly sequence: number;
+}
+
+export interface GraphwarWasmOneClickIncumbentEventSession {
+  consider(
+    score: GraphwarWasmOneClickIncumbentScore,
+  ):
+    | { readonly event?: never; readonly isBetter: false }
+    | { readonly event: GraphwarWasmOneClickIncumbentEvent; readonly isBetter: true };
+  dispose(): void;
+}
+
 /** Lets effective WASM composition own incumbent tie-breaks while TS keeps event payload construction. */
 export function compareGraphwarWasmOneClickIncumbent(
   runtime: GraphwarWasmKernelRuntime,
@@ -2124,6 +2162,199 @@ export function compareGraphwarWasmOneClickIncumbent(
     }
     runtime.resetArena(mark);
     return status === 1;
+  } catch (error) {
+    runtime.resetArenaAfterFault(mark);
+    throw error;
+  }
+}
+
+/** Retains one request's incumbent score and event sequence inside the WASM arena. */
+export function beginGraphwarWasmOneClickIncumbentEventSession(
+  runtime: GraphwarWasmKernelRuntime,
+  identity: GraphwarWasmOneClickIncumbentEventIdentity,
+): GraphwarWasmOneClickIncumbentEventSession {
+  const mark = runtime.markArena();
+  let isActive = true;
+  try {
+    const requestNonce = validateGraphwarWasmU32(identity.requestNonce, "incumbentEvent.requestNonce", "input");
+    const attemptId = validateGraphwarWasmU32(identity.attemptId, "incumbentEvent.attemptId", "input");
+    const backendGeneration = validateGraphwarWasmU32(
+      identity.backendGeneration,
+      "incumbentEvent.backendGeneration",
+      "input",
+    );
+    const outerTaskId = validateGraphwarWasmU32(identity.outerTaskId, "incumbentEvent.outerTaskId", "input");
+    const beginPointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength, 8);
+    const writeIdentity = (view: DataView, operation: number, sessionPointer: number) => {
+      view.setUint32(0, oneClickIncumbentEventMagic, true);
+      view.setUint32(4, oneClickIncumbentEventVersion, true);
+      view.setUint32(8, operation, true);
+      view.setUint32(oneClickIncumbentEventInputSessionPointerOffset, sessionPointer, true);
+      view.setUint32(oneClickIncumbentEventInputRequestNonceOffset, requestNonce, true);
+      view.setUint32(oneClickIncumbentEventInputAttemptIdOffset, attemptId, true);
+      view.setUint32(oneClickIncumbentEventInputGenerationOffset, backendGeneration, true);
+      view.setUint32(oneClickIncumbentEventInputOuterTaskIdOffset, outerTaskId, true);
+    };
+    new Uint8Array(
+      runtime.buffer,
+      beginPointer,
+      graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength,
+    ).fill(0);
+    writeIdentity(
+      new DataView(runtime.buffer, beginPointer, graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength),
+      oneClickIncumbentEventBeginOperation,
+      0,
+    );
+    const outputMinimumPointer = runtime.arenaCursor;
+    const resultPointer = runtime.runRouteTask(
+      oneClickIncumbentEventCommand,
+      beginPointer,
+      graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength,
+    );
+    const resultRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: resultPointer },
+      {
+        alignment: 4,
+        elementByteLength: graphwarWasmCompositionLayout.oneClickIncumbentEventResultByteLength,
+        minimumPointer: outputMinimumPointer,
+      },
+    );
+    const resultView = new DataView(resultRange.buffer, resultRange.byteOffset, resultRange.byteLength);
+    if (
+      resultView.getUint32(0, true) !== oneClickIncumbentEventMagic ||
+      resultView.getUint32(4, true) !== 0 ||
+      resultView.getUint32(8, true) !== 0 ||
+      resultView.getUint32(16, true) !== 0
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-state",
+        "one-click incumbent event session returned malformed begin result",
+        "output",
+      );
+    }
+    const sessionPointer = validateGraphwarWasmU32(
+      resultView.getUint32(12, true),
+      "incumbentEvent.sessionPointer",
+      "output",
+    );
+    const sessionRange = validateGraphwarWasmMemoryRange(
+      runtime,
+      { length: 1, pointer: sessionPointer },
+      {
+        alignment: 8,
+        elementByteLength: graphwarWasmCompositionLayout.oneClickIncumbentEventSessionByteLength,
+        minimumPointer: mark,
+      },
+    );
+    const sessionView = new DataView(sessionRange.buffer, sessionRange.byteOffset, sessionRange.byteLength);
+    if (
+      sessionView.getUint32(0, true) !== oneClickIncumbentEventMagic ||
+      sessionView.getUint32(4, true) !== oneClickIncumbentEventVersion ||
+      sessionView.getUint32(8, true) !== requestNonce ||
+      sessionView.getUint32(12, true) !== attemptId ||
+      sessionView.getUint32(16, true) !== backendGeneration ||
+      sessionView.getUint32(20, true) !== outerTaskId ||
+      sessionView.getUint32(24, true) !== 0 ||
+      sessionView.getUint32(28, true) !== 0 ||
+      sessionView.getUint32(32, true) !== 0xffff_ffff ||
+      sessionView.getUint32(48, true) !== 0 ||
+      sessionView.getUint32(52, true) !== 0
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-session-identity",
+        "one-click incumbent event session identity is invalid",
+        "output",
+      );
+    }
+
+    const dispose = () => {
+      if (!isActive) return;
+      isActive = false;
+      runtime.resetArena(mark);
+    };
+    return {
+      consider(score) {
+        if (!isActive) {
+          throw new GraphwarWasmAdapterError(
+            "invalid-session-state",
+            "one-click incumbent event session is no longer active",
+            "input",
+          );
+        }
+        const targetCount = validateGraphwarWasmU32(score.targetCount, "incumbentEvent.targetCount", "input");
+        const pointCount = validateGraphwarWasmU32(score.pointCount, "incumbentEvent.pointCount", "input");
+        const pathError = validateGraphwarWasmPathError(score.pathError, "incumbentEvent.pathError", "input");
+        const eventMark = runtime.markArena();
+        try {
+          const pointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength, 8);
+          const view = new DataView(
+            runtime.buffer,
+            pointer,
+            graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength,
+          );
+          writeIdentity(view, oneClickIncumbentEventConsiderOperation, sessionPointer);
+          view.setUint32(oneClickIncumbentEventInputCandidateTargetCountOffset, targetCount, true);
+          view.setUint32(oneClickIncumbentEventInputCandidatePointCountOffset, pointCount, true);
+          view.setFloat64(oneClickIncumbentEventInputCandidatePathErrorOffset, pathError ?? 0, true);
+          view.setUint32(
+            oneClickIncumbentEventInputCandidatePathErrorFlagOffset,
+            pathError === undefined ? 0 : 1,
+            true,
+          );
+          view.setUint32(oneClickIncumbentEventInputReservedOffset, 0, true);
+          const resultMinimumPointer = runtime.arenaCursor;
+          const result = runtime.runRouteTask(
+            oneClickIncumbentEventCommand,
+            pointer,
+            graphwarWasmCompositionLayout.oneClickIncumbentEventInputByteLength,
+          );
+          const range = validateGraphwarWasmMemoryRange(
+            runtime,
+            { length: 1, pointer: result },
+            {
+              alignment: 4,
+              elementByteLength: graphwarWasmCompositionLayout.oneClickIncumbentEventResultByteLength,
+              minimumPointer: resultMinimumPointer,
+            },
+          );
+          const output = new DataView(range.buffer, range.byteOffset, range.byteLength);
+          if (
+            output.getUint32(0, true) !== oneClickIncumbentEventMagic ||
+            output.getUint32(12, true) !== sessionPointer ||
+            output.getUint32(16, true) !== 0
+          ) {
+            throw new GraphwarWasmAdapterError(
+              "invalid-session-identity",
+              "one-click incumbent event session returned a mismatched result",
+              "output",
+            );
+          }
+          const status = output.getUint32(4, true);
+          if (status > 1) {
+            throw new GraphwarWasmAdapterError(
+              "invalid-enum",
+              "one-click incumbent event session returned an invalid status",
+              "output",
+            );
+          }
+          const sequence = output.getUint32(8, true);
+          if (status === 1 && sequence === 0) {
+            throw new GraphwarWasmAdapterError(
+              "invalid-session-state",
+              "one-click incumbent event session emitted a zero sequence",
+              "output",
+            );
+          }
+          runtime.resetArena(eventMark);
+          return status === 1 ? { event: { sequence }, isBetter: true as const } : { isBetter: false as const };
+        } catch (error) {
+          runtime.resetArenaAfterFault(eventMark);
+          throw error;
+        }
+      },
+      dispose,
+    };
   } catch (error) {
     runtime.resetArenaAfterFault(mark);
     throw error;

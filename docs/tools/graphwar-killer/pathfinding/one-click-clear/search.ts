@@ -12,6 +12,7 @@ import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
 import {
   assignGraphwarWasmOneClickTargetRoutePoints,
   beginGraphwarWasmOneClickClear,
+  beginGraphwarWasmOneClickIncumbentEventSession,
   compareGraphwarWasmOneClickIncumbent,
   consumeGraphwarWasmOneClickStepStateLayer,
   createGraphwarWasmOneClickStepStateTable,
@@ -22,6 +23,8 @@ import {
   type GraphwarWasmOneClickDagJob,
   type GraphwarWasmOneClickEdgeResult,
   type GraphwarWasmOneClickClearResult,
+  type GraphwarWasmOneClickIncumbentEventSession,
+  type GraphwarWasmOneClickIncumbentScore,
   type GraphwarWasmOneClickStepStateEvidence,
 } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
@@ -244,6 +247,11 @@ export interface GraphwarOneClickClearIncumbent {
   trajectoryPoints: readonly PixelPoint[];
 }
 
+/** Stable WASM-owned event identity; TS backend creates the same shape for protocol compatibility. */
+export interface GraphwarOneClickClearIncumbentEvent {
+  readonly sequence: number;
+}
+
 /** 运行一键清图所需的纯数据。 */
 export interface GraphwarOneClickClearOptions {
   /** 当前障碍边界收缩值，单位为 Graphwar 原始平面像素。 */
@@ -263,7 +271,10 @@ export interface GraphwarOneClickClearOptions {
   /** 内部调试耗时回调；调用方负责聚合同类阶段，避免刷屏。 */
   onDebugTiming?: (timing: GraphwarOneClickClearDebugTiming) => void;
   /** 主搜索自然验证出更长前缀时发布；回调本身不会触发额外轨迹回放。 */
-  onValidatedIncumbent?: (incumbent: GraphwarOneClickClearIncumbent) => void;
+  onValidatedIncumbent?: (
+    incumbent: GraphwarOneClickClearIncumbent,
+    event?: GraphwarOneClickClearIncumbentEvent,
+  ) => void;
   /** Master 注入的最后一条精确旧整式证据；搜索内成功前缀只在本请求局部提升。 */
   stepGlitchPrefixEvidence?: GraphwarStepGlitchPrefixEvidence;
   /** 最终整路成功后把 exact path evidence 交回 Master 事务性发布。 */
@@ -304,6 +315,12 @@ export interface GraphwarOneClickClearOptions {
   settings: GraphwarTrajectoryFormulaSettings;
   /** Effective WASM backend; present only for the Worker-owned Step-glitch production branch. */
   wasmRuntime?: GraphwarWasmKernelRuntime;
+  /** Full attempt identity bound to WASM-owned incumbent events. */
+  wasmAttemptIdentity?: {
+    attemptId: number;
+    backendGeneration: number;
+    outerTaskId: number;
+  };
   /** Step 严格包络整路校验；由持有共用 summed-area 的 master Worker 注入。 */
   validateStepRoute?: (points: readonly PixelPoint[]) => boolean | GraphwarStepRoutePathValidation;
   /** 让出主线程控制权；页面用于响应取消和刷新状态。 */
@@ -330,6 +347,7 @@ export type GraphwarOneClickClearSearchInput = Omit<
   | "routeMask"
   | "stepGlitchPrefixEvidence"
   | "validateStepRoute"
+  | "wasmAttemptIdentity"
   | "yieldControl"
 > & {
   /** 页面侧基础障碍 mask；worker 内部按 route tolerance 派生 route mask。 */
@@ -580,6 +598,10 @@ interface OneClickClearSearchContext {
   bestValidatedPointCount: number;
   /** 当前 incumbent 的末级路径质量；undefined 表示没有质量点，不参与比较。 */
   bestValidatedPathError?: number;
+  /** Monotonic fallback sequence for the independent TypeScript backend. */
+  nextIncumbentSequence: number;
+  /** Effective WASM owns score/tie-break and event sequence below its session boundary. */
+  incumbentEvents?: GraphwarWasmOneClickIncumbentEventSession;
   options: GraphwarOneClickClearSearchOptions;
   /** DAG 禁边重选时复用上一轮完全相同的已验证边前缀。 */
   routeValidationPrefix?: OneClickClearRouteValidationSnapshot[];
@@ -663,6 +685,7 @@ function snapshotOneClickClearOptions(input: GraphwarOneClickClearBuildOptions):
       mask: routeMask,
       routeTolerancePlanePixels: input.routeMask.routeTolerancePlanePixels,
     },
+    ...(input.wasmAttemptIdentity ? { wasmAttemptIdentity: { ...input.wasmAttemptIdentity } } : {}),
     formulaMode,
     ...(simulationMask ? { simulationMask } : {}),
     ...(input.stepGlitchPrefixEvidence
@@ -721,12 +744,23 @@ export async function buildGraphwarOneClickClearPath(
   const context: OneClickClearSearchContext = {
     bestValidatedPointCount: Number.POSITIVE_INFINITY,
     bestValidatedTargetCount: 0,
+    nextIncumbentSequence: 0,
     options,
   };
-  // 失败仍按失败返回，让主线程明确显示“已保留当前最优结果”；检查点已通过回调独立保存。
-  return pathSearchPolicy.type === "step-glitch"
-    ? await buildOneClickClearStepGlitchPath(context, targets, startedAt)
-    : await buildOneClickClearDagPath(context, targets, startedAt);
+  if (options.wasmRuntime && options.wasmAttemptIdentity) {
+    context.incumbentEvents = beginGraphwarWasmOneClickIncumbentEventSession(options.wasmRuntime, {
+      ...options.wasmAttemptIdentity,
+      requestNonce: options.wasmRequestNonce ?? 0,
+    });
+  }
+  try {
+    // 失败仍按失败返回，让主线程明确显示“已保留当前最优结果”；检查点已通过回调独立保存。
+    return pathSearchPolicy.type === "step-glitch"
+      ? await buildOneClickClearStepGlitchPath(context, targets, startedAt)
+      : await buildOneClickClearDagPath(context, targets, startedAt);
+  } finally {
+    context.incumbentEvents?.dispose();
+  }
 }
 
 /** 建立完整 DAG，并反复禁用公式验证失败的边，直到得到最终复验成功的路线。 */
@@ -4329,28 +4363,6 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
     return;
   }
   const wasmRuntime = context.options.wasmRuntime;
-  const isBetter = wasmRuntime
-    ? compareGraphwarWasmOneClickIncumbent(
-        wasmRuntime,
-        {
-          pathError: route.pathError,
-          pointCount: route.pathPoints.length,
-          targetCount,
-        },
-        {
-          pathError: context.bestValidatedPathError,
-          pointCount: Number.isFinite(context.bestValidatedPointCount) ? context.bestValidatedPointCount : 0xffff_ffff,
-          targetCount: context.bestValidatedTargetCount,
-        },
-      )
-    : targetCount > context.bestValidatedTargetCount ||
-      (targetCount === context.bestValidatedTargetCount &&
-        (route.pathPoints.length < context.bestValidatedPointCount ||
-          (route.pathPoints.length === context.bestValidatedPointCount &&
-            compareGraphwarPathErrors(route.pathError, context.bestValidatedPathError) < 0)));
-  if (!isBetter) {
-    return;
-  }
   let incumbent: GraphwarOneClickClearIncumbent | undefined;
   if (context.options.onValidatedIncumbent) {
     incumbent = measureOneClickClearMetric(context.options.debugMetrics, "incumbentBuildElapsedMs", () =>
@@ -4361,11 +4373,44 @@ function publishOneClickClearValidatedRoute(context: OneClickClearSearchContext,
     }
   }
 
+  const candidateScore: GraphwarWasmOneClickIncumbentScore = {
+    pathError: route.pathError,
+    pointCount: route.pathPoints.length,
+    targetCount,
+  };
+  const currentScore: GraphwarWasmOneClickIncumbentScore = {
+    pathError: context.bestValidatedPathError,
+    pointCount: Number.isFinite(context.bestValidatedPointCount) ? context.bestValidatedPointCount : 0xffff_ffff,
+    targetCount: context.bestValidatedTargetCount,
+  };
+  const eventDecision = context.incumbentEvents?.consider(candidateScore);
+  const isBetter = eventDecision
+    ? eventDecision.isBetter
+    : wasmRuntime
+      ? compareGraphwarWasmOneClickIncumbent(wasmRuntime, candidateScore, currentScore)
+      : targetCount > context.bestValidatedTargetCount ||
+        (targetCount === context.bestValidatedTargetCount &&
+          (route.pathPoints.length < context.bestValidatedPointCount ||
+            (route.pathPoints.length === context.bestValidatedPointCount &&
+              compareGraphwarPathErrors(route.pathError, context.bestValidatedPathError) < 0)));
+  if (!isBetter) {
+    return;
+  }
+
   context.bestValidatedPathError = route.pathError;
   context.bestValidatedPointCount = route.pathPoints.length;
   context.bestValidatedTargetCount = targetCount;
   if (incumbent) {
-    context.options.onValidatedIncumbent?.(incumbent);
+    const event = eventDecision?.isBetter
+      ? eventDecision.event
+      : (() => {
+          if (context.nextIncumbentSequence >= Number.MAX_SAFE_INTEGER) {
+            throw new GraphwarWasmFault("abi", "one-click incumbent event sequence exhausted");
+          }
+          context.nextIncumbentSequence += 1;
+          return { sequence: context.nextIncumbentSequence } satisfies GraphwarOneClickClearIncumbentEvent;
+        })();
+    context.options.onValidatedIncumbent?.(incumbent, event);
   }
 }
 

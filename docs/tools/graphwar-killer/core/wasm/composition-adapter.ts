@@ -5114,6 +5114,8 @@ function readOneClickSession(
       "waiting one-click session has no full edge batch",
       "output",
     );
+  } else if (layerCursor === 0xffff_ffff) {
+    throw new GraphwarWasmAdapterError("invalid-session-state", "stateful session layer cursor is exhausted", "output");
   }
   if (
     view.getUint32(oneClickSession.resultPathX, true) !== 0 ||

@@ -8425,6 +8425,7 @@ export function resumeOneClickClear(inputPointer: u32, inputByteLength: u32): u3
   let completedCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_COMPLETED_COUNT_OFFSET);
   if (completedCount > jobCount || workCount > jobCount - completedCount) trap();
   const pendingCountBeforeWork = jobCount - completedCount;
+  if (isStatefulDag && load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_LAYER_CURSOR_OFFSET) == u32.MAX_VALUE) trap();
   if (isStatefulDag) {
     const nodeCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_COUNT_OFFSET);
     const evidenceCount = load<u32>(sessionPointer + Layout.ONE_CLICK_SESSION_NODE_EVIDENCE_COUNT_OFFSET);

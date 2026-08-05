@@ -353,11 +353,24 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
         type: "wasm-fault",
         context: { type: "initialization" },
       } satisfies Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>;
-      const replacementGeneration = options.onWasmFault?.(faultMessage);
+      if (!attemptGate.revokeGeneration(faultMessage.generation)) {
+        rejectAdmission(admission, error);
+        return;
+      }
+      let replacementGeneration: number | undefined;
+      try {
+        replacementGeneration = options.onWasmFault?.(faultMessage);
+      } catch (callbackError) {
+        rejectAdmission(admission, normalizeError(callbackError, "Graphwar WASM fault callback failed"));
+        return;
+      }
+      if (pendingAdmission !== admission || admission.isSettled) {
+        return;
+      }
       const fallbackReason = `${error.code}: ${error.message}`;
       resetWorker();
       backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(
-        replacementGeneration ?? backendConfiguration.generation + 1,
+        selectFallbackGeneration(faultMessage.generation, replacementGeneration, backendConfiguration.generation),
         fallbackReason,
       );
       try {
@@ -376,10 +389,25 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
       }
     }
 
+    let attempt: GraphwarBackendAttemptIdentity;
+    try {
+      attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
+    } catch (error) {
+      rejectAdmission(admission, normalizeError(error, "Graphwar pathfinding backend attempt could not start"));
+      resetWorker();
+      return;
+    }
     pendingAdmission = undefined;
-    const attempt = attemptGate.beginOuterTask(backendConfiguration.generation);
     const authoritativeRequest = { ...admission.request, attempt } satisfies GraphwarPathfindingWorkerRequest;
-    const ownedRequest = cloneGraphwarPathfindingWorkerRequest(authoritativeRequest);
+    let ownedRequest: GraphwarPathfindingWorkerRequest;
+    try {
+      ownedRequest = cloneGraphwarPathfindingWorkerRequest(authoritativeRequest);
+    } catch (error) {
+      attemptGate.cancelOuterTask(attempt);
+      admission.isSettled = true;
+      admission.reject(normalizeError(error, "Graphwar pathfinding request could not be cloned"));
+      return;
+    }
     const taskIdentity =
       admission.request.task.type === "build-one-click-clear-dag-edges"
         ? {
@@ -406,6 +434,7 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
       pendingTask = undefined;
       admission.isSettled = true;
       admission.reject(error);
+      resetWorker();
     }
   }
 
@@ -503,16 +532,14 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
         return;
       }
       const sequence = response.progress.sequence;
-      if (sequence !== undefined) {
-        if (!Number.isSafeInteger(sequence) || sequence <= 0) {
-          rejectPendingProtocolResponse();
-          return;
-        }
-        if (pendingTask.lastIncumbentSequence !== undefined && sequence <= pendingTask.lastIncumbentSequence) {
-          return;
-        }
-        pendingTask.lastIncumbentSequence = sequence;
+      if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+        rejectPendingProtocolResponse();
+        return;
       }
+      if (pendingTask.lastIncumbentSequence !== undefined && sequence <= pendingTask.lastIncumbentSequence) {
+        return;
+      }
+      pendingTask.lastIncumbentSequence = sequence;
       if (response.progress.diagnostics) {
         response.progress.diagnostics.backendExecution = pendingTask.backendExecution;
       }
@@ -571,55 +598,127 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     if (worker !== sourceWorker) {
       return;
     }
+    const task = pendingTask;
+    const admission = pendingAdmission;
     if (
       message.context.type !== "initialization" &&
-      (!pendingTask || !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, pendingTask.attempt))
+      (!task ||
+        !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, task.attempt) ||
+        !attemptGate.canCommit(message.context.attempt))
     ) {
       return;
     }
-    options.onWasmFault?.(message);
-    if (pendingTask) {
-      void replayAfterWasmFault(pendingTask, message);
+    if (message.context.type === "initialization" && message.generation !== backendConfiguration.generation) {
+      return;
+    }
+    // Revoke before invoking the page fuse callback so re-entrant and duplicate
+    // Worker messages cannot publish events or trigger a second replay.
+    if (!attemptGate.revokeGeneration(message.generation)) {
+      return;
+    }
+    let replacementGeneration: number | undefined;
+    try {
+      replacementGeneration = options.onWasmFault?.(message);
+    } catch (error) {
+      if (task && pendingTask === task) {
+        rejectPendingTask(normalizeError(error, "Graphwar WASM fault callback failed"));
+      } else if (admission && pendingAdmission === admission) {
+        rejectAdmission(admission, normalizeError(error, "Graphwar WASM fault callback failed"));
+      }
+      return;
+    }
+    const fallbackGeneration = selectFallbackGeneration(
+      message.generation,
+      replacementGeneration,
+      backendConfiguration.generation,
+    );
+    const fallbackReason = `${message.fault.code}: ${message.fault.message}`;
+    if (task) {
+      replayAfterWasmFault(task, message.generation, fallbackGeneration, fallbackReason);
+    } else if (admission) {
+      installTypescriptReplay(message.generation, fallbackGeneration, fallbackReason, undefined, admission);
     } else {
-      replayGenerationAsTypescript(
-        message.generation,
-        Math.max(message.generation + 1, backendConfiguration.generation + 1),
-        `${message.fault.code}: ${message.fault.message}`,
-      );
+      resetWorker();
+      backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration, fallbackReason);
     }
   }
 
   /** Typed WASM faults keep the public task alive and rerun its owned request with TS. */
-  async function replayAfterWasmFault(
+  function replayAfterWasmFault(
     task: PendingPathfindingWorkerTask,
-    message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>,
+    failedGeneration: number,
+    fallbackGeneration: number,
+    fallbackReason: string,
   ) {
     if (pendingTask !== task) {
       return;
     }
-    replayGenerationAsTypescript(
-      message.generation,
-      Math.max(message.generation + 1, backendConfiguration.generation + 1),
-      `${message.fault.code}: ${message.fault.message}`,
-    );
+    installTypescriptReplay(failedGeneration, fallbackGeneration, fallbackReason, task);
   }
 
   /** 页面级 fuse 终止 master，并从当前 owned request 安装同一公开任务的 TS attempt。 */
   function replayGenerationAsTypescript(failedGeneration: number, fallbackGeneration: number, fallbackReason: string) {
+    assertFallbackGeneration(failedGeneration, fallbackGeneration);
     const admission = pendingAdmission;
-    if (backendConfiguration.generation !== failedGeneration && admission?.backendGeneration !== failedGeneration) {
+    const task = pendingTask;
+    if (
+      backendConfiguration.generation !== failedGeneration &&
+      admission?.backendGeneration !== failedGeneration &&
+      task?.attempt.backendGeneration !== failedGeneration
+    ) {
       return false;
     }
+    if (!attemptGate.revokeGeneration(failedGeneration)) {
+      return false;
+    }
+    return installTypescriptReplay(failedGeneration, fallbackGeneration, fallbackReason);
+  }
+
+  /** Install a replacement after the generation CAS; optional identities keep re-entrant faults from touching new work. */
+  function installTypescriptReplay(
+    failedGeneration: number,
+    fallbackGeneration: number,
+    fallbackReason: string,
+    expectedTask?: PendingPathfindingWorkerTask,
+    expectedAdmission?: PendingPathfindingAdmission,
+  ) {
+    const admission = pendingAdmission;
     const task = pendingTask;
+    if (
+      (expectedTask !== undefined && task !== expectedTask) ||
+      (expectedAdmission !== undefined && admission !== expectedAdmission) ||
+      (backendConfiguration.generation !== failedGeneration &&
+        admission?.backendGeneration !== failedGeneration &&
+        task?.attempt.backendGeneration !== failedGeneration)
+    ) {
+      return false;
+    }
+    let fallbackConfiguration: GraphwarWorkerBackendConfiguration;
+    try {
+      fallbackConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration, fallbackReason);
+    } catch (error) {
+      const normalizedError = normalizeError(error, "Graphwar pathfinding TypeScript fallback is invalid");
+      if (task && pendingTask === task) {
+        rejectPendingTask(normalizedError);
+      } else if (admission && pendingAdmission === admission) {
+        rejectAdmission(admission, normalizedError);
+      }
+      return false;
+    }
     resetWorker();
-    backendConfiguration = createGraphwarTypescriptWorkerBackendConfiguration(fallbackGeneration, fallbackReason);
+    backendConfiguration = fallbackConfiguration;
     if (admission?.backendGeneration === failedGeneration) {
       startAdmission(admission, backendConfiguration);
     }
     if (!task || task.attempt.backendGeneration !== failedGeneration) {
       return true;
     }
-    task.attempt = attemptGate.replaceAttempt(task.attempt, fallbackGeneration);
+    try {
+      task.attempt = attemptGate.replaceAttempt(task.attempt, fallbackGeneration);
+    } catch (error) {
+      rejectPendingTask(normalizeError(error, "Graphwar pathfinding TypeScript fallback attempt is invalid"));
+      return false;
+    }
     task.backendExecution = backendConfiguration.backendExecution;
     // Each Worker attempt owns a fresh request-local event counter. Do not let
     // a failed WASM attempt suppress the TypeScript replay's first incumbent.
@@ -767,6 +866,36 @@ function cloneGraphwarPathfindingWorkerRequestWithoutAttempt(
 
 function normalizeError(error: unknown, fallbackMessage: string) {
   return error instanceof Error ? error : new Error(error === undefined ? fallbackMessage : String(error));
+}
+
+/** Prefer the page fuse generation, but never reinstall a revoked or older generation. */
+function selectFallbackGeneration(
+  failedGeneration: number,
+  replacementGeneration: number | undefined,
+  currentGeneration: number,
+) {
+  if (
+    replacementGeneration !== undefined &&
+    Number.isSafeInteger(replacementGeneration) &&
+    replacementGeneration > failedGeneration
+  ) {
+    return replacementGeneration;
+  }
+  if (failedGeneration >= Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("Graphwar backend generation exhausted safe integer space");
+  }
+  return Math.max(failedGeneration + 1, currentGeneration + 1);
+}
+
+function assertFallbackGeneration(failedGeneration: number, fallbackGeneration: number) {
+  if (
+    !Number.isSafeInteger(failedGeneration) ||
+    failedGeneration < 0 ||
+    !Number.isSafeInteger(fallbackGeneration) ||
+    fallbackGeneration <= failedGeneration
+  ) {
+    throw new RangeError("Graphwar replacement generation must be newer than the failed generation");
+  }
 }
 
 /** Copies attempt identity without retaining a reactive or caller-owned object. */

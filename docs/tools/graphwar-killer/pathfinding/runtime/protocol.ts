@@ -126,9 +126,14 @@ export interface GraphwarOneClickClearPathWorkerResult {
 export interface GraphwarOneClickClearProgress {
   /** 调试模式下与 incumbent 同一检查点的累计诊断。 */
   diagnostics?: GraphwarPathfindingDiagnostics;
-  /** Request-local monotonic event identity; stale/duplicate progress is discarded by the runner. */
+  /** Worker-generated snapshots carry a request-local identity; locally synthesized UI snapshots may omit it. */
   sequence?: number;
   incumbent: GraphwarOneClickClearIncumbent;
+}
+
+/** Worker response progress always carries the request-local event identity. */
+export interface GraphwarOneClickClearWorkerProgress extends GraphwarOneClickClearProgress {
+  sequence: number;
 }
 
 export type GraphwarPathfindingWorkerTask =
@@ -201,7 +206,7 @@ export type GraphwarPathfindingWorkerResponse =
       attempt: GraphwarBackendAttemptIdentity;
       id: number;
       /** 同一检查点的方案和诊断证据原子传递。 */
-      progress: GraphwarOneClickClearProgress;
+      progress: GraphwarOneClickClearWorkerProgress;
       type: "one-click-clear-incumbent";
     };
 

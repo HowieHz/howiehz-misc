@@ -150,6 +150,28 @@ describe("Graphwar pathfinding runner incumbents", () => {
     runner.close();
   });
 
+  it("validates a replay generation before revoking the active attempt", async () => {
+    const runner = createGraphwarPathfindingRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
+    });
+    const resultPromise = runner.buildOneClickClearPath(createInput());
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    expect(() => runner.replayGenerationAsTypescript(4, 4, "invalid replay")).toThrow(
+      "must be newer than the failed generation",
+    );
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(resultPromise).resolves.toMatchObject({ result: { targetIds: ["target"] } });
+    runner.close();
+  });
+
   it("preserves the deletion preference in the cloned Worker request", async () => {
     const runner = createGraphwarPathfindingRunner();
     const input = createInput();
@@ -203,7 +225,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
   });
 
   it("reports typed WASM fault replay as requested WASM with an effective TS fallback", async () => {
-    const onWasmFault = vi.fn();
+    const onWasmFault = vi.fn(() => 9);
     const runner = createGraphwarPathfindingRunner({
       backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
       onWasmFault,
@@ -223,6 +245,7 @@ describe("Graphwar pathfinding runner incumbents", () => {
     const typescriptWorker = getWorker(1);
     const replayRequest = getOneClickClearRequest(typescriptWorker, 0);
     expect(replayRequest.task.input.wasmRequestNonce).not.toBe(wasmRequest.task.input.wasmRequestNonce);
+    expect(replayRequest.attempt.backendGeneration).toBe(9);
     typescriptWorker.emit({
       attempt: replayRequest.attempt,
       id: replayRequest.id,
@@ -241,6 +264,63 @@ describe("Graphwar pathfinding runner incumbents", () => {
         },
       },
     });
+    runner.close();
+  });
+
+  it("revokes a faulted generation before the fault callback can re-enter the Worker", async () => {
+    const faultSource: {
+      request?: ReturnType<typeof getOneClickClearRequest>;
+      worker?: FakeWorker;
+    } = {};
+    const onWasmFault = vi.fn(() => {
+      const { request, worker } = faultSource;
+      if (request && worker) {
+        worker.emit({
+          context: { attempt: request.attempt, type: "task" },
+          fault: { code: "trap", message: "duplicate fault" },
+          generation: 4,
+          role: "pathfinding-master",
+          type: "wasm-fault",
+        });
+        worker.emit({
+          attempt: request.attempt,
+          id: request.id,
+          result: createResult(),
+          taskType: "build-one-click-clear-path",
+          type: "success",
+        });
+      }
+      return 9;
+    });
+    const runner = createGraphwarPathfindingRunner({
+      backendConfiguration: createGraphwarWasmWorkerBackendConfiguration(4, emptyWasmModule),
+      onWasmFault,
+    });
+    const resultPromise = runner.buildOneClickClearPath(createInput());
+    const wasmWorker = getWorker(0);
+    const wasmRequest = getOneClickClearRequest(wasmWorker, 0);
+    faultSource.worker = wasmWorker;
+    faultSource.request = wasmRequest;
+
+    wasmWorker.emit({
+      context: { attempt: wasmRequest.attempt, type: "task" },
+      fault: { code: "trap", message: "search trapped" },
+      generation: 4,
+      role: "pathfinding-master",
+      type: "wasm-fault",
+    });
+
+    expect(onWasmFault).toHaveBeenCalledOnce();
+    const typescriptWorker = getWorker(1);
+    const replayRequest = getOneClickClearRequest(typescriptWorker, 0);
+    typescriptWorker.emit({
+      attempt: replayRequest.attempt,
+      id: replayRequest.id,
+      result: createResult(),
+      taskType: "build-one-click-clear-path",
+      type: "success",
+    });
+    await expect(resultPromise).resolves.toMatchObject({ result: { targetIds: ["target"] } });
     runner.close();
   });
 
@@ -506,6 +586,27 @@ describe("Graphwar pathfinding runner incumbents", () => {
     });
 
     expect((await error) as Error).toMatchObject({
+      message: "Graphwar pathfinding worker returned an invalid response",
+    });
+    expect(worker.terminated).toBe(true);
+    runner.close();
+  });
+
+  it("rejects an incumbent progress event without a sequence", async () => {
+    const runner = createGraphwarPathfindingRunner();
+    const result = runner.buildOneClickClearPath(createInput(), { onIncumbent: vi.fn() });
+    const error = result.catch((reason: unknown) => reason);
+    const worker = getWorker(0);
+    const request = getOneClickClearRequest(worker, 0);
+
+    worker.emit({
+      attempt: request.attempt,
+      id: request.id,
+      progress: { incumbent: createIncumbent("missing-sequence") },
+      type: "one-click-clear-incumbent",
+    });
+
+    await expect(error).resolves.toMatchObject({
       message: "Graphwar pathfinding worker returned an invalid response",
     });
     expect(worker.terminated).toBe(true);

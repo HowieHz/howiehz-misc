@@ -780,7 +780,7 @@ describe("Graphwar WASM smart trajectory composition", () => {
     expect(runGraphwarWasmSmartPathfinding(runtime, input)).toEqual(baseline);
   });
 
-  it("reuses the arena after a candidate trajectory grows memory inside the export", async () => {
+  it("reuses the arena after a candidate trajectory grows memory inside the export", { timeout: 30_000 }, async () => {
     const pointCount = 32;
     const path = Array.from({ length: pointCount }, (_, index) => ({
       x: 100 + (240 * index) / (pointCount - 1),

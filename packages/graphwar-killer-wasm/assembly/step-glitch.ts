@@ -1490,8 +1490,11 @@ export function composeStepGlitchOneClickSession(inputPointer: u32, inputByteLen
       finalBlockedFlag,
       finalBlockedX,
       finalBlockedY,
-      acceptedIndexPointer,
-      acceptedIndexCount,
+      // A normal miss is a terminal business result, not reusable partial
+      // evidence. Keep failure payload atomic so the adapter cannot combine
+      // accepted prefixes with a missing final target.
+      0,
+      0,
       u32.MAX_VALUE,
       0,
     );

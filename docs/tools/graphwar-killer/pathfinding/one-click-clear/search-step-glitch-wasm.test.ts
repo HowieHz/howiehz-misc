@@ -1,12 +1,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
-import { graphToImagePoint } from "../../core/geometry";
+import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
 import { createGraphPoint } from "../../core/types";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import { readGraphwarKernelBytes } from "../../core/wasm/kernel-test-fixture";
 import { instantiateGraphwarWasmRuntime } from "../../core/wasm/runtime";
+import {
+  createGraphwarWasmStepGlitchContext,
+  createGraphwarWasmStepGlitchContextInput,
+} from "../../core/wasm/step-glitch-adapter";
 import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
+import { graphwarStepGlitchPrefixEvidenceMatchesContext } from "../routing/step-glitch-scan";
 import { buildGraphwarOneClickClearPath, type GraphwarOneClickClearBuildOptions } from "./search";
 
 const bounds: GraphBounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
@@ -57,6 +62,20 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     expect(result).toMatchObject({ targetIds: ["first", "second"], type: "success" });
   });
 
+  it("keeps a partial prefix when a later session target misses", async () => {
+    const firstCandidate = { isEnemy: true, hitCenter: targetPoint, hitRadius: 2, id: "first" };
+    const unreachablePoint = graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect);
+    const unreachableCandidate = { isEnemy: true, hitCenter: unreachablePoint, hitRadius: 0.01, id: "miss" };
+    const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const result = await buildGraphwarOneClickClearPath({
+      ...createOptions(new Uint8Array(planeCellCount), runtime),
+      candidates: [firstCandidate, unreachableCandidate],
+      hitCandidates: [firstCandidate, unreachableCandidate],
+    });
+
+    expect(result).toMatchObject({ targetIds: ["first"], type: "success" });
+  });
+
   it("publishes exact evidence for an automatic glitch segment", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
     let published:
@@ -74,6 +93,9 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
     expect(published.path.length).toBeGreaterThan(0);
     expect(published.prefixEvidence.formulaEvidence.prefix.points).toHaveLength(published.path.length);
     expect(published.prefixEvidence.formulaEvidence.prefix.segmentStartPoints).toHaveLength(published.path.length - 1);
+    expect(published.prefixEvidence.formulaEvidence.prefix.soldierCenter).toEqual(
+      published.prefixEvidence.formulaEvidence.prefix.points[0],
+    );
   });
 
   it("reuses selected automatic evidence with cold-equivalent continuation", async () => {
@@ -93,6 +115,43 @@ describe("one-click-clear real WASM Step-glitch integration", () => {
 
     const nextTarget = graphToImagePoint(createGraphPoint(-18, 4), bounds, boundsRect);
     const nextCandidate = { isEnemy: true, hitCenter: nextTarget, hitRadius: 2, id: "next" };
+    const prefixMatch = graphwarStepGlitchPrefixEvidenceMatchesContext(
+      {
+        bounds,
+        formulaMode: createOptions(mask, firstRuntime).formulaMode,
+        graphPoints: first.pathPoints.map((point) => imageToGraphPoint(point, bounds, boundsRect)),
+        prefixTarget: published.targetSequence.at(-1),
+        requiredTargets: [],
+        simulationBoundaryExpansion: 0,
+        simulationMask: mask,
+      },
+      published.prefixEvidence,
+    );
+    expect(prefixMatch).toBe(true);
+    const traceRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const traceContextResult = createGraphwarWasmStepGlitchContext(
+      traceRuntime,
+      createGraphwarWasmStepGlitchContextInput({
+        bounds,
+        boundsRect,
+        formulaMode: createOptions(mask, traceRuntime).formulaMode,
+        prefixEvidence: published.prefixEvidence,
+        prefixTarget: published.targetSequence.at(-1),
+        requiredTargets: [],
+        simulationBoundaryExpansion: 0,
+        simulationMask: mask,
+        sourcePath: first.pathPoints,
+      }),
+    );
+    expect(traceContextResult.status).toBe("ready");
+    if (traceContextResult.status !== "ready") return;
+    const trace = traceContextResult.context.traceRealDfsForTest({
+      hitTarget: { center: graphToImagePoint(createGraphPoint(24, -14), bounds, boundsRect), radius: 0.01 },
+      targetPoint: nextTarget,
+    });
+    expect(trace.prefixPreparation).toBe("evidence");
+    traceContextResult.context.dispose();
+
     const coldRuntime = await instantiateGraphwarWasmRuntime(kernelModule);
     const cold = await buildGraphwarOneClickClearPath({
       ...createOptions(mask, coldRuntime),

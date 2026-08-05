@@ -62,6 +62,7 @@ import type {
   GraphwarTrajectorySample,
   GraphwarTrajectorySamplingState,
 } from "../simulation/simulator";
+import { graphwarByteArraysEqual } from "./final-replay-snapshot";
 import { graphwarTrajectoryFormulaSettingsAreEquivalent } from "./settings-identity";
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
@@ -695,7 +696,10 @@ export function graphwarStepGlitchFormulaEvidenceMatchesSource(
     prefix.bounds.minX !== options.bounds.minX ||
     prefix.bounds.minY !== options.bounds.minY ||
     !graphwarTrajectoryFormulaSettingsAreEquivalent(prefix.settings, settings) ||
-    prefix.settings.stepGlitchObstacleMask !== settings.stepGlitchObstacleMask ||
+    (prefix.settings.stepGlitchObstacleMask === undefined) !== (settings.stepGlitchObstacleMask === undefined) ||
+    (prefix.settings.stepGlitchObstacleMask !== undefined &&
+      settings.stepGlitchObstacleMask !== undefined &&
+      !graphwarByteArraysEqual(prefix.settings.stepGlitchObstacleMask, settings.stepGlitchObstacleMask)) ||
     prefix.soldierCenter?.x !== options.soldierCenter?.x ||
     prefix.soldierCenter?.y !== options.soldierCenter?.y ||
     prefix.points.length > options.points.length

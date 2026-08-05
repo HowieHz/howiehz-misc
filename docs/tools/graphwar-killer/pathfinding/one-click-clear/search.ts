@@ -949,9 +949,8 @@ async function buildOneClickClearStepGlitchPath(
 
 /**
  * Effective WASM Step-glitch search. The context is retained while the source prefix is unchanged; a successful target
- * replaces that prefix and therefore replaces the context. Owned evidence is used directly for incumbent publication.
- * It deliberately cannot become TS prefix evidence because the production ABI does not carry the complete prefix
- * identity.
+ * replaces that prefix and therefore replaces the context. Owned evidence is used directly for incumbent publication;
+ * its complete formula fields are also rebuilt into exact TS prefix evidence at the final checkpoint.
  */
 async function buildOneClickClearStepGlitchPathWithWasm(
   context: OneClickClearSearchContext,
@@ -1159,6 +1158,10 @@ function createGraphwarWasmFormulaEvidence(
   ) {
     return undefined;
   }
+  const soldierCenter = points[0];
+  if (!soldierCenter) {
+    return undefined;
+  }
   const stepGlitchSegments: (StepGlitchSegment | undefined)[] = new Array(segmentCount).fill(undefined);
   for (const term of evidence.formulaMaterials.stepFormula?.terms ?? []) {
     if (term.glitchSegment && term.sourceSegmentIndex < segmentCount) {
@@ -1182,6 +1185,7 @@ function createGraphwarWasmFormulaEvidence(
     stepGlitchSegments,
     stepSegmentDeltaYs: evidence.formulaInput.stepSegmentDeltaYs.slice(0, segmentCount),
     signProtection: evidence.protection.slice(0, segmentCount),
+    soldierCenter: createGraphPoint(soldierCenter.x, soldierCenter.y),
   } satisfies GraphwarStepGlitchFormulaEvidence["prefix"];
   return { prefix };
 }

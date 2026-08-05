@@ -672,8 +672,8 @@ export type GraphwarWasmStepGlitchFinalValidationEvidence =
 export interface GraphwarWasmStepGlitchReplayEvidence {
   finalValidation: GraphwarWasmStepGlitchFinalValidationEvidence;
   /**
-   * Formula context reconstructed from fields carried by the production ABI. Prefix evidence is deliberately absent
-   * until that ABI carries its full identity.
+   * Formula context reconstructed from fields carried by the production ABI. The owned formula fields also preserve
+   * enough identity for callers to rebuild exact prefix evidence when needed.
    */
   formulaContext: GraphwarTrajectoryFormulaContext;
   trajectoryPoints: readonly PixelPoint[];
@@ -793,8 +793,8 @@ export interface GraphwarWasmStepGlitchOwnedEvidence {
   readonly bytes: Uint8Array;
   readonly finalValidation: GraphwarWasmStepGlitchOwnedFinalValidation;
   /**
-   * Canonical formula context proved by the production ABI. Prefix evidence is intentionally absent until the ABI
-   * carries every prefix field it needs.
+   * Canonical formula context proved by the production ABI. The adjacent owned formula fields carry the complete prefix
+   * identity used by callers that publish reusable evidence.
    */
   readonly formulaContext: GraphwarTrajectoryFormulaContext;
   readonly formulaInput: GraphwarWasmStepGlitchOwnedFormulaInput;

@@ -2339,6 +2339,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
   if (
     materialResultView.getUint32(FORMULA_RESULT_MATERIAL_POINTER_OFFSET, true) === 0 ||
     materialResultView.getUint32(FORMULA_RESULT_MATERIAL_POINTER_OFFSET, true) !== header.getUint32(84, true) ||
+    materialResultView.getUint32(12, true) !== header.getUint32(92, true) ||
     materialResultView.getUint32(FORMULA_RESULT_PROTECTION_POINTER_OFFSET, true) !== header.getUint32(52, true) ||
     materialResultView.getUint32(FORMULA_RESULT_PROTECTION_COUNT_OFFSET, true) !== protectionCount
   ) {
@@ -5915,6 +5916,13 @@ export function packGraphwarWasmStepGlitchCommandInput(
         target.sourceIndex > 0xffff_ffff
       ) {
         return { status: "invalid-input" };
+      }
+      if (context.continuationIdentity !== undefined && target.sourceIndex === 0xffff_ffff) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-session-identity",
+          "Selected Step-glitch continuation requires non-sentinel target source indexes",
+          "input",
+        );
       }
       const expectedGraphX = imageToGraphPoint(target.routePoint, context.bounds, context.boundsRect).x;
       if (!Object.is(expectedGraphX, target.sortGraphX)) {

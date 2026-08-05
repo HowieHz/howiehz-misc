@@ -26,6 +26,7 @@ import type {
   GraphwarOneClickClearDagEdgeRoute,
 } from "./search";
 import { buildGraphwarOneClickClearPath } from "./search";
+import * as targetAssignment from "./target-assignment";
 
 const bounds: GraphBounds = { maxX: -25, maxY: 15, minX: 25, minY: -15 };
 const boundsRect: BoundsRect = { height: GRAPHWAR_PLANE_HEIGHT, width: GRAPHWAR_PLANE_LENGTH, x: 0, y: 0 };
@@ -37,8 +38,10 @@ beforeAll(async () => {
 });
 
 describe("one-click-clear mirrored WASM guard", () => {
-  it("falls back to forward-ordered TypeScript edge jobs", async () => {
+  it("keeps TS edge jobs while target assignment remains WASM-owned", async () => {
     const runtime = await instantiateGraphwarWasmRuntime(kernelModule);
+    const wasmAssignment = vi.spyOn(runtime, "assignOneClickTargets");
+    const typescriptAssignment = vi.spyOn(targetAssignment, "assignGraphwarOneClickClearTargetRoutePoints");
     const start = createPixelPoint(700, 225);
     const candidates = [
       { id: "left", isEnemy: true, hitCenter: createPixelPoint(650, 225), hitRadius: 30 },
@@ -46,40 +49,46 @@ describe("one-click-clear mirrored WASM guard", () => {
     ];
     const requests: GraphwarOneClickClearDagEdgeBuildRequest[] = [];
 
-    const result = await buildGraphwarOneClickClearPath({
-      boundaryExpansion: 0,
-      bounds,
-      boundsRect,
-      buildDagEdges: async (request) => {
-        requests.push(request);
-        return { routes: [], timings: [] };
-      },
-      candidates,
-      deleteHitCheckRadiusPixels: 0,
-      formulaMode: createGraphwarTrajectoryFormulaMode({
-        algorithm: "abs",
-        decimalPlaces: 4,
-        equation: "y",
-        isStepGlitchModeEnabled: false,
-        isStepOverflowProtectionEnabled: true,
-        steepness: 67,
-      }),
-      hitCandidates: candidates,
-      isDeleteOptimizationEnabled: false,
-      pathPoints: [start],
-      routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
-      routeMode: "visibility-graph",
-      simulationBoundaryExpansion: 0,
-      simulationMaskCacheId: 0,
-      wasmRequestNonce: 17,
-      wasmRuntime: runtime,
-    } satisfies GraphwarOneClickClearBuildOptions);
+    try {
+      const result = await buildGraphwarOneClickClearPath({
+        boundaryExpansion: 0,
+        bounds,
+        boundsRect,
+        buildDagEdges: async (request) => {
+          requests.push(request);
+          return { routes: [], timings: [] };
+        },
+        candidates,
+        deleteHitCheckRadiusPixels: 0,
+        formulaMode: createGraphwarTrajectoryFormulaMode({
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        }),
+        hitCandidates: candidates,
+        isDeleteOptimizationEnabled: false,
+        pathPoints: [start],
+        routeMask: { mask: emptyMask, routeTolerancePlanePixels: 2 },
+        routeMode: "visibility-graph",
+        simulationBoundaryExpansion: 0,
+        simulationMaskCacheId: 0,
+        wasmRequestNonce: 17,
+        wasmRuntime: runtime,
+      } satisfies GraphwarOneClickClearBuildOptions);
 
-    expect(result.type).toBe("failure");
-    const jobs = requests.flatMap(({ jobs: batch }) => batch);
-    expect(jobs).toHaveLength(3);
-    expect(jobs.filter(({ from }) => from === -1).map(({ targetPoint }) => targetPoint.x)).toEqual([650, 550]);
-    expect(jobs.every(isStatelessJob)).toBe(true);
+      expect(result.type).toBe("failure");
+      const jobs = requests.flatMap(({ jobs: batch }) => batch);
+      expect(jobs).toHaveLength(3);
+      expect(jobs.filter(({ from }) => from === -1).map(({ targetPoint }) => targetPoint.x)).toEqual([650, 550]);
+      expect(jobs.every(isStatelessJob)).toBe(true);
+      expect(wasmAssignment).toHaveBeenCalledTimes(1);
+      expect(typescriptAssignment).not.toHaveBeenCalled();
+    } finally {
+      typescriptAssignment.mockRestore();
+    }
   });
 
   it("runs the existing prefix proof through the WASM trajectory adapter", async () => {

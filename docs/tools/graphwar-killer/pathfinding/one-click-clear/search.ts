@@ -29,7 +29,7 @@ import {
 } from "../../core/wasm/composition-adapter";
 import { createGraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
 import type { GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
-import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import {
   validateGraphwarWasmStepGlitchSmartCompositionIdentity,
   createGraphwarWasmStepGlitchContext,
@@ -2133,10 +2133,9 @@ function collectOneClickClearTargets(options: GraphwarOneClickClearSearchOptions
     hitRadius: candidate.hitRadius,
     sourceIndex,
   }));
-  const targetAssignmentRuntime = options.wasmRuntime;
   const assignedTargets =
-    targetAssignmentRuntime && typeof targetAssignmentRuntime.assignOneClickTargets === "function"
-      ? assignGraphwarWasmOneClickTargetRoutePoints(targetAssignmentRuntime, {
+    options.wasmRuntime instanceof GraphwarWasmKernelRuntime
+      ? assignGraphwarWasmOneClickTargetRoutePoints(options.wasmRuntime, {
           boundaryExpansion,
           boundsRect: options.boundsRect,
           candidates: assignmentCandidates,

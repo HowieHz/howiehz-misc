@@ -168,7 +168,7 @@ interface MasterRouteMaskCacheEntry {
 
 /** 一份原子 Step 路由能力同时携带两个等价 backend 的完整输入。 */
 interface RouteRuntimeOptions {
-  typescript: Pick<
+  typescript?: Pick<
     GraphwarPathfindingOptions,
     "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
   >;
@@ -649,17 +649,21 @@ async function findSmartPathResult(
   const routeRuntimeOptions: RouteRuntimeOptions | undefined =
     runtimePolicy.type === "step-stateful"
       ? {
-          typescript: createGraphwarStepPathfindingEdgeEvaluator({
-            boundaryInset: input.boundaryExpansion,
-            bounds: input.bounds,
-            boundsRect: input.boundsRect,
-            exactStartPoint: startPoint,
-            exactTargetPoint: input.targetPoint,
-            model: runtimePolicy.runtime.model,
-            resolvedStartY: runtimePolicy.runtime.resolvedStartY,
-            resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey,
-            summedArea: runtimePolicy.runtime.summedArea,
-          }),
+          ...(wasmRuntime
+            ? {}
+            : {
+                typescript: createGraphwarStepPathfindingEdgeEvaluator({
+                  boundaryInset: input.boundaryExpansion,
+                  bounds: input.bounds,
+                  boundsRect: input.boundsRect,
+                  exactStartPoint: startPoint,
+                  exactTargetPoint: input.targetPoint,
+                  model: runtimePolicy.runtime.model,
+                  resolvedStartY: runtimePolicy.runtime.resolvedStartY,
+                  resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey,
+                  summedArea: runtimePolicy.runtime.summedArea,
+                }),
+              }),
           wasm: {
             exactStartPoint: startPoint,
             exactTargetPoint: input.targetPoint,

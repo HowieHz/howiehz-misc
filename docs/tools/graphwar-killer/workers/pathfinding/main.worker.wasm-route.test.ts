@@ -5,6 +5,7 @@ import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/co
 import { createPixelPoint } from "../../core/types";
 import { readGraphwarKernelBytes } from "../../core/wasm/kernel-test-fixture";
 import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import * as stepRoute from "../../pathfinding/routing/step-route";
 import type {
   GraphwarPathfindingWorkerRequest,
   GraphwarPathfindingWorkerResponse,
@@ -47,9 +48,11 @@ const attempt = {
 const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse) => void>();
 let handleMessage: ((event: MessageEvent<unknown>) => void) | undefined;
 let runRouteTask: MockInstance<GraphwarWasmKernelRuntime["runRouteTask"]>;
+let createStepEdgeEvaluator: MockInstance<typeof stepRoute.createGraphwarStepPathfindingEdgeEvaluator>;
 
 beforeAll(async () => {
   runRouteTask = vi.spyOn(GraphwarWasmKernelRuntime.prototype, "runRouteTask");
+  createStepEdgeEvaluator = vi.spyOn(stepRoute, "createGraphwarStepPathfindingEdgeEvaluator");
   Object.defineProperty(globalThis, "self", {
     configurable: true,
     value: {
@@ -82,6 +85,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   runRouteTask.mockRestore();
+  createStepEdgeEvaluator.mockRestore();
   if (originalSelfDescriptor) {
     Object.defineProperty(globalThis, "self", originalSelfDescriptor);
   } else {
@@ -124,6 +128,7 @@ describe("Pathfinding master Worker WASM Step routing", () => {
     expect(mocks.buildThetaRoute).not.toHaveBeenCalled();
     expect(mocks.buildVisibilityRoute).not.toHaveBeenCalled();
     expect(mocks.validateTrajectory).not.toHaveBeenCalled();
+    expect(createStepEdgeEvaluator).not.toHaveBeenCalled();
   });
 });
 

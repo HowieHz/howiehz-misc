@@ -2411,6 +2411,132 @@ describe("Graphwar WASM composition adapter", () => {
     );
     expect(runtime.arenaCursor).toBe(runtime.arenaBase);
   });
+
+  it("retains stateful evidence and layer cursor in the WASM session", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 1,
+      dagNodeEvidence: [{ resolvedStateKey: "18446744073709551616", resolvedY: -0, targetIndex: 0 }],
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(started.handle.layerCursor).toBe(0);
+    expect(started.handle.stepStateEvidence).toEqual([
+      { resolvedStateKey: "18446744073709551616", resolvedY: -0, targetIndex: 0 },
+    ]);
+    const pending = started.handle.resume([]);
+    expect(pending.status).toBe("waiting-edge-batch");
+    expect(started.handle.layerCursor).toBe(0);
+    if (pending.status !== "waiting-edge-batch") return;
+    const result = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+        successor: { resolvedStateKey: "18446744073709551616", resolvedY: -0, targetIndex: 0 },
+      },
+    ]);
+    expect(result.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a reachable stateful edge without successor evidence", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 1,
+      dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(() =>
+      started.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: true,
+          route: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
+          sessionNonce: started.handle.nonce,
+        },
+      ]),
+    ).toThrow(/bind route and successor/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a stateful successor whose target identity changes", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 1,
+      dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(() =>
+      started.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: true,
+          route: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
+          sessionNonce: started.handle.nonce,
+          successor: { resolvedStateKey: "0", resolvedY: 0, targetIndex: 1 },
+        },
+      ]),
+    ).toThrow(/changed its successor target/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
 });
 
 function createOneClickInput() {

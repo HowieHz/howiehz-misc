@@ -621,6 +621,9 @@ export function createGraphwarPathfindingRunner(options: GraphwarPathfindingRunn
     }
     task.attempt = attemptGate.replaceAttempt(task.attempt, fallbackGeneration);
     task.backendExecution = backendConfiguration.backendExecution;
+    // Each Worker attempt owns a fresh request-local event counter. Do not let
+    // a failed WASM attempt suppress the TypeScript replay's first incumbent.
+    task.lastIncumbentSequence = undefined;
     try {
       const fallbackWorker = ensureWorker();
       if (!fallbackWorker) {

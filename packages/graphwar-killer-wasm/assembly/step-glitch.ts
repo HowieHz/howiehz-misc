@@ -672,6 +672,50 @@ function storeSelectedMaterialFingerprint(materialPointer: u32, byteLength: u32,
   store<u32>(outputPointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_FINGERPRINT_B_OFFSET, second);
 }
 
+/** Binds all selected continuation value bytes and presence bytes as one evidence atom. */
+function storeStepContinuationFingerprint(
+  segmentCount: u32,
+  segmentStartXPointer: u32,
+  segmentStartYPointer: u32,
+  segmentStartPresencePointer: u32,
+  deltaYPointer: u32,
+  deltaYPresencePointer: u32,
+  evidencePointer: u32,
+  hasContextIdentity: bool,
+): void {
+  if (!hasContextIdentity) {
+    store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_FINGERPRINT_OFFSET, 0);
+    return;
+  }
+  let second: u32 = 0x9e3779b9;
+  const continuationBytes = checkedProductionEvidenceBytes(segmentCount, sizeof<f64>());
+  const presenceBytes = checkedProductionEvidenceBytes(segmentCount, sizeof<u8>());
+  let pointer = segmentStartXPointer;
+  let byteLength = continuationBytes;
+  let range = 0;
+  while (range < 5) {
+    let offset: u32 = 0;
+    while (offset < byteLength) {
+      const value = <u32>load<u8>(pointer + offset);
+      second = (second ^ value) * <u32>0x85ebca6b;
+      offset += 1;
+    }
+    range += 1;
+    if (range == 1) pointer = segmentStartYPointer;
+    else if (range == 2) {
+      pointer = segmentStartPresencePointer;
+      byteLength = presenceBytes;
+    } else if (range == 3) {
+      pointer = deltaYPointer;
+      byteLength = continuationBytes;
+    } else if (range == 4) {
+      pointer = deltaYPresencePointer;
+      byteLength = presenceBytes;
+    }
+  }
+  store<u32>(evidencePointer + Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_FINGERPRINT_OFFSET, second);
+}
+
 /** Copies one successful replay into a single arena-owned range and rewrites all nested pointers into that range. */
 function copyProductionReplayEvidence(
   contextPointer: u32,
@@ -957,10 +1001,20 @@ function copyProductionReplayEvidence(
     copiedDeltaYPointer,
     copiedDeltaYPresencePointer,
   );
+  const hasContextIdentity = hasStepGlitchContextIdentity(contextPointer);
+  storeStepContinuationFingerprint(
+    segmentCount,
+    copiedSegmentStartXPointer,
+    copiedSegmentStartYPointer,
+    copiedSegmentStartPresencePointer,
+    copiedDeltaYPointer,
+    copiedDeltaYPresencePointer,
+    evidencePointer,
+    hasSelectedSegment && hasContextIdentity,
+  );
   store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_X_POINTER_OFFSET, copiedSegmentStartXPointer);
   store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET, copiedSegmentStartYPointer);
   store<u32>(copiedFormulaInputPointer + FormulaLayout.FORMULA_INPUT_STEP_DELTA_Y_POINTER_OFFSET, copiedDeltaYPointer);
-  const hasContextIdentity = hasStepGlitchContextIdentity(contextPointer);
   const flags =
     (finalValidationPointer == 0 ? 0 : Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_FINAL_VALIDATION) |
     (hasSelectedSegment ? Layout.STEP_GLITCH_PRODUCTION_EVIDENCE_FLAG_SELECTED_SEGMENT : 0) |

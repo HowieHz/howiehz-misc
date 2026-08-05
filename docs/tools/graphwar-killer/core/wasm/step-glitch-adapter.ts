@@ -158,7 +158,7 @@ const STEP_GLITCH_PRODUCTION_EVIDENCE_REQUEST_ID_OFFSET = 356;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_ATTEMPT_ID_OFFSET = 360;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_BACKEND_GENERATION_OFFSET = 364;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SESSION_NONCE_OFFSET = 368;
-const STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_RESERVED_OFFSET = 372;
+const STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_FINGERPRINT_OFFSET = 372;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_FINGERPRINT_A_OFFSET = 376;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_FINGERPRINT_B_OFFSET = 380;
 const STEP_GLITCH_PRODUCTION_EVIDENCE_SEGMENT_START_X_POINTER_OFFSET = 296;
@@ -1466,6 +1466,31 @@ function calculateSelectedMaterialFingerprint(bytes: Uint8Array): readonly [numb
   return [first, second];
 }
 
+function calculateStepGlitchContinuationFingerprint(
+  runtime: GraphwarWasmKernelRuntime,
+  evidencePointer: number,
+  evidenceByteLength: number,
+  ranges: readonly (readonly [pointer: number, byteLength: number, fieldName: string])[],
+  outputMinimumPointer: number,
+): number {
+  let second = 0x9e3779b9;
+  for (const [pointer, byteLength, fieldName] of ranges) {
+    const bytes = readOwnedProductionEvidenceBytes(
+      runtime,
+      evidencePointer,
+      evidenceByteLength,
+      pointer,
+      byteLength,
+      fieldName,
+      outputMinimumPointer,
+    );
+    for (const value of bytes) {
+      second = Math.imul(second ^ value, 0x85eb_ca6b) >>> 0;
+    }
+  }
+  return second;
+}
+
 function checkedProductionEvidenceByteLength(count: number, stride: number, fieldName: string) {
   if (!Number.isSafeInteger(count) || count < 0 || count > 0xffff_ffff || count * stride > 0xffff_ffff) {
     productionEvidenceFault(`${fieldName} byte length overflows the WASM ABI`);
@@ -1793,6 +1818,10 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     STEP_GLITCH_PRODUCTION_EVIDENCE_SELECTED_MATERIAL_FINGERPRINT_B_OFFSET,
     true,
   );
+  const continuationFingerprint = header.getUint32(
+    STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_FINGERPRINT_OFFSET,
+    true,
+  );
   const targetAnchorX = header.getFloat64(STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_X_OFFSET, true);
   const targetAnchorY = header.getFloat64(STEP_GLITCH_PRODUCTION_EVIDENCE_TARGET_ANCHOR_Y_OFFSET, true);
   const evidenceIdentity = {
@@ -1802,9 +1831,6 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     requestId: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_REQUEST_ID_OFFSET, true),
     sessionNonce: header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_SESSION_NONCE_OFFSET, true),
   } satisfies GraphwarWasmStepGlitchContinuationIdentity;
-  if (header.getUint32(STEP_GLITCH_PRODUCTION_EVIDENCE_CONTINUATION_RESERVED_OFFSET, true) !== 0) {
-    productionEvidenceFault("Step-glitch continuation evidence has a nonzero reserved field");
-  }
   const expectedIdentity = normalizeStepGlitchContinuationIdentity(context.continuationIdentity);
   if (!hasSelectedContinuation) {
     if (
@@ -1814,6 +1840,7 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
       selectedMaterialByteLength !== 0 ||
       selectedMaterialFingerprintA !== 0 ||
       selectedMaterialFingerprintB !== 0 ||
+      continuationFingerprint !== 0 ||
       !Object.is(targetAnchorX, 0) ||
       !Object.is(targetAnchorY, 0) ||
       evidenceIdentity.outerTaskId !== 0 ||
@@ -2316,6 +2343,26 @@ function decodeGraphwarWasmStepGlitchOwnedEvidence(
     "stepGlitch.evidence.stepSegmentDeltaYsPresence",
     outputMinimumPointer,
   );
+  const expectedContinuationFingerprint = calculateStepGlitchContinuationFingerprint(
+    runtime,
+    evidencePointer,
+    evidenceByteLength,
+    [
+      [segmentStartXPointer, segmentContinuationByteLength, "stepGlitch.evidence.segmentStartXFingerprint"],
+      [segmentStartYPointer, segmentContinuationByteLength, "stepGlitch.evidence.segmentStartYFingerprint"],
+      [segmentStartPresencePointer, segmentPresenceByteLength, "stepGlitch.evidence.segmentStartPresenceFingerprint"],
+      [deltaYPointer, segmentContinuationByteLength, "stepGlitch.evidence.deltaYFingerprint"],
+      [deltaYPresencePointer, segmentPresenceByteLength, "stepGlitch.evidence.deltaYPresenceFingerprint"],
+    ],
+    outputMinimumPointer,
+  );
+  if (hasSelectedContinuation) {
+    if (continuationFingerprint !== expectedContinuationFingerprint) {
+      productionEvidenceIdentityFault("Step-glitch continuation values and presence bytes differ from their source");
+    }
+  } else if (continuationFingerprint !== 0) {
+    productionEvidenceIdentityFault("Step-glitch evidence has continuation fingerprint without its flag");
+  }
   const segmentStartPoints: (GraphPoint | undefined)[] = new Array(segmentCount).fill(undefined);
   const stepSegmentDeltaYs: (number | undefined)[] = new Array(segmentCount).fill(undefined);
   for (let index = 0; index < segmentCount; index += 1) {

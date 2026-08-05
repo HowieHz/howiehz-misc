@@ -262,6 +262,32 @@ describe("Graphwar WASM Step-glitch real candidate replay", () => {
       mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
         const evidencePointer = view.getUint32(8, true);
         const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const deltaYPointer = evidenceView.getUint32(308, true);
+        const deltaYPresencePointer = evidenceView.getUint32(312, true);
+        new DataView(runtime.buffer).setFloat64(deltaYPointer + 8, 0, true);
+        new Uint8Array(runtime.buffer)[deltaYPresencePointer + 1] = 0;
+      },
+      name: "delta-y value and presence provenance",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
+        const segmentStartXPointer = evidenceView.getUint32(296, true);
+        const segmentStartYPointer = evidenceView.getUint32(300, true);
+        const segmentStartPresencePointer = evidenceView.getUint32(304, true);
+        new DataView(runtime.buffer).setFloat64(segmentStartXPointer + 8, 0, true);
+        new DataView(runtime.buffer).setFloat64(segmentStartYPointer + 8, 0, true);
+        new Uint8Array(runtime.buffer)[segmentStartPresencePointer + 1] = 0;
+      },
+      name: "segment-start value and presence provenance",
+    },
+    {
+      expectedCode: "invalid-session-identity",
+      mutate(view: DataView, runtime: Awaited<ReturnType<typeof instantiateGraphwarWasmRuntime>>) {
+        const evidencePointer = view.getUint32(8, true);
+        const evidenceView = new DataView(runtime.buffer, evidencePointer, view.getUint32(12, true));
         const formulaInputPointer = evidenceView.getUint32(60, true);
         const formulaInputView = new DataView(runtime.buffer, formulaInputPointer, 176);
         const overflowPointer = formulaInputView.getUint32(52, true);

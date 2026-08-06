@@ -17,6 +17,7 @@ const roleExports = [
   "runDetectionTemplateShard",
   "runFormula",
   "runTrajectory",
+  "runTrajectoryWithMetadata",
   "runRouteTask",
   "assignOneClickTargets",
   "runSmartPathfinding",

@@ -1,15 +1,102 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { graphToImagePoint } from "../../core/geometry";
 import { roundGraphwarLaunchAngleToDisplayRadians } from "../../core/numbers";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
-import { calculateGraphwarTrajectory } from "./trajectory-calculation";
+import { prepareGraphwarWasmFormulaLaunch } from "../../core/wasm/formula-adapter";
+import { readGraphwarKernelBytes } from "../../core/wasm/kernel-test-fixture";
+import { instantiateGraphwarWasmRuntime, type GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import { buildFormula } from "../../formula/generation/build";
+import { createStepOverflowProtectionRange } from "../../formula/generation/step-numeric-strategy";
+import { calculateGraphwarTrajectory, calculateGraphwarTrajectoryWithWasm } from "./trajectory-calculation";
 
 const bounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const boundsRect = { height: 450, width: 770, x: 0, y: 0 };
+let kernelModule: WebAssembly.Module;
+
+beforeAll(async () => {
+  kernelModule = await WebAssembly.compile(await readGraphwarKernelBytes());
+});
 
 describe("main trajectory calculation", () => {
+  it("reports the WASM ABS pulse steepness reason without guessing from settings", async () => {
+    const outcome = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, 0), createGraphPoint(10, 0)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 0,
+        equation: "ddy",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
+        steepness: 0.4,
+      },
+      type: "solver",
+    });
+
+    expect(outcome).toEqual({
+      message: "ABS second-order pulse steepness is not positive.",
+      ok: false,
+      stage: "formula",
+    });
+  });
+
+  it("formats the WASM formula from refined launch evidence", async () => {
+    const points = [
+      createGraphPoint(-23.376623376623378, 2.5974025974025974),
+      createGraphPoint(-19, 0),
+      createGraphPoint(-17, -2),
+    ];
+    const settings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      formulaPathSteepness: 7.5,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
+      steepness: 210,
+    };
+    const descriptor = { bounds, points, settings, soldierCenter: points[0] };
+    const runtime = await createRuntime();
+    const launch = prepareGraphwarWasmFormulaLaunch(runtime, descriptor);
+    expect(launch.status).toBe("success");
+    if (launch.status !== "success") {
+      return;
+    }
+    expect(launch.formulaPoints).not.toEqual(points);
+
+    const outcome = calculateGraphwarTrajectoryWithWasm(runtime, {
+      bounds,
+      boundsRect,
+      points,
+      settings,
+      type: "solver",
+    });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+
+    expect(outcome.result.secondOrderLaunchAngle).toBeUndefined();
+    expect(outcome.result.formulaResult).toEqual(
+      buildFormula(
+        launch.formulaPoints,
+        settings.steepness,
+        settings.equation,
+        settings.algorithm,
+        settings.decimalPlaces,
+        {
+          compiledMaterials: launch.compiledMaterials,
+          isStepOverflowProtectionEnabled: settings.isStepOverflowProtectionEnabled,
+          signProtection: launch.observedSignProtection,
+          stepOverflowProtectionRange: createStepOverflowProtectionRange(bounds, launch.formulaPoints),
+        },
+      ),
+    );
+  });
+
   it("solves a y'' formula and returns its angle and visible trajectory atomically", () => {
     const start = createGraphPoint(-10, 0);
     const target = createGraphPoint(10, 0);
@@ -422,3 +509,7 @@ describe("main trajectory calculation", () => {
     expect(outcome.result.trajectoryPoints).toEqual(obstacleOnly.ok ? obstacleOnly.result.trajectoryPoints : undefined);
   });
 });
+
+async function createRuntime(): Promise<GraphwarWasmKernelRuntime> {
+  return instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 65_536 });
+}

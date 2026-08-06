@@ -181,6 +181,12 @@ export const FORMULA_LAUNCH_STATUS_SUCCESS: i32 = 1;
 export const FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY: u32 = 1;
 export const FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET: u32 = 2;
 export const FORMULA_LAUNCH_FLAG_USED_USER_ANGLE: u32 = 4;
+/** Invalid launch flags carry a reason discriminator; zero deliberately means no reliable reason. */
+export const FORMULA_LAUNCH_INVALID_REASON_NONE: u32 = 0;
+export const FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_PULSE_STEEPNESS_NON_POSITIVE: u32 = 1;
+export const FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_TARGET_NOT_CONVERGED: u32 = 2;
+export const FORMULA_LAUNCH_INVALID_REASON_FORMULA_LAUNCH_POINT_NOT_FINITE: u32 = 3;
+export const FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE: u32 = 4;
 
 /** Canonical decimal input and result offsets. */
 export const DECIMAL_INPUT_VALUE_OFFSET: u32 = 0;

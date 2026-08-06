@@ -72,6 +72,10 @@ import {
   FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY,
   FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET,
   FORMULA_LAUNCH_FLAG_USED_USER_ANGLE,
+  FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_TARGET_NOT_CONVERGED,
+  FORMULA_LAUNCH_INVALID_REASON_FORMULA_LAUNCH_POINT_NOT_FINITE,
+  FORMULA_LAUNCH_INVALID_REASON_NONE,
+  FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE,
   FORMULA_LAUNCH_RESULT_ANGLE_OFFSET,
   FORMULA_LAUNCH_RESULT_BYTE_LENGTH,
   FORMULA_LAUNCH_RESULT_FLAGS_OFFSET,
@@ -1207,6 +1211,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
 
     let formulaPointIterationCount: u32 = 0;
     let hasBestFormulaPoints = false;
+    let invalidLaunchReason = FORMULA_LAUNCH_INVALID_REASON_NONE;
     let formulaConstructionAngle = f64.NaN;
     if (algorithm == FORMULA_ALGORITHM_ABS && equation == FORMULA_EQUATION_DDY) {
       formulaConstructionAngle = resolveSecondOrderAngle(
@@ -1232,6 +1237,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
         const pulseCenterXPointer = reserveArena(segmentF64ByteLength, sizeof<f64>());
         const refinedSegmentStartXPointer = reserveArena(pointByteLength, sizeof<f64>());
         const refinedSegmentStartYPointer = reserveArena(pointByteLength, sizeof<f64>());
+        const invalidReasonPointer = reserveArena(sizeof<u32>(), sizeof<u32>());
         hasBestFormulaPoints = refineAbsSecondDerivativeLaunch(
           inputPointer,
           buildInputPointer,
@@ -1244,7 +1250,14 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
           pulseCenterXPointer,
           refinedSegmentStartXPointer,
           refinedSegmentStartYPointer,
+          invalidReasonPointer,
         );
+        invalidLaunchReason = load<u32>(invalidReasonPointer);
+        if (!hasBestFormulaPoints && invalidLaunchReason == FORMULA_LAUNCH_INVALID_REASON_NONE) {
+          invalidLaunchReason = FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_TARGET_NOT_CONVERGED;
+        }
+      } else {
+        invalidLaunchReason = FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE;
       }
     } else {
       formulaPointIterationCount = resolveFormulaPathPointIdentity(
@@ -1269,6 +1282,15 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
     }
 
     if (!hasBestFormulaPoints) {
+      if (
+        invalidLaunchReason == FORMULA_LAUNCH_INVALID_REASON_NONE &&
+        (algorithm == FORMULA_ALGORITHM_PCHIP || algorithm == FORMULA_ALGORITHM_AKIMA)
+      ) {
+        invalidLaunchReason =
+          equation == FORMULA_EQUATION_DDY
+            ? FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE
+            : FORMULA_LAUNCH_INVALID_REASON_FORMULA_LAUNCH_POINT_NOT_FINITE;
+      }
       totalFormulaPointIterationCount += formulaPointIterationCount;
       const hasProtectionChanged = mergeProtectionBits(
         attemptObservedProtectionPointer,
@@ -1289,7 +1311,7 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
         f64.NaN,
         f64.NaN,
         0,
-        0,
+        invalidLaunchReason,
         workingProtectionPointer,
         segmentCount,
         0,
@@ -1531,6 +1553,12 @@ export function runPrepareLaunch(inputPointer: u32): u32 {
       continue;
     }
     if (!isValid) {
+      if (algorithm == FORMULA_ALGORITHM_PCHIP || algorithm == FORMULA_ALGORITHM_AKIMA) {
+        invalidLaunchReason =
+          equation == FORMULA_EQUATION_DDY
+            ? FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE
+            : FORMULA_LAUNCH_INVALID_REASON_FORMULA_LAUNCH_POINT_NOT_FINITE;
+      }
       resetArena(attemptMark);
       return writeLaunchResult(
         FORMULA_LAUNCH_STATUS_INVALID,

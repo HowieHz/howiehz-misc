@@ -82,9 +82,18 @@ const FORMULA_LAUNCH_STATUS_SUCCESS = 1;
 const FORMULA_LAUNCH_FLAG_HAS_INITIAL_DY = 1;
 const FORMULA_LAUNCH_FLAG_HAS_Y_OFFSET = 2;
 const FORMULA_LAUNCH_FLAG_USED_USER_ANGLE = 4;
+const FORMULA_LAUNCH_INVALID_REASON_NONE = 0;
+const FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_PULSE_STEEPNESS_NON_POSITIVE = 1;
+const FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_TARGET_NOT_CONVERGED = 2;
+const FORMULA_LAUNCH_INVALID_REASON_FORMULA_LAUNCH_POINT_NOT_FINITE = 3;
+const FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE = 4;
 const TRAJECTORY_INPUT_BYTE_LENGTH = 284;
 const STEP_GLITCH_COMMAND_REPLAY_TRAJECTORY_FOR_TEST = 14;
 const TRAJECTORY_RESULT_BYTE_LENGTH = 224;
+const TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH = 20;
+const TRAJECTORY_REPLAY_METADATA_LAUNCH_RESULT_POINTER_OFFSET = 4;
+const TRAJECTORY_REPLAY_METADATA_MATERIAL_RESULT_POINTER_OFFSET = 8;
+const TRAJECTORY_REPLAY_METADATA_TRAJECTORY_RESULT_POINTER_OFFSET = 12;
 const TRAJECTORY_EVIDENCE_BYTE_LENGTH = 104;
 const TRAJECTORY_STOP_TYPE_NATURAL = 0;
 const TRAJECTORY_STOP_TYPE_STOP_X = 1;
@@ -152,11 +161,19 @@ export interface GraphwarWasmFormulaBatchResult {
 }
 
 /** Launch preparation returns no success-only placeholders when numerical preparation is invalid. */
+export type GraphwarWasmInvalidLaunchReason =
+  | "abs-second-order-pulse-steepness-non-positive"
+  | "abs-second-order-target-not-converged"
+  | "formula-launch-point-not-finite"
+  | "second-order-angle-not-finite"
+  | "unknown";
+
 export type GraphwarWasmFormulaLaunchResult =
   | {
       formulaPointIterationCount: number;
       iterationCount: number;
       observedSignProtection: readonly number[];
+      reason: GraphwarWasmInvalidLaunchReason;
       status: "invalid";
     }
   | {
@@ -172,10 +189,14 @@ export type GraphwarWasmFormulaLaunchResult =
       status: "success";
     };
 
+export type GraphwarWasmFormulaLaunchSuccess = Extract<GraphwarWasmFormulaLaunchResult, { status: "success" }>;
+
 export interface GraphwarWasmTrajectoryResult {
   acceptedSamplePointCount: number;
   bisectionCount: number;
   continuationEvidence: GraphwarWasmTrajectoryContinuationEvidence;
+  /** Final launch snapshot from the same command; present only for callers requesting formula publication. */
+  formulaLaunch?: GraphwarWasmFormulaLaunchSuccess;
   initialDy: number;
   launchAngleRadians?: number;
   launchPoint: GraphPoint;
@@ -215,6 +236,10 @@ export interface GraphwarWasmTrajectoryContinuationEvidence {
 
 export interface GraphwarWasmTrajectoryInput {
   descriptor: GraphwarWasmFormulaInputDescriptor;
+  /** Retain final formula evidence when the public solver must publish the formula beside its trajectory. */
+  includeLaunchEvidence?: boolean;
+  /** Receives the launch discriminator when the trajectory command returns a numerical invalid launch. */
+  onInvalidLaunch?: (reason: GraphwarWasmInvalidLaunchReason) => void;
   start: { type: "cold" } | { evidence: GraphwarWasmTrajectoryContinuationEvidence; type: "continuation" };
   stop: GraphwarWasmStopPolicy;
 }
@@ -406,17 +431,18 @@ function readGraphwarWasmFormulaLaunchResult(
   if (status === FORMULA_LAUNCH_STATUS_INVALID) {
     if (
       materialResultPointer !== 0 ||
-      flags !== 0 ||
       formulaPointCount !== 0 ||
       formulaPointXPointer !== 0 ||
       formulaPointYPointer !== 0
     ) {
       throwFormulaResultError("Invalid launch result leaked success-only state");
     }
+    const reason = decodeGraphwarWasmInvalidLaunchReason(flags);
     return {
       formulaPointIterationCount,
       iterationCount,
       observedSignProtection,
+      reason,
       status: "invalid",
     };
   }
@@ -669,10 +695,16 @@ function runGraphwarWasmTrajectoryCommand(
   return withFormulaArenaScope(runtime, () => {
     const { descriptor, start, stop } = input;
     const { commandPointer, packedFormula, packedStop } = packGraphwarWasmTrajectoryCommand(runtime, input);
+    const metadataPointer =
+      input.includeLaunchEvidence && execution === "production"
+        ? runtime.reserveArena(TRAJECTORY_REPLAY_METADATA_BYTE_LENGTH, 4)
+        : 0;
     const outputMinimumPointer = runtime.arenaCursor;
     const resultPointer =
       execution === "production"
-        ? runtime.runTrajectory(commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH)
+        ? metadataPointer === 0
+          ? runtime.runTrajectory(commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH)
+          : runtime.runTrajectoryWithMetadata(commandPointer, TRAJECTORY_INPUT_BYTE_LENGTH, metadataPointer)
         : runtime.runRouteTask(
             STEP_GLITCH_COMMAND_REPLAY_TRAJECTORY_FOR_TEST,
             commandPointer,
@@ -689,13 +721,59 @@ function runGraphwarWasmTrajectoryCommand(
       throwFormulaResultError("Trajectory result contains an invalid launch status");
     }
     if (launchStatus === FORMULA_LAUNCH_STATUS_INVALID) {
-      validateGraphwarWasmInvalidTrajectoryResult(
+      const invalidReason = validateGraphwarWasmInvalidTrajectoryResult(
         runtime,
         resultView,
         packedFormula.segmentCount,
         outputMinimumPointer,
       );
+      input.onInvalidLaunch?.(invalidReason);
       return undefined;
+    }
+    let formulaLaunch: GraphwarWasmFormulaLaunchSuccess | undefined;
+    if (metadataPointer !== 0) {
+      const metadataRange = validateGraphwarWasmMemoryRange(
+        runtime,
+        { length: 5, pointer: metadataPointer },
+        { alignment: 4, elementByteLength: 4 },
+      );
+      const metadataView = new DataView(metadataRange.buffer, metadataRange.byteOffset, metadataRange.byteLength);
+      const launchResultPointer = metadataView.getUint32(TRAJECTORY_REPLAY_METADATA_LAUNCH_RESULT_POINTER_OFFSET, true);
+      const materialResultPointer = metadataView.getUint32(
+        TRAJECTORY_REPLAY_METADATA_MATERIAL_RESULT_POINTER_OFFSET,
+        true,
+      );
+      const trajectoryResultPointer = metadataView.getUint32(
+        TRAJECTORY_REPLAY_METADATA_TRAJECTORY_RESULT_POINTER_OFFSET,
+        true,
+      );
+      if (launchResultPointer === 0 || materialResultPointer === 0 || trajectoryResultPointer !== resultPointer) {
+        throwFormulaResultError("Trajectory metadata does not identify its final launch");
+      }
+      const launchResultRange = validateGraphwarWasmMemoryRange(
+        runtime,
+        { length: 1, pointer: launchResultPointer },
+        { alignment: 8, elementByteLength: FORMULA_LAUNCH_RESULT_BYTE_LENGTH, minimumPointer: outputMinimumPointer },
+      );
+      const launchResultView = new DataView(
+        launchResultRange.buffer,
+        launchResultRange.byteOffset,
+        launchResultRange.byteLength,
+      );
+      if (launchResultView.getUint32(48, true) !== materialResultPointer) {
+        throwFormulaResultError("Trajectory metadata material does not match its final launch");
+      }
+      const decodedLaunch = readGraphwarWasmFormulaLaunchResult(
+        runtime,
+        descriptor,
+        packedFormula,
+        launchResultPointer,
+        outputMinimumPointer,
+      );
+      if (decodedLaunch.status !== "success") {
+        throwFormulaResultError("Trajectory metadata launch is not successful");
+      }
+      formulaLaunch = decodedLaunch;
     }
     const stopReason = validateGraphwarWasmTrajectoryStopReason(resultView.getInt32(4, true));
     const pointCount = validateGraphwarWasmU32(resultView.getUint32(8, true), "trajectory.pointCount");
@@ -863,6 +941,30 @@ function runGraphwarWasmTrajectoryCommand(
     if (observedSignProtection.length !== packedFormula.segmentCount) {
       throwFormulaResultError("Trajectory protection count does not match the formula segments");
     }
+    if (formulaLaunch) {
+      if (formulaLaunch.launch.equation !== equation || !graphwarPointsEqual(formulaLaunch.launch.point, launchPoint)) {
+        throwFormulaResultError("Trajectory metadata launch does not match its raw launch state");
+      }
+      if (formulaLaunch.launch.equation === "y") {
+        if (!Object.is(rawYOffset, formulaLaunch.launch.yOffset)) {
+          throwFormulaResultError("Trajectory metadata launch scalars do not match its raw launch state");
+        }
+      } else if (formulaLaunch.launch.equation === "dy") {
+        if (!Object.is(rawLaunchAngleRadians, formulaLaunch.launch.angleRadians)) {
+          throwFormulaResultError("Trajectory metadata launch scalars do not match its raw launch state");
+        }
+      } else if (
+        !Object.is(rawLaunchAngleRadians, formulaLaunch.launch.angleRadians) ||
+        !Object.is(rawInitialDy, formulaLaunch.launch.initialDy)
+      ) {
+        throwFormulaResultError("Trajectory metadata launch scalars do not match its raw launch state");
+      }
+      if (!uint32ArraysEqual(observedSignProtection, formulaLaunch.observedSignProtection)) {
+        throwFormulaResultError("Trajectory metadata launch protection differs from its raw trajectory evidence");
+      }
+    }
+    const publishedLaunchAngleRadians =
+      formulaLaunch?.launch.equation === "ddy" ? formulaLaunch.launch.angleRadians : rawLaunchAngleRadians;
     const reachedTargetCount = validateGraphwarWasmU32(
       resultView.getUint32(100, true),
       "trajectory.reachedTargetCount",
@@ -919,11 +1021,12 @@ function runGraphwarWasmTrajectoryCommand(
       acceptedSamplePointCount,
       bisectionCount: validateGraphwarWasmU32(resultView.getUint32(16, true), "trajectory.bisectionCount"),
       continuationEvidence,
+      ...(formulaLaunch === undefined ? {} : { formulaLaunch }),
       initialDy: rawInitialDy,
       ...(equation === "y"
         ? {}
         : {
-            launchAngleRadians: rawLaunchAngleRadians,
+            launchAngleRadians: publishedLaunchAngleRadians,
           }),
       launchPoint,
       minStepJumpCount: validateGraphwarWasmU32(resultView.getUint32(20, true), "trajectory.minStepJumpCount"),
@@ -970,11 +1073,12 @@ function validateGraphwarWasmInvalidTrajectoryResult(
   view: DataView,
   segmentCount: number,
   outputMinimumPointer: number,
-): void {
+): GraphwarWasmInvalidLaunchReason {
   if (
     view.getInt32(4, true) !== TRAJECTORY_STOP_REASON_INVALID ||
     view.getUint32(8, true) !== 0 ||
-    !graphwarWasmBytesAreZero(view, 24, 84) ||
+    !graphwarWasmBytesAreZero(view, 24, 72) ||
+    !graphwarWasmBytesAreZero(view, 100, 8) ||
     view.getInt32(108, true) !== -1 ||
     view.getInt32(112, true) !== -1 ||
     view.getInt32(116, true) !== -1 ||
@@ -998,6 +1102,7 @@ function validateGraphwarWasmInvalidTrajectoryResult(
   validateGraphwarWasmU32(view.getUint32(20, true), "trajectory.minStepJumpCount");
   validateGraphwarWasmU32(view.getUint32(212, true), "trajectory.acceptedSamplePointCount");
   validateGraphwarWasmU32(view.getUint32(216, true), "trajectory.replayCount");
+  return decodeGraphwarWasmInvalidLaunchReason(view.getUint32(96, true));
 }
 
 function graphwarWasmBytesAreZero(view: DataView, offset: number, byteLength: number) {
@@ -2440,6 +2545,25 @@ function readTuple4(view: DataView, pointer: number): [number, number, number, n
 
 function uint32ArraysEqual(left: readonly number[], right: readonly number[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function decodeGraphwarWasmInvalidLaunchReason(flags: number): GraphwarWasmInvalidLaunchReason {
+  if (flags === FORMULA_LAUNCH_INVALID_REASON_NONE) {
+    return "unknown";
+  }
+  if (flags === FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_PULSE_STEEPNESS_NON_POSITIVE) {
+    return "abs-second-order-pulse-steepness-non-positive";
+  }
+  if (flags === FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_TARGET_NOT_CONVERGED) {
+    return "abs-second-order-target-not-converged";
+  }
+  if (flags === FORMULA_LAUNCH_INVALID_REASON_FORMULA_LAUNCH_POINT_NOT_FINITE) {
+    return "formula-launch-point-not-finite";
+  }
+  if (flags === FORMULA_LAUNCH_INVALID_REASON_SECOND_ORDER_ANGLE_NOT_FINITE) {
+    return "second-order-angle-not-finite";
+  }
+  throwFormulaResultError("Invalid launch result contains an unsupported reason");
 }
 
 function validateFormulaNumber(value: unknown, fieldName: string) {

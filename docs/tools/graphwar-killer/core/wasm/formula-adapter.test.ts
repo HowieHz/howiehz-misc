@@ -388,6 +388,19 @@ describe("Graphwar WASM formula Adapter", () => {
       formulaPointIterationCount: 0,
       iterationCount: 0,
       observedSignProtection: [0],
+      reason: "formula-launch-point-not-finite",
+      status: "invalid",
+    });
+  });
+
+  it("reports a quantized non-positive ABS second-order pulse steepness", async () => {
+    const runtime = await createRuntime();
+    const descriptor = {
+      ...createDescriptor("abs", "ddy"),
+      settings: { ...createDescriptor("abs", "ddy").settings, decimalPlaces: 0, steepness: 0.4 },
+    } satisfies GraphwarWasmFormulaInputDescriptor;
+    expect(prepareGraphwarWasmFormulaLaunch(runtime, descriptor)).toMatchObject({
+      reason: "abs-second-order-pulse-steepness-non-positive",
       status: "invalid",
     });
   });
@@ -556,6 +569,7 @@ describe("Graphwar WASM formula Adapter", () => {
     const descriptor = createDescriptor("pchip", "y");
     const result = runGraphwarWasmTrajectory(runtime, {
       descriptor,
+      includeLaunchEvidence: true,
       start: { type: "cold" },
       stop: { observationXs: [], stopX: 3, type: "stop-x-observations" },
     });
@@ -565,6 +579,8 @@ describe("Graphwar WASM formula Adapter", () => {
     }
     expect(result.points.length).toBeGreaterThan(1);
     expect(result.points[0]).toEqual(result.launchPoint);
+    expect(result.formulaLaunch?.launch.point).toEqual(result.launchPoint);
+    expect(result.formulaLaunch?.observedSignProtection).toEqual(result.continuationEvidence.observedSignProtection);
     expect(result.continuationEvidence.state.currentPoint).toEqual(result.points.at(-1));
     expect(result.continuationEvidence.state.currentPoint.x).toBeGreaterThanOrEqual(3);
     expect(result.continuationEvidence.canContinueToLaterFrontier).toBe(true);
@@ -573,6 +589,29 @@ describe("Graphwar WASM formula Adapter", () => {
     expect(Object.is(result.initialDy, 0)).toBe(true);
     expect(result.continuationEvidence.state.sampleIndex).toBe(result.points.length - 1);
     expect(result.startType).toBe("cold");
+  });
+
+  it("rejects metadata when raw ddy launch angle differs from the atomic formula launch", async () => {
+    const runtime = await createRuntime();
+    const descriptor = createDescriptor("step", "ddy");
+    const runTrajectoryWithMetadata = runtime.runTrajectoryWithMetadata.bind(runtime);
+    vi.spyOn(runtime, "runTrajectoryWithMetadata").mockImplementation(
+      (inputPointer, inputByteLength, metadataPointer) => {
+        const resultPointer = runTrajectoryWithMetadata(inputPointer, inputByteLength, metadataPointer);
+        const view = new DataView(runtime.buffer);
+        view.setFloat64(resultPointer + 56, view.getFloat64(resultPointer + 56, true) + 0.1, true);
+        return resultPointer;
+      },
+    );
+
+    expect(() =>
+      runGraphwarWasmTrajectory(runtime, {
+        descriptor,
+        includeLaunchEvidence: true,
+        start: { type: "cold" },
+        stop: { observationXs: [], stopX: 3, type: "stop-x-observations" },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "invalid-formula-result" }));
   });
 
   it("normalizes identical results through the public and Step-glitch trajectory commands", async () => {
@@ -704,12 +743,13 @@ describe("Graphwar WASM formula Adapter", () => {
     } satisfies GraphwarWasmFormulaInputDescriptor;
     const result = runGraphwarWasmTrajectory(await createRuntime(), {
       descriptor,
+      includeLaunchEvidence: true,
       start: { type: "cold" },
       stop: { observationXs: [], stopX: launchX, type: "stop-x-observations" },
     });
-
+    expect(result?.formulaLaunch?.observedSignProtection).toEqual(result?.continuationEvidence.observedSignProtection);
     expect(result?.launchPoint.x).toBe(launchX);
-    expect(result?.points).toEqual(result ? [result.launchPoint] : undefined);
+    expect(result?.points.length).toBe(1);
     expect(result?.continuationEvidence.observedSignProtection.some((roles) => roles !== 0)).toBe(true);
     expect(result?.replayCount).toBeGreaterThan(1);
   });

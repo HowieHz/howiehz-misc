@@ -7,12 +7,13 @@ import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, 
 import {
   runGraphwarWasmExpressionBatch,
   runGraphwarWasmTrajectory,
-  prepareGraphwarWasmFormulaLaunch,
+  type GraphwarWasmInvalidLaunchReason,
 } from "../../core/wasm/formula-adapter";
 import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import type { GraphwarWasmStopPolicy } from "../../core/wasm/task-adapter";
 import { parseGraphwarExpressionProgram } from "../../formula/expression/evaluator";
 import { buildFormula } from "../../formula/generation/build";
+import { createStepOverflowProtectionRange } from "../../formula/generation/step-numeric-strategy";
 import type { GraphwarExpressionParserOptions } from "../../formula/simulation/simulator";
 import {
   createGraphwarTrajectoryFormulaMode,
@@ -153,10 +154,6 @@ export function calculateGraphwarTrajectoryWithWasm(
       settings: input.settings,
       soldierCenter: input.points[0],
     };
-    const launch = prepareGraphwarWasmFormulaLaunch(runtime, descriptor);
-    if (launch.status !== "success") {
-      return { message: "The WASM solver could not prepare a launch.", ok: false, stage: "formula" };
-    }
     const target = input.target;
     const stop: GraphwarWasmStopPolicy = {
       boundsRect: input.boundsRect,
@@ -180,9 +177,22 @@ export function calculateGraphwarTrajectoryWithWasm(
       trackedTargets: [],
       type: "targets",
     };
-    const sampled = runGraphwarWasmTrajectory(runtime, { descriptor, start: { type: "cold" }, stop });
+    let invalidLaunchReason: GraphwarWasmInvalidLaunchReason = "unknown";
+    const sampled = runGraphwarWasmTrajectory(runtime, {
+      descriptor,
+      includeLaunchEvidence: true,
+      onInvalidLaunch(reason) {
+        invalidLaunchReason = reason;
+      },
+      start: { type: "cold" },
+      stop,
+    });
     if (!sampled) {
-      return { message: "The WASM solver returned an invalid launch.", ok: false, stage: "formula" };
+      return createFailureOutcome("formula", new Error(getWasmInvalidLaunchMessage(invalidLaunchReason)));
+    }
+    const formulaLaunch = sampled.formulaLaunch;
+    if (!formulaLaunch) {
+      throw new Error("The WASM trajectory did not return its final formula launch evidence.");
     }
     const obstacleHitPoint =
       sampled.obstacle.type === "hit" ? sampled.visiblePixels[sampled.obstacle.sampleIndex] : undefined;
@@ -202,11 +212,17 @@ export function calculateGraphwarTrajectoryWithWasm(
       sampled.obstacle.type === "hit" ? sampled.obstacle.sampleIndex : -1,
     );
     const formulaResult = buildFormula(
-      input.points,
+      formulaLaunch.formulaPoints,
       input.settings.steepness,
       input.settings.equation,
       input.settings.algorithm,
       input.settings.decimalPlaces,
+      {
+        compiledMaterials: formulaLaunch.compiledMaterials,
+        isStepOverflowProtectionEnabled: input.settings.isStepOverflowProtectionEnabled,
+        signProtection: formulaLaunch.observedSignProtection,
+        stepOverflowProtectionRange: createStepOverflowProtectionRange(input.bounds, formulaLaunch.formulaPoints),
+      },
     );
     return {
       ok: true,
@@ -217,7 +233,7 @@ export function calculateGraphwarTrajectoryWithWasm(
         ),
         formulaResult,
         ...(sampled.pathError === undefined ? {} : { pathError: sampled.pathError }),
-        ...(sampled.launchAngleRadians === undefined
+        ...(input.settings.equation !== "ddy" || sampled.launchAngleRadians === undefined
           ? {}
           : {
               secondOrderLaunchAngle: {
@@ -239,6 +255,23 @@ export function calculateGraphwarTrajectoryWithWasm(
     }
     return createFailureOutcome("trajectory", error);
   }
+}
+
+/** Preserves the TypeScript solver's public numerical-failure contract without starting a second solver. */
+function getWasmInvalidLaunchMessage(reason: GraphwarWasmInvalidLaunchReason) {
+  if (reason === "abs-second-order-pulse-steepness-non-positive") {
+    return "ABS second-order pulse steepness is not positive.";
+  }
+  if (reason === "abs-second-order-target-not-converged") {
+    return "ABS second-order compensated target did not converge.";
+  }
+  if (reason === "formula-launch-point-not-finite") {
+    return "Formula launch point has no finite execution state.";
+  }
+  if (reason === "second-order-angle-not-finite") {
+    return "Second-order launch angle has no finite execution state.";
+  }
+  return "The WASM solver could not prepare a launch.";
 }
 
 /** Maps the WASM stop discriminator to the public warning contract without treating normal stops as faults. */

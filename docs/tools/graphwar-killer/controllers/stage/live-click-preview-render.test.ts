@@ -48,10 +48,10 @@ describe("live click preview WASM renderer", () => {
       },
       type: "formula" as const,
     };
-    const runTrajectory = vi.spyOn(runtime, "runTrajectory");
+    const runTrajectoryWithMetadata = vi.spyOn(runtime, "runTrajectoryWithMetadata");
     const wasm = renderGraphwarLiveClickPreviewWithWasm(runtime, input);
 
-    expect(runTrajectory).toHaveBeenCalledOnce();
+    expect(runTrajectoryWithMetadata).toHaveBeenCalledOnce();
     expect(wasm.curvePoints).toBeTruthy();
   });
 });

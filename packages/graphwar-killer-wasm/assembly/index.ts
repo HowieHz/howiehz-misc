@@ -22,4 +22,4 @@ export {
   runRouteTask,
   runSmartPathfinding,
 } from "./pathfinding";
-export { runTrajectory } from "./trajectory";
+export { runTrajectory, runTrajectoryWithMetadata } from "./trajectory";

@@ -9,6 +9,7 @@ export const graphwarWasmRequiredFunctionExports = [
   "runDetectionTemplateShard",
   "runFormula",
   "runTrajectory",
+  "runTrajectoryWithMetadata",
   "runRouteTask",
   "assignOneClickTargets",
   "runSmartPathfinding",
@@ -69,6 +70,7 @@ interface GraphwarWasmAlgorithmExports {
   cancelOneClickClear: (requestNonce: number) => void;
   resumeOneClickClear: (inputPointer: number, inputByteLength: number) => number;
   runTrajectory: (inputPointer: number, inputByteLength: number) => number;
+  runTrajectoryWithMetadata: (inputPointer: number, inputByteLength: number, metadataPointer: number) => number;
 }
 
 type GraphwarWasmRuntimeExports = GraphwarWasmArenaExports & GraphwarWasmAlgorithmExports;
@@ -363,6 +365,32 @@ export class GraphwarWasmKernelRuntime extends GraphwarValidatedWasmRuntime {
       resultPointer >= cursor
     ) {
       throw new GraphwarWasmFault("output", "Graphwar WASM trajectory returned an invalid result pointer");
+    }
+    return resultPointer;
+  }
+
+  /** Executes a trajectory and retains the final launch/material pointers for an atomic result decoder. */
+  runTrajectoryWithMetadata(inputPointer: number, inputByteLength: number, metadataPointer: number) {
+    if (!isU32(inputPointer) || !isU32(inputByteLength) || !isU32(metadataPointer)) {
+      throw new GraphwarWasmFault("input", "Graphwar WASM trajectory metadata fields must be uint32 values");
+    }
+    let resultPointer: number;
+    try {
+      resultPointer = this.#exports.runTrajectoryWithMetadata(inputPointer, inputByteLength, metadataPointer);
+    } catch (error) {
+      throw normalizeGraphwarWasmRuntimeError(error, "Graphwar WASM trajectory metadata command failed", "trap");
+    }
+    const cursor = this.arenaCursor;
+    if (
+      !isPositiveU32(resultPointer) ||
+      resultPointer % 8 !== 0 ||
+      resultPointer < this.arenaBase ||
+      resultPointer >= cursor
+    ) {
+      throw new GraphwarWasmFault(
+        "output",
+        "Graphwar WASM trajectory metadata command returned an invalid result pointer",
+      );
     }
     return resultPointer;
   }

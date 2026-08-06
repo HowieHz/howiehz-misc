@@ -17,6 +17,8 @@ import {
   FORMULA_INPUT_SEGMENT_START_Y_POINTER_OFFSET,
   FORMULA_INPUT_SOLDIER_X_OFFSET,
   FORMULA_INPUT_STEEPNESS_OFFSET,
+  FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_PULSE_STEEPNESS_NON_POSITIVE,
+  FORMULA_LAUNCH_INVALID_REASON_NONE,
   FORMULA_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
 } from "./formula-layout";
@@ -833,7 +835,9 @@ export function refineAbsSecondDerivativeLaunch(
   pulseCenterXPointer: u32,
   segmentStartXPointer: u32,
   segmentStartYPointer: u32,
+  invalidReasonPointer: u32,
 ): bool {
+  store<u32>(invalidReasonPointer, FORMULA_LAUNCH_INVALID_REASON_NONE);
   const pointCount = load<u32>(inputPointer + FORMULA_INPUT_POINT_COUNT_OFFSET);
   const segmentCount = pointCount - 1;
   const decimalPlaces = load<i32>(inputPointer + FORMULA_INPUT_DECIMAL_PLACES_OFFSET);
@@ -844,6 +848,12 @@ export function refineAbsSecondDerivativeLaunch(
     decimalPlaces,
   );
   if (!(formulaSteepness > 0) || !isFiniteValue(launchAngle)) {
+    if (!(formulaSteepness > 0)) {
+      store<u32>(
+        invalidReasonPointer,
+        FORMULA_LAUNCH_INVALID_REASON_ABS_SECOND_ORDER_PULSE_STEEPNESS_NON_POSITIVE,
+      );
+    }
     return false;
   }
   const boundsMinX = load<f64>(inputPointer + FORMULA_INPUT_BOUNDS_MIN_X_OFFSET);

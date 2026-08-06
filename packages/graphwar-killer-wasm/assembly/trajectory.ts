@@ -4,6 +4,7 @@ import {
   FORMULA_LAUNCH_RESULT_INITIAL_DY_OFFSET,
   FORMULA_LAUNCH_RESULT_MATERIAL_RESULT_POINTER_OFFSET,
   FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET,
+  FORMULA_LAUNCH_RESULT_FLAGS_OFFSET,
   FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET,
   FORMULA_LAUNCH_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_LAUNCH_RESULT_STATUS_OFFSET,
@@ -208,6 +209,12 @@ function trap(): void {
 export function runTrajectory(inputPointer: u32, inputByteLength: u32): u32 {
   requireArenaInitialized();
   return runTrajectoryRequest(inputPointer, inputByteLength, 0);
+}
+
+/** Runs one trajectory and exposes the final launch/material pointers through an arena-owned metadata record. */
+export function runTrajectoryWithMetadata(inputPointer: u32, inputByteLength: u32, metadataPointer: u32): u32 {
+  requireArenaInitialized();
+  return runTrajectoryRequestWithMetadata(inputPointer, inputByteLength, 0, metadataPointer);
 }
 
 /** Executes one complete raw request and optionally reports only the final stable scalar replay counters. */
@@ -489,6 +496,10 @@ export function runTrajectoryRequestWithMetadata(
   store<u32>(resultPointer + TRAJECTORY_RESULT_PROTECTION_POINTER_OFFSET, stableProtectionPointer);
   store<u32>(resultPointer + TRAJECTORY_RESULT_PROTECTION_COUNT_OFFSET, segmentCount);
   if (launchStatus != FORMULA_LAUNCH_STATUS_SUCCESS) {
+    store<u32>(
+      resultPointer + TRAJECTORY_RESULT_FLAGS_OFFSET,
+      load<u32>(launchResultPointer + FORMULA_LAUNCH_RESULT_FLAGS_OFFSET),
+    );
     store<i32>(resultPointer + TRAJECTORY_RESULT_STOP_REASON_OFFSET, 2);
     writeTrajectoryDebugCounters(resultPointer, debugCounterPointer);
     endTrajectoryDebugCounters(debugCounterPointer);
@@ -541,6 +552,7 @@ export function runTrajectoryRequestWithMetadata(
       materialResultPointer,
     );
   }
+  // Replay writes newly observed sign roles through the material-owned scratch buffer.
   store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET, observedProtectionPointer);
   store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_COUNT_OFFSET, segmentCount);
   const equation = load<i32>(inputPointer + 4);
@@ -689,6 +701,8 @@ export function runTrajectoryRequestWithMetadata(
     resetArena(attemptMark);
     continue;
   }
+  // Publish the fully merged protection snapshot only after replay stabilization.
+  store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET, stableProtectionPointer);
 
   if (finalCounterPointer != 0) {
     const finalRk4StepCount =

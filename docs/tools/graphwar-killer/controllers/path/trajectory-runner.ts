@@ -739,6 +739,9 @@ function cloneGraphwarTrajectoryCalculationInput(
           },
         }
       : {}),
+    ...(input.shouldStopOnTargetsComplete === undefined
+      ? {}
+      : { shouldStopOnTargetsComplete: input.shouldStopOnTargetsComplete }),
     type: "solver",
   };
 }

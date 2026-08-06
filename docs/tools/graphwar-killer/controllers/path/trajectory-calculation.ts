@@ -57,6 +57,8 @@ export type GraphwarTrajectoryCalculationInput =
         hitRadiusPixels: number;
         point: PixelPoint;
       };
+      /** Smart validation may stop after its ordered targets are complete; main trajectories continue by default. */
+      shouldStopOnTargetsComplete?: boolean;
     })
   | (GraphwarTrajectoryCalculationInputBase & {
       /** 直接模拟用户输入的表达式。 */
@@ -77,6 +79,8 @@ export type GraphwarTrajectoryCalculationInput =
 export interface GraphwarTrajectoryCalculationResult {
   /** 已格式化给 SVG polyline 使用的轨迹点字符串。 */
   curvePoints: string;
+  /** 首次碰撞采样点不绘制在主轨迹中，但 smart validation 需要它定位阻挡位置。 */
+  obstacleHitPoint?: PixelPoint;
   /** 与 Graphwar 函数 step 一一对应的可见轨迹像素前缀。 */
   trajectoryPoints: readonly PixelPoint[];
   /** 求解器生成的最终公式；模拟器不设置。 */
@@ -173,7 +177,7 @@ export function calculateGraphwarTrajectoryWithWasm(
       qualityPoints: input.points.slice(1, target ? -1 : input.points.length),
       requiredTargets: [],
       shouldCollectVisiblePixels: true,
-      shouldStopOnTargetsComplete: false,
+      shouldStopOnTargetsComplete: input.shouldStopOnTargetsComplete ?? false,
       trackedTargets: [],
       type: "targets",
     };
@@ -241,6 +245,7 @@ export function calculateGraphwarTrajectoryWithWasm(
                 radians: sampled.launchAngleRadians,
               },
             }),
+        ...(obstacleHitPoint ? { obstacleHitPoint } : {}),
         ...(hasTargetMissWarning ? { hasTargetMissWarning: true } : {}),
         ...(warningReason ? { warningReason } : {}),
         trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
@@ -373,8 +378,8 @@ function calculateSolverTrajectory(
       points: input.points,
       qualityPoints: input.points.slice(1, input.target ? -1 : input.points.length),
       soldierCenter: input.points[0],
-      // 主轨迹必须继续画到自然停止点；目标只记录首次命中，不能为了统计截短曲线。
-      stopOnTargetsComplete: false,
+      // 主轨迹默认继续画到自然停止点；smart validation 可显式要求目标完成后停止。
+      stopOnTargetsComplete: input.shouldStopOnTargetsComplete ?? false,
       ...(input.target
         ? {
             targetHitRadiusPixels: input.target.hitRadiusPixels,
@@ -432,6 +437,7 @@ function calculateSolverTrajectory(
               },
             }
           : {}),
+        ...(obstacleHitPoint ? { obstacleHitPoint } : {}),
         ...(hasTargetMissWarning ? { hasTargetMissWarning: true } : {}),
         trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
           sampleResult.visiblePixels,

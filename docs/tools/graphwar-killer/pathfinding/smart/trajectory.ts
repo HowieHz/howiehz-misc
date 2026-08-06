@@ -90,15 +90,20 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
       points: options.points.map((point) => imageToGraphPoint(point, bounds, options.boundsRect)),
       settings: options.formulaMode.settings,
       target: { hitRadiusPixels: target.radius, point: target.center },
+      shouldStopOnTargetsComplete: true,
       type: "solver",
     });
     if (!outcome.ok) {
       return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
     }
-    const visiblePixels = [...outcome.result.trajectoryPoints];
+    const obstacleHitPoint = outcome.result.warningReason === "obstacle" ? outcome.result.obstacleHitPoint : undefined;
+    const visiblePixels = obstacleHitPoint
+      ? [...outcome.result.trajectoryPoints, obstacleHitPoint]
+      : [...outcome.result.trajectoryPoints];
     return {
-      ...(outcome.result.warningReason === "obstacle" ? { blockedPoint: visiblePixels.at(-1) } : {}),
-      reachesTargetBeforeObstacle: !outcome.result.hasTargetMissWarning,
+      ...(obstacleHitPoint ? { blockedPoint: obstacleHitPoint } : {}),
+      ...(outcome.result.pathError === undefined ? {} : { pathError: outcome.result.pathError }),
+      reachesTargetBeforeObstacle: outcome.result.warningReason !== "obstacle" && !outcome.result.hasTargetMissWarning,
       visiblePixels,
     };
   }

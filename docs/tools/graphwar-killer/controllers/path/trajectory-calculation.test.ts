@@ -20,6 +20,58 @@ beforeAll(async () => {
 });
 
 describe("main trajectory calculation", () => {
+  it("keeps smart target-stop policy identical across TS and WASM", async () => {
+    const points = [createGraphPoint(-20, 0), createGraphPoint(-5, 4), createGraphPoint(10, 0)];
+    const target = { hitRadiusPixels: 10_000, point: graphToImagePoint(points[2], bounds, boundsRect) };
+    const input = {
+      bounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "y" as const,
+        steepness: 67,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      },
+      target,
+      type: "solver" as const,
+    };
+    const tsEarly = calculateGraphwarTrajectory({ ...input, shouldStopOnTargetsComplete: true });
+    const wasmEarly = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
+      ...input,
+      shouldStopOnTargetsComplete: true,
+    });
+    const tsNatural = calculateGraphwarTrajectory({ ...input, shouldStopOnTargetsComplete: false });
+    const wasmNatural = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
+      ...input,
+      shouldStopOnTargetsComplete: false,
+    });
+    const tsNaturalOmitted = calculateGraphwarTrajectory(input);
+    const wasmNaturalOmitted = calculateGraphwarTrajectoryWithWasm(await createRuntime(), input);
+
+    expect(
+      tsEarly.ok && wasmEarly.ok && tsNatural.ok && wasmNatural.ok && tsNaturalOmitted.ok && wasmNaturalOmitted.ok,
+    ).toBe(true);
+    if (
+      !tsEarly.ok ||
+      !wasmEarly.ok ||
+      !tsNatural.ok ||
+      !wasmNatural.ok ||
+      !tsNaturalOmitted.ok ||
+      !wasmNaturalOmitted.ok
+    ) {
+      return;
+    }
+    expect(wasmEarly.result).toEqual(tsEarly.result);
+    expect(tsEarly.result.trajectoryPoints.length).toBeLessThan(tsNatural.result.trajectoryPoints.length);
+    expect(wasmEarly.result.trajectoryPoints.length).toBeLessThan(wasmNatural.result.trajectoryPoints.length);
+    expect(wasmNatural.result).toEqual(tsNatural.result);
+    expect(tsNaturalOmitted.result).toEqual(tsNatural.result);
+    expect(wasmNaturalOmitted.result).toEqual(wasmNatural.result);
+  });
+
   it("reports the WASM ABS pulse steepness reason without guessing from settings", async () => {
     const outcome = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
       bounds,
@@ -209,7 +261,7 @@ describe("main trajectory calculation", () => {
     expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
   });
 
-  it("keeps the formula and visible prefix when an obstacle stops the trajectory before its final target", () => {
+  it("keeps the formula and visible prefix when an obstacle stops the trajectory before its final target", async () => {
     const points = [createGraphPoint(-10, 0), createGraphPoint(0, 0), createGraphPoint(10, 0)];
     const input = {
       bounds,
@@ -244,6 +296,7 @@ describe("main trajectory calculation", () => {
     mask[Math.floor(collisionPixel.y) * boundsRect.width + Math.floor(collisionPixel.x)] = 1;
 
     const outcome = calculateGraphwarTrajectory({ ...input, collision: { mask } });
+    const wasmOutcome = calculateGraphwarTrajectoryWithWasm(await createRuntime(), { ...input, collision: { mask } });
 
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) {
@@ -254,6 +307,12 @@ describe("main trajectory calculation", () => {
     expect(outcome.result.trajectoryPoints.length).toBeLessThan(baseline.result.trajectoryPoints.length);
     expect(outcome.result.hasTargetMissWarning).toBeUndefined();
     expect(outcome.result.warningReason).toBe("obstacle");
+    expect(outcome.result.obstacleHitPoint).toBeDefined();
+    expect(wasmOutcome.ok).toBe(true);
+    if (!wasmOutcome.ok) {
+      return;
+    }
+    expect(wasmOutcome.result).toEqual(outcome.result);
   });
 
   it("rejects a target miss when an obstacle is hit at the target circle's forward boundary", () => {

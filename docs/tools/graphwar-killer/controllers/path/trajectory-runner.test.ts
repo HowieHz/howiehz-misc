@@ -502,7 +502,7 @@ describe("Graphwar main trajectory runner", () => {
   it("clones reactive-facing input while preserving a shared mask inside the request", async () => {
     const workers: FakeWorker[] = [];
     const mask = new Uint8Array([1, 2, 3]);
-    const input = createSolverInput(mask);
+    const input = { ...createSolverInput(mask), shouldStopOnTargetsComplete: true };
     const runner = createGraphwarTrajectoryRunner({ createWorker: createFakeWorkerFactory(workers) });
     const result = runner.run(input);
     const requestInput = workers[0].requests[0].input;
@@ -511,6 +511,7 @@ describe("Graphwar main trajectory runner", () => {
     }
 
     expect(requestInput).not.toBe(input);
+    expect(requestInput.shouldStopOnTargetsComplete).toBe(true);
     expect(requestInput.points).not.toBe(input.points);
     expect(requestInput.collision?.mask).not.toBe(mask);
     expect(requestInput.settings.stepGlitchObstacleMask).toBe(requestInput.collision?.mask);

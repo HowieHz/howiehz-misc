@@ -1,5 +1,11 @@
 # blogsclub-signin-helper
 
+## 0.3.1
+
+### Patch Changes
+
+- [`0ccb9d5`](https://github.com/HowieHz/howiehz-misc/commit/0ccb9d517651a3c9128a20286c41bc8ecf7fab1e) Thanks [@HowieHz](https://github.com/HowieHz)! - Test delivery.
+
 ## 0.3.0
 
 ### Minor Changes

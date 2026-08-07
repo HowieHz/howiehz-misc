@@ -50,7 +50,7 @@ function getF64ByteLength(count: u32): u32 {
 }
 
 /** Proves the canonical reverse-prefix shape and its exact operand-stack high-water mark. */
-function validateExpressionProgram(
+export function validateExpressionProgram(
   opcodePointer: u32,
   opcodeCount: u32,
   constantCount: u32,
@@ -108,7 +108,7 @@ function validateExpressionProgram(
 }
 
 /** Executes one already-validated program while preserving non-finite intermediates that can recover. */
-function evaluateExpression(
+export function evaluateExpressionProgram(
   opcodePointer: u32,
   opcodeCount: u32,
   constantPointer: u32,
@@ -230,7 +230,7 @@ export function runExpressionBatch(inputPointer: u32): u32 {
     const valueOffset = valueIndex * F64_BYTE_LENGTH;
     store<f64>(
       valuePointer + valueOffset,
-      evaluateExpression(
+      evaluateExpressionProgram(
         opcodePointer,
         opcodeCount,
         constantPointer,

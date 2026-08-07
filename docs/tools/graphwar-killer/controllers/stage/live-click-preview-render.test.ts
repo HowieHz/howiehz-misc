@@ -14,7 +14,7 @@ beforeAll(async () => {
 });
 
 describe("live click preview WASM renderer", () => {
-  it("uses the WASM expression VM while preserving the TS preview output", async () => {
+  it("uses one coarse WASM expression trajectory while preserving the TS preview output", async () => {
     const runtime = await createRuntime();
     const input = {
       bounds,
@@ -25,10 +25,12 @@ describe("live click preview WASM renderer", () => {
       type: "expression" as const,
     };
     const typescript = renderGraphwarLiveClickPreview(input);
+    const runTrajectory = vi.spyOn(runtime, "runTrajectory");
     const runFormula = vi.spyOn(runtime, "runFormula");
     const wasm = renderGraphwarLiveClickPreviewWithWasm(runtime, input);
 
-    expect(runFormula).toHaveBeenCalled();
+    expect(runTrajectory).toHaveBeenCalledOnce();
+    expect(runFormula).not.toHaveBeenCalled();
     expect(wasm.curvePoints).toBe(typescript.curvePoints);
   });
 

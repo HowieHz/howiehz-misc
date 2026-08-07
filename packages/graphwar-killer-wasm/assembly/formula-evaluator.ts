@@ -1,5 +1,7 @@
 import { evaluateCurveMaterialValue } from "./formula-curves";
+import { evaluateExpressionProgram } from "./expression";
 import {
+  FORMULA_MATERIAL_EXPRESSION,
   FORMULA_MATERIAL_STEP,
   FORMULA_RESULT_AUXILIARY_VALUE_OFFSET,
   FORMULA_RESULT_FLAGS_OFFSET,
@@ -33,6 +35,23 @@ export function evaluateFormulaMaterialValue(
   const materialCount = load<u32>(materialResultPointer + FORMULA_RESULT_MATERIAL_COUNT_OFFSET);
   const observedPointer = load<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET);
   const auxiliaryValue = load<f64>(materialResultPointer + FORMULA_RESULT_AUXILIARY_VALUE_OFFSET);
+  if (materialType == FORMULA_MATERIAL_EXPRESSION) {
+    const opcodePointer = load<u32>(materialPointer);
+    const opcodeCount = load<u32>(materialPointer + 4);
+    const constantPointer = load<u32>(materialPointer + 8);
+    const constantCount = load<u32>(materialPointer + 12);
+    // The trajectory command owns this scratch span for its complete replay.
+    return evaluateExpressionProgram(
+      opcodePointer,
+      opcodeCount,
+      constantPointer,
+      constantCount,
+      materialPointer + 24,
+      x,
+      y,
+      dy,
+    );
+  }
   if (materialType == FORMULA_MATERIAL_STEP) {
     return evaluateStepMaterialValue(
       equation,

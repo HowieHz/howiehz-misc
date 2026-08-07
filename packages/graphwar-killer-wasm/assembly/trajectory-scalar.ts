@@ -3,7 +3,9 @@ import {
   FORMULA_EQUATION_DDY,
   FORMULA_EQUATION_DY,
   FORMULA_EQUATION_Y,
+  FORMULA_MATERIAL_EXPRESSION,
   FORMULA_RESULT_BYTE_LENGTH,
+  FORMULA_RESULT_MATERIAL_TYPE_OFFSET,
 } from "./formula-layout";
 import {
   getGraphwarFuncMaxStepDistanceSquared,
@@ -772,6 +774,8 @@ function replayFormulaTrajectoryScalarToStopXInternal(
   requireArenaRange(resultPointer, TRAJECTORY_SCALAR_RESULT_BYTE_LENGTH, sizeof<f64>());
   const hasTerminalProbeYBounds =
     boundsMinY == f64.NEGATIVE_INFINITY && boundsMaxY == f64.POSITIVE_INFINITY;
+  const isExpressionMaterial =
+    load<i32>(materialResultPointer + FORMULA_RESULT_MATERIAL_TYPE_OFFSET) == FORMULA_MATERIAL_EXPRESSION;
   if (
     rangesOverlap(
       statePointer,
@@ -781,7 +785,8 @@ function replayFormulaTrajectoryScalarToStopXInternal(
     ) ||
     !isSupportedEquation(equation) ||
     !isFiniteValue(baseY) ||
-    !isFiniteValue(yOffset) ||
+    (!isFiniteValue(yOffset) &&
+      load<i32>(materialResultPointer + FORMULA_RESULT_MATERIAL_TYPE_OFFSET) != FORMULA_MATERIAL_EXPRESSION) ||
     (equation != FORMULA_EQUATION_Y && !isCanonicalZero(yOffset)) ||
     !isFiniteValue(boundsMinX) ||
     !isFiniteValue(boundsMaxX) ||
@@ -912,7 +917,7 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       resultPointer,
       step,
     );
-    let isCandidateFinite = isTrajectoryScalarCandidateFinite(resultPointer, equation);
+    let isCandidateFinite = isTrajectoryScalarCandidateFinite(resultPointer, isExpressionMaterial);
     while (isTrajectoryScalarCandidateTooDistant(resultPointer, statePointer)) {
       if (
         load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_X_OFFSET) -
@@ -940,13 +945,14 @@ function replayFormulaTrajectoryScalarToStopXInternal(
         resultPointer,
         step,
       );
-      isCandidateFinite = isTrajectoryScalarCandidateFinite(resultPointer, equation);
+      isCandidateFinite = isTrajectoryScalarCandidateFinite(resultPointer, isExpressionMaterial);
     }
     if (!isCandidateFinite) {
       const candidateX = load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_X_OFFSET);
       const candidateY = load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_Y_OFFSET);
       if (
         maskPointer != 0 &&
+        !isExpressionMaterial &&
         trajectoryScalarPointHitsObstacle(
           candidateX,
           candidateY,
@@ -973,6 +979,40 @@ function replayFormulaTrajectoryScalarToStopXInternal(
         return;
       }
       if (isInfiniteValue(candidateX) || isInfiniteValue(candidateY)) {
+        if (isExpressionMaterial) {
+          // Java advances the ODE state before classifying a non-finite terminal point. Preserve that unpublished
+          // transition with a finite out-of-bounds witness because the public raw ABI cannot carry Infinity state.
+          const currentX = load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET);
+          const currentY = load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET);
+          let terminalX = maxX + getGraphwarStepSize();
+          if (!isFiniteValue(terminalX) || terminalX <= maxX) {
+            terminalX = minX - getGraphwarStepSize();
+          }
+          if (!isFiniteValue(terminalX) || (terminalX >= minX && terminalX <= maxX)) {
+            trap();
+          }
+          store<f64>(statePointer + TRAJECTORY_SCALAR_STATE_PREVIOUS_X_OFFSET, currentX);
+          store<f64>(statePointer + TRAJECTORY_SCALAR_STATE_PREVIOUS_Y_OFFSET, currentY);
+          store<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET, terminalX);
+          store<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET, currentY);
+          if (equation == FORMULA_EQUATION_DDY) {
+            store<f64>(
+              statePointer + TRAJECTORY_SCALAR_STATE_PREVIOUS_DY_OFFSET,
+              load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_DY_OFFSET),
+            );
+          }
+          store<u32>(
+            statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET,
+            load<u32>(statePointer + TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET) + 1,
+          );
+          store<u32>(
+            statePointer + TRAJECTORY_SCALAR_STATE_FLAGS_OFFSET,
+            TRAJECTORY_SCALAR_STATE_FLAG_HAS_PREVIOUS_POINT |
+              (equation == FORMULA_EQUATION_DDY
+                ? TRAJECTORY_SCALAR_STATE_FLAG_HAS_DY | TRAJECTORY_SCALAR_STATE_FLAG_HAS_PREVIOUS_DY
+                : 0),
+          );
+        }
         writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_OUT_OF_BOUNDS);
         return;
       }
@@ -980,6 +1020,18 @@ function replayFormulaTrajectoryScalarToStopXInternal(
       return;
     }
 
+    const shouldStopAfterNonFiniteExpressionDerivative =
+      isExpressionMaterial &&
+      equation == FORMULA_EQUATION_DDY &&
+      !isFiniteValue(load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_DY_OFFSET));
+    if (shouldStopAfterNonFiniteExpressionDerivative) {
+      // TS accepts this finite position for the current stop checks, but its next RK4 step is invalid. Keep raw
+      // trajectory state finite because it is part of the public ABI, then terminate after the equivalent checks.
+      store<f64>(
+        resultPointer + TRAJECTORY_SCALAR_RESULT_DY_OFFSET,
+        load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_DY_OFFSET),
+      );
+    }
     acceptTrajectoryScalarCandidate(statePointer, resultPointer, equation);
     const currentX = load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET);
     const currentY = load<f64>(statePointer + TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET);
@@ -1066,6 +1118,10 @@ function replayFormulaTrajectoryScalarToStopXInternal(
     }
     if (hasStopX && currentX >= stopX) {
       writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_STOP_X);
+      return;
+    }
+    if (shouldStopAfterNonFiniteExpressionDerivative) {
+      writeTrajectoryScalarResult(resultPointer, statePointer, equation, TRAJECTORY_SCALAR_STOP_REASON_INVALID);
       return;
     }
   }
@@ -1335,12 +1391,11 @@ function calculateNextTrajectoryScalar(
 }
 
 @inline
-function isTrajectoryScalarCandidateFinite(resultPointer: u32, equation: i32): bool {
+function isTrajectoryScalarCandidateFinite(resultPointer: u32, isExpressionMaterial: bool): bool {
   return (
     isFiniteValue(load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_X_OFFSET)) &&
     isFiniteValue(load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_CURRENT_Y_OFFSET)) &&
-    (equation != FORMULA_EQUATION_DDY ||
-      isFiniteValue(load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_DY_OFFSET)))
+    (isExpressionMaterial || isFiniteValue(load<f64>(resultPointer + TRAJECTORY_SCALAR_RESULT_DY_OFFSET)))
   );
 }
 

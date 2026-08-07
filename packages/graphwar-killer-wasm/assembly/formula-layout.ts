@@ -22,6 +22,8 @@ export const FORMULA_MATERIAL_ABS_CONNECTOR: i32 = 1;
 export const FORMULA_MATERIAL_ABS_SECOND_DERIVATIVE: i32 = 2;
 export const FORMULA_MATERIAL_SOFT_CUBIC: i32 = 3;
 export const FORMULA_MATERIAL_STEP: i32 = 4;
+/** A parsed user expression reuses the trajectory scalar engine as an evaluator material. */
+export const FORMULA_MATERIAL_EXPRESSION: i32 = 5;
 
 /** Expression batch input offsets. */
 export const EXPRESSION_INPUT_OPCODE_POINTER_OFFSET: u32 = 0;
@@ -119,6 +121,8 @@ export const FORMULA_FLAG_HAS_USER_LAUNCH_ANGLE: u32 = 4;
 export const FORMULA_FLAG_STEP_GLITCH_MODE: u32 = 8;
 /** Scanner-owned launch input uses the glitch pointer for per-segment fixed X windows, not compiled segments. */
 export const FORMULA_FLAG_STEP_GLITCH_FIXED_WINDOWS: u32 = 16;
+/** The raw trajectory command carries an expression program instead of generated formula materials. */
+export const FORMULA_FLAG_EXPRESSION_TRAJECTORY: u32 = 32;
 
 export const STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET: u32 = 0;
 export const STEP_GLITCH_FIXED_WINDOW_RESERVED_OFFSET: u32 = 4;

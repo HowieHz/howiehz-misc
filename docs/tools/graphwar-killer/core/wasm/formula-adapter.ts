@@ -76,6 +76,7 @@ const FORMULA_FLAG_STEP_OVERFLOW_PROTECTION = 1;
 const FORMULA_FLAG_DISPLAY_ROUNDED_ANGLE = 2;
 const FORMULA_FLAG_HAS_USER_LAUNCH_ANGLE = 4;
 const FORMULA_FLAG_STEP_GLITCH_MODE = 8;
+const FORMULA_FLAG_EXPRESSION_TRAJECTORY = 32;
 
 const FORMULA_LAUNCH_STATUS_INVALID = 0;
 const FORMULA_LAUNCH_STATUS_SUCCESS = 1;
@@ -236,12 +237,24 @@ export interface GraphwarWasmTrajectoryContinuationEvidence {
 
 export interface GraphwarWasmTrajectoryInput {
   descriptor: GraphwarWasmFormulaInputDescriptor;
+  /** Simulator-only packed expression; it follows the same trajectory stop/result ABI as generated formulas. */
+  expressionProgram?: GraphwarExpressionProgram;
   /** Retain final formula evidence when the public solver must publish the formula beside its trajectory. */
   includeLaunchEvidence?: boolean;
   /** Receives the launch discriminator when the trajectory command returns a numerical invalid launch. */
   onInvalidLaunch?: (reason: GraphwarWasmInvalidLaunchReason) => void;
   start: { type: "cold" } | { evidence: GraphwarWasmTrajectoryContinuationEvidence; type: "continuation" };
   stop: GraphwarWasmStopPolicy;
+}
+
+/** Coarse simulator command: one parsed expression and one complete production trajectory replay. */
+export interface GraphwarWasmExpressionTrajectoryInput {
+  bounds: GraphBounds;
+  equation: EquationMode;
+  launchAngleRadians?: number;
+  program: GraphwarExpressionProgram;
+  soldierCenter: GraphPoint;
+  stop: Extract<GraphwarWasmStopPolicy, { type: "targets" }>;
 }
 
 /**
@@ -569,6 +582,41 @@ export function runGraphwarWasmTrajectory(
   return runGraphwarWasmTrajectoryCommand(runtime, input, "production");
 }
 
+/** Runs the parsed simulator program once through the shared trajectory scalar command. */
+export function runGraphwarWasmExpressionTrajectory(
+  runtime: GraphwarWasmKernelRuntime,
+  input: GraphwarWasmExpressionTrajectoryInput,
+): GraphwarWasmTrajectoryResult | undefined {
+  const secondOrderLaunchAngle =
+    input.equation === "ddy" && input.launchAngleRadians !== undefined
+      ? {
+          degrees: (input.launchAngleRadians * 180) / Math.PI,
+          radians: input.launchAngleRadians,
+        }
+      : undefined;
+  const descriptor = {
+    bounds: input.bounds,
+    points: [input.soldierCenter, input.soldierCenter],
+    ...(secondOrderLaunchAngle === undefined ? {} : { secondOrderLaunchAngle }),
+    settings: {
+      algorithm: "abs",
+      decimalPlaces: 0,
+      equation: input.equation,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: false,
+      secondOrderLaunchAngleMode: "full-precision",
+      steepness: 1,
+    },
+    soldierCenter: input.soldierCenter,
+  } satisfies GraphwarWasmFormulaInputDescriptor;
+  return runGraphwarWasmTrajectory(runtime, {
+    descriptor,
+    expressionProgram: input.program,
+    start: { type: "cold" },
+    stop: input.stop,
+  });
+}
+
 /** Test-only route seam proving Step-glitch reuses the complete trajectory command and Adapter contract. */
 export function runGraphwarWasmTrajectoryThroughStepGlitchTestSeam(
   runtime: GraphwarWasmKernelRuntime,
@@ -608,7 +656,10 @@ export function packGraphwarWasmTrajectoryCommandTemplate(
 
 function packGraphwarWasmTrajectoryCommand(runtime: GraphwarWasmKernelRuntime, input: GraphwarWasmTrajectoryInput) {
   const { descriptor, start, stop } = input;
-  const packedFormula = packFormulaInput(runtime, descriptor, undefined, [], true);
+  const packedFormula =
+    input.expressionProgram === undefined
+      ? packFormulaInput(runtime, descriptor, undefined, [], true)
+      : packGraphwarWasmExpressionTrajectoryInput(runtime, descriptor, input.expressionProgram);
   const commandPointer = runtime.reserveArena(TRAJECTORY_INPUT_BYTE_LENGTH, 8);
   if (commandPointer !== packedFormula.inputPointer + FORMULA_INPUT_BYTE_LENGTH) {
     throw new GraphwarWasmAdapterError(
@@ -687,6 +738,51 @@ function packGraphwarWasmTrajectoryCommand(runtime: GraphwarWasmKernelRuntime, i
   return { commandPointer, packedFormula, packedStop };
 }
 
+/** Packs only the expression program and launch geometry needed by the scalar trajectory engine. */
+function packGraphwarWasmExpressionTrajectoryInput(
+  runtime: GraphwarWasmKernelRuntime,
+  descriptor: GraphwarWasmFormulaInputDescriptor,
+  program: GraphwarExpressionProgram,
+): PackedFormulaInput {
+  const equation = getGraphwarWasmFormulaEquationTag(descriptor.settings.equation);
+  const minX = validateGraphwarWasmFiniteNumber(descriptor.bounds.minX, "bounds.minX", "input");
+  const maxX = validateGraphwarWasmFiniteNumber(descriptor.bounds.maxX, "bounds.maxX", "input");
+  const minY = validateGraphwarWasmFiniteNumber(descriptor.bounds.minY, "bounds.minY", "input");
+  const maxY = validateGraphwarWasmFiniteNumber(descriptor.bounds.maxY, "bounds.maxY", "input");
+  if (minX === maxX || minY === maxY) {
+    throw new GraphwarWasmAdapterError("invalid-formula-input", "Trajectory bounds must span both axes", "input");
+  }
+  const soldierX = validateGraphwarWasmFiniteNumber(descriptor.soldierCenter.x, "soldierCenter.x", "input");
+  const soldierY = validateGraphwarWasmFiniteNumber(descriptor.soldierCenter.y, "soldierCenter.y", "input");
+  const packedProgram = packGraphwarWasmExpressionProgram(runtime, program);
+  const points = packGraphwarWasmPointSoA(runtime, [
+    { x: soldierX, y: soldierY },
+    { x: soldierX, y: soldierY },
+  ]);
+  const inputPointer = runtime.reserveArena(FORMULA_INPUT_BYTE_LENGTH, 8);
+  new Uint8Array(runtime.buffer, inputPointer, FORMULA_INPUT_BYTE_LENGTH).fill(0);
+  const view = new DataView(runtime.buffer, inputPointer, FORMULA_INPUT_BYTE_LENGTH);
+  view.setInt32(0, 0, true);
+  view.setInt32(4, equation, true);
+  view.setUint32(12, FORMULA_FLAG_EXPRESSION_TRAJECTORY, true);
+  view.setUint32(16, points.length, true);
+  view.setUint32(20, points.x.pointer, true);
+  view.setUint32(24, points.y.pointer, true);
+  view.setFloat64(64, minX, true);
+  view.setFloat64(72, maxX, true);
+  view.setFloat64(80, minY, true);
+  view.setFloat64(88, maxY, true);
+  view.setFloat64(96, soldierX, true);
+  view.setFloat64(104, soldierY, true);
+  view.setFloat64(112, descriptor.secondOrderLaunchAngle?.radians ?? Number.NaN, true);
+  view.setUint32(120, packedProgram.opcodes.pointer, true);
+  view.setUint32(124, packedProgram.opcodes.length, true);
+  view.setUint32(128, packedProgram.constants.pointer, true);
+  view.setUint32(132, packedProgram.constants.length, true);
+  view.setUint32(136, packedProgram.maximumStackSize, true);
+  return { inputPointer, pointCount: points.length, segmentCount: 1 };
+}
+
 function runGraphwarWasmTrajectoryCommand(
   runtime: GraphwarWasmKernelRuntime,
   input: GraphwarWasmTrajectoryInput,
@@ -694,6 +790,16 @@ function runGraphwarWasmTrajectoryCommand(
 ): GraphwarWasmTrajectoryResult | undefined {
   return withFormulaArenaScope(runtime, () => {
     const { descriptor, start, stop } = input;
+    if (
+      input.expressionProgram !== undefined &&
+      (execution !== "production" || input.includeLaunchEvidence || start.type !== "cold")
+    ) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-formula-input",
+        "Expression trajectories support only cold production replay without formula metadata",
+        "input",
+      );
+    }
     const { commandPointer, packedFormula, packedStop } = packGraphwarWasmTrajectoryCommand(runtime, input);
     const metadataPointer =
       input.includeLaunchEvidence && execution === "production"
@@ -798,10 +904,14 @@ function runGraphwarWasmTrajectoryCommand(
     const points: GraphPoint[] = [];
     const equation = descriptor.settings.equation;
     for (let index = 0; index < pointCount; index += 1) {
-      if (equation === "ddy") {
-        validateGraphwarWasmFiniteNumber(pointDys[index], `trajectory.points[${index}].dy`);
-      } else if (!Object.is(pointDys[index], 0)) {
-        throwFormulaResultError(`Trajectory point ${index} contains derivative state for a non-second-order equation`);
+      if (input.expressionProgram === undefined) {
+        if (equation === "ddy") {
+          validateGraphwarWasmFiniteNumber(pointDys[index], `trajectory.points[${index}].dy`);
+        } else if (!Object.is(pointDys[index], 0)) {
+          throwFormulaResultError(
+            `Trajectory point ${index} contains derivative state for a non-second-order equation`,
+          );
+        }
       }
       points.push(
         createGraphPoint(

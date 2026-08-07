@@ -5,7 +5,7 @@ import {
 } from "../../core/algorithm-backend";
 import type { BoundsRect, EquationMode, FormulaResult, GraphBounds, GraphPoint, PixelPoint } from "../../core/types";
 import {
-  runGraphwarWasmExpressionBatch,
+  runGraphwarWasmExpressionTrajectory,
   runGraphwarWasmTrajectory,
   type GraphwarWasmInvalidLaunchReason,
 } from "../../core/wasm/formula-adapter";
@@ -21,7 +21,6 @@ import {
   GraphwarTrajectoryResolutionError,
   resolveGraphwarTrajectory,
   sampleGraphwarExpressionTrajectoryWithStops,
-  sampleGraphwarExpressionTrajectoryWithStopsAndEvaluator,
   type GraphwarTrajectoryCollisionSettings,
   type GraphwarTrajectoryFormulaMode,
   type GraphwarTrajectoryFormulaSettings,
@@ -306,7 +305,7 @@ function resolveWasmWarningReason(
   return undefined;
 }
 
-/** Runs simulator expression arithmetic through the canonical WASM expression VM while retaining Java step/stop policy. */
+/** Runs one parsed simulator expression through the same coarse WASM trajectory command as generated formulas. */
 function calculateSimulatorTrajectoryWithWasm(
   runtime: GraphwarWasmKernelRuntime,
   input: Extract<GraphwarTrajectoryCalculationInput, { type: "simulator" }>,
@@ -316,36 +315,40 @@ function calculateSimulatorTrajectoryWithWasm(
     if (!program) {
       return calculateSimulatorTrajectory(input);
     }
-    const evaluateExpression = (x: number, y: number, dy: number) => {
-      const values = runGraphwarWasmExpressionBatch(runtime, {
-        program,
-        values: [{ dy, x, y }],
-      });
-      return values[0] ?? Number.NaN;
-    };
-    const sampleResult = sampleGraphwarExpressionTrajectoryWithStopsAndEvaluator(
-      {
-        bounds: input.bounds,
+    const sampled = runGraphwarWasmExpressionTrajectory(runtime, {
+      bounds: input.bounds,
+      equation: input.equation,
+      ...(input.launchAngleRadians === undefined ? {} : { launchAngleRadians: input.launchAngleRadians }),
+      program,
+      soldierCenter: input.soldierCenter,
+      stop: {
         boundsRect: input.boundsRect,
-        ...(input.collision ? { collision: input.collision } : {}),
-        collectVisiblePixels: true,
-        equation: input.equation,
-        expression: input.expression,
-        ...(input.launchAngleRadians === undefined ? {} : { launchAngleRadians: input.launchAngleRadians }),
-        ...(input.parser ? { parser: input.parser } : {}),
-        soldierCenter: input.soldierCenter,
+        collision: input.collision?.mask
+          ? { boundaryExpansion: input.collision.boundaryExpansion ?? 0, mask: input.collision.mask, type: "mask" }
+          : { type: "none" },
+        continueAfterTargetsUntilGraphX: { type: "none" },
+        orderedTargets: [],
+        qualityPoints: [],
+        requiredTargets: [],
+        shouldCollectVisiblePixels: true,
+        shouldStopOnTargetsComplete: false,
+        trackedTargets: [],
+        type: "targets",
       },
-      evaluateExpression,
-    );
-    const warningReason = resolveWarningReason(sampleResult, -1, sampleResult.obstacleHitIndex);
+    });
+    if (!sampled) {
+      return {
+        ok: true,
+        result: { curvePoints: "", trajectoryPoints: [], warningReason: "invalid" },
+      };
+    }
+    const obstacleHitIndex = sampled.obstacle.type === "hit" ? sampled.obstacle.sampleIndex : -1;
+    const warningReason = resolveWasmWarningReason(sampled.stopReason, -1, obstacleHitIndex);
     return {
       ok: true,
       result: {
-        curvePoints: formatVisibleTrajectoryPoints(sampleResult.visiblePixels, sampleResult.obstacleHitIndex),
-        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(
-          sampleResult.visiblePixels,
-          sampleResult.obstacleHitIndex,
-        ),
+        curvePoints: formatVisibleTrajectoryPoints(sampled.visiblePixels, obstacleHitIndex),
+        trajectoryPoints: snapshotGraphwarVisibleTrajectoryPoints(sampled.visiblePixels, obstacleHitIndex),
         ...(warningReason ? { warningReason } : {}),
       },
     };

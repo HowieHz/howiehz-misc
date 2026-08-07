@@ -27,6 +27,7 @@ import { GraphwarWasmAdapterError } from "./abi";
 import {
   prepareGraphwarWasmFormulaLaunch,
   runGraphwarWasmExpressionBatch,
+  runGraphwarWasmExpressionTrajectory,
   runGraphwarWasmFormulaBatch,
   runGraphwarWasmTrajectory,
   runGraphwarWasmTrajectoryThroughStepGlitchTestSeam,
@@ -589,6 +590,30 @@ describe("Graphwar WASM formula Adapter", () => {
     expect(Object.is(result.initialDy, 0)).toBe(true);
     expect(result.continuationEvidence.state.sampleIndex).toBe(result.points.length - 1);
     expect(result.startType).toBe("cold");
+  });
+
+  it("replays a parsed simulator expression through one trajectory command", async () => {
+    const runtime = await createRuntime();
+    const program = parseGraphwarExpressionProgram("x+y+y'");
+    if (!program) {
+      throw new Error("Expected the expression to parse");
+    }
+    const runTrajectorySpy = vi.spyOn(runtime, "runTrajectory");
+    const runFormulaSpy = vi.spyOn(runtime, "runFormula");
+
+    const result = runGraphwarWasmExpressionTrajectory(runtime, {
+      bounds,
+      equation: "ddy",
+      launchAngleRadians: 0,
+      program,
+      soldierCenter: createGraphPoint(-10, 0),
+      stop: createTargetStop({ shouldCollectVisiblePixels: true, shouldStopOnTargetsComplete: false }),
+    });
+
+    expect(result?.points.length).toBeGreaterThan(1);
+    expect(result?.visiblePixels).toHaveLength(result?.points.length ?? 0);
+    expect(runTrajectorySpy).toHaveBeenCalledOnce();
+    expect(runFormulaSpy).not.toHaveBeenCalled();
   });
 
   it("rejects metadata when raw ddy launch angle differs from the atomic formula launch", async () => {

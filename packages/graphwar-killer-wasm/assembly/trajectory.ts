@@ -1,5 +1,8 @@
 import {
+  FORMULA_EQUATION_DY,
   FORMULA_EQUATION_DDY,
+  FORMULA_EQUATION_Y,
+  FORMULA_FLAG_EXPRESSION_TRAJECTORY,
   FORMULA_LAUNCH_RESULT_ANGLE_OFFSET,
   FORMULA_LAUNCH_RESULT_INITIAL_DY_OFFSET,
   FORMULA_LAUNCH_RESULT_MATERIAL_RESULT_POINTER_OFFSET,
@@ -21,14 +24,25 @@ import {
   FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET,
   FORMULA_INPUT_STEP_OVERFLOW_RANGE_COUNT_OFFSET,
   FORMULA_INPUT_STEP_OVERFLOW_RANGE_POINTER_OFFSET,
+  FORMULA_MATERIAL_EXPRESSION,
+  FORMULA_RESULT_MATERIAL_COUNT_OFFSET,
+  FORMULA_RESULT_MATERIAL_POINTER_OFFSET,
+  FORMULA_RESULT_MATERIAL_TYPE_OFFSET,
+  FORMULA_RESULT_BYTE_LENGTH,
   FORMULA_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
 } from "./formula-layout";
+import { validateExpressionProgram } from "./expression";
+import { evaluateFormulaMaterialValue } from "./formula-evaluator";
 import { mergeProtectionBits, runPrepareLaunch } from "./formula-launch";
 import {
+  getGraphwarAngleError,
+  getGraphwarGameSoldierRadius,
   getGraphwarFuncMaxSteps,
+  getGraphwarMaxAngleLoops,
   getGraphwarPlaneHeight,
   getGraphwarPlaneLength,
+  getGraphwarStepSize,
   requireGraphwarGameConstantsInitialized,
 } from "./game-constants";
 import {
@@ -42,6 +56,7 @@ import {
 import {
   beginTrajectoryDebugCounters,
   endTrajectoryDebugCounters,
+  evaluateFirstOrderFormulaRk4Y,
   getTrajectoryDebugCounter,
   initializeTrajectoryScalarState,
   recordTrajectoryDebugScalarReplay,
@@ -439,6 +454,12 @@ export function runTrajectoryRequestWithMetadata(
     trap();
   }
   const protectionByteLength = <u32>protectionByteLength64;
+  const isExpressionTrajectory =
+    load<i32>(inputPointer) == 0 &&
+    (load<u32>(inputPointer + 12) & FORMULA_FLAG_EXPRESSION_TRAJECTORY) != 0;
+  if (isExpressionTrajectory && hasContinuationEvidence) {
+    trap();
+  }
   const stableProtectionPointer = reserveArena(protectionByteLength, sizeof<u32>());
   memory.fill(stableProtectionPointer, 0, protectionByteLength);
   const dependencyHashPointer = reserveArena(2 * sizeof<u64>(), sizeof<u64>());
@@ -470,7 +491,9 @@ export function runTrajectoryRequestWithMetadata(
   memory.copy(launchInputPointer, inputPointer, TRAJECTORY_INPUT_FORMULA_BYTE_LENGTH);
   store<u32>(launchInputPointer + FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET, stableProtectionPointer);
   store<u32>(launchInputPointer + FORMULA_INPUT_SIGN_PROTECTION_COUNT_OFFSET, segmentCount);
-  const launchResultPointer = runPrepareLaunch(launchInputPointer);
+  const launchResultPointer = isExpressionTrajectory
+    ? runPrepareExpressionTrajectoryLaunch(launchInputPointer, stableProtectionPointer, segmentCount)
+    : runPrepareLaunch(launchInputPointer);
   const launchStatus = load<i32>(launchResultPointer + FORMULA_LAUNCH_RESULT_STATUS_OFFSET);
   const launchProtectionPointer = load<u32>(launchResultPointer + FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET);
   if (load<u32>(launchResultPointer + FORMULA_LAUNCH_RESULT_PROTECTION_COUNT_OFFSET) != segmentCount) {
@@ -849,7 +872,12 @@ export function runTrajectoryRequestWithMetadata(
   store<f64>(resultPointer + TRAJECTORY_RESULT_LAUNCH_X_OFFSET, launchX);
   store<f64>(resultPointer + TRAJECTORY_RESULT_LAUNCH_Y_OFFSET, launchY);
   store<f64>(resultPointer + TRAJECTORY_RESULT_INITIAL_DY_OFFSET, initialDy);
-  store<f64>(resultPointer + TRAJECTORY_RESULT_Y_OFFSET_VALUE_OFFSET, yOffset);
+  // A non-finite y= expression offset is only an internal first-candidate condition. The public result carries a
+  // canonical scalar because its stop reason, not a reusable launch state, represents this invalid simulator path.
+  store<f64>(
+    resultPointer + TRAJECTORY_RESULT_Y_OFFSET_VALUE_OFFSET,
+    isExpressionTrajectory && !isFiniteTrajectoryValue(yOffset) ? 0 : yOffset,
+  );
   store<u32>(resultPointer + TRAJECTORY_RESULT_FLAGS_OFFSET, resultFlags);
   store<u32>(
     resultPointer + TRAJECTORY_RESULT_OBSERVATION_POINTER_OFFSET,
@@ -1022,6 +1050,163 @@ const TRAJECTORY_HASH_A_SEED: u64 = 14695981039346656037;
 const TRAJECTORY_HASH_B_SEED: u64 = 7809847782465536322;
 const TRAJECTORY_HASH_PRIME: u64 = 1099511628211;
 const TRAJECTORY_ALLOWED_PROTECTION_BITS: u32 = 31;
+
+/**
+ * Builds the same launch/material envelope as generated formulas, but makes the scalar replay evaluate one packed
+ * user expression. The raw program lives in otherwise formula-only fields because this command never enters formula
+ * generation; keeping the outer trajectory record unchanged avoids a second stop/result ABI.
+ */
+function runPrepareExpressionTrajectoryLaunch(
+  inputPointer: u32,
+  protectionPointer: u32,
+  protectionCount: u32,
+): u32 {
+  const equation = load<i32>(inputPointer + 4);
+  const opcodePointer = load<u32>(inputPointer + 120);
+  const opcodeCount = load<u32>(inputPointer + 124);
+  const constantPointer = load<u32>(inputPointer + 128);
+  const constantCount = load<u32>(inputPointer + 132);
+  const maximumStackSize = load<u32>(inputPointer + 136);
+  const constantByteLength64 = <u64>constantCount * sizeof<f64>();
+  const stackByteLength64 = <u64>maximumStackSize * sizeof<f64>();
+  const materialByteLength64 = 24 + stackByteLength64;
+  if (
+    (load<u32>(inputPointer + 12) & FORMULA_FLAG_EXPRESSION_TRAJECTORY) == 0 ||
+    (equation != FORMULA_EQUATION_Y && equation != FORMULA_EQUATION_DY && equation != FORMULA_EQUATION_DDY) ||
+    opcodeCount == 0 ||
+    maximumStackSize == 0 ||
+    constantByteLength64 > 0xffff_ffff ||
+    stackByteLength64 > 0xffff_ffff ||
+    materialByteLength64 > 0xffff_ffff
+  ) {
+    trap();
+  }
+  requireArenaRange(opcodePointer, opcodeCount, sizeof<u8>());
+  requireArenaRange(constantPointer, <u32>constantByteLength64, sizeof<f64>());
+  validateExpressionProgram(opcodePointer, opcodeCount, constantCount, maximumStackSize);
+
+  const materialByteLength = <u32>materialByteLength64;
+  const materialPointer = reserveArena(materialByteLength, sizeof<f64>());
+  memory.fill(materialPointer, 0, materialByteLength);
+  store<u32>(materialPointer, opcodePointer);
+  store<u32>(materialPointer + 4, opcodeCount);
+  store<u32>(materialPointer + 8, constantPointer);
+  store<u32>(materialPointer + 12, constantCount);
+  store<u32>(materialPointer + 16, maximumStackSize);
+  const materialResultPointer = reserveArena(FORMULA_RESULT_BYTE_LENGTH, sizeof<f64>());
+  memory.fill(materialResultPointer, 0, FORMULA_RESULT_BYTE_LENGTH);
+  store<i32>(materialResultPointer + FORMULA_RESULT_MATERIAL_TYPE_OFFSET, FORMULA_MATERIAL_EXPRESSION);
+  store<u32>(materialResultPointer + FORMULA_RESULT_MATERIAL_POINTER_OFFSET, materialPointer);
+  store<u32>(materialResultPointer + FORMULA_RESULT_MATERIAL_COUNT_OFFSET, 0);
+  store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_POINTER_OFFSET, protectionPointer);
+  store<u32>(materialResultPointer + FORMULA_RESULT_PROTECTION_COUNT_OFFSET, protectionCount);
+
+  const soldierX = load<f64>(inputPointer + 96);
+  const soldierY = load<f64>(inputPointer + 104);
+  let launchAngle = 0.0;
+  let launchX = soldierX;
+  let launchY = soldierY;
+  let initialDy = 0.0;
+  let yOffset = 0.0;
+  let isLaunchValid = isFiniteTrajectoryValue(soldierX) && isFiniteTrajectoryValue(soldierY);
+  if (isLaunchValid && equation == FORMULA_EQUATION_Y) {
+    launchAngle = getExpressionNormalStartAngle(materialResultPointer, soldierX);
+    if (isFiniteTrajectoryValue(launchAngle)) {
+      launchX = soldierX + getGraphwarGameSoldierRadius() * NativeMath.cos(launchAngle);
+      launchY = soldierY + getGraphwarGameSoldierRadius() * NativeMath.sin(launchAngle);
+    }
+    yOffset = launchY - evaluateFormulaMaterialValue(materialResultPointer, equation, launchX, 0, 0, 0, protectionPointer);
+    // Graphwar publishes this finite launch point even when the first evaluated y is non-finite; the scalar loop
+    // must then classify the candidate as invalid rather than rejecting launch preparation early.
+    isLaunchValid = isFiniteTrajectoryValue(launchX) && isFiniteTrajectoryValue(launchY);
+  } else if (isLaunchValid && equation == FORMULA_EQUATION_DY) {
+    launchAngle = getExpressionFirstOrderStartAngle(materialResultPointer, soldierX, soldierY, protectionPointer);
+    const executionAngle = launchAngle == launchAngle ? launchAngle : 0;
+    launchX = soldierX + getGraphwarGameSoldierRadius() * NativeMath.cos(executionAngle);
+    launchY = soldierY + getGraphwarGameSoldierRadius() * NativeMath.sin(executionAngle);
+    isLaunchValid = isFiniteTrajectoryValue(launchX) && isFiniteTrajectoryValue(launchY);
+  } else if (isLaunchValid && equation == FORMULA_EQUATION_DDY) {
+    launchAngle = load<f64>(inputPointer + 112);
+    initialDy = NativeMath.tan(launchAngle);
+    launchX = soldierX + getGraphwarGameSoldierRadius() * NativeMath.cos(launchAngle);
+    launchY = soldierY + getGraphwarGameSoldierRadius() * NativeMath.sin(launchAngle);
+    isLaunchValid =
+      isFiniteTrajectoryValue(launchAngle) &&
+      isFiniteTrajectoryValue(launchX) &&
+      isFiniteTrajectoryValue(launchY) &&
+      isFiniteTrajectoryValue(initialDy);
+  }
+
+  const launchResultPointer = reserveArena(80, sizeof<f64>());
+  memory.fill(launchResultPointer, 0, 80);
+  store<u32>(launchResultPointer + FORMULA_LAUNCH_RESULT_PROTECTION_POINTER_OFFSET, protectionPointer);
+  store<u32>(launchResultPointer + FORMULA_LAUNCH_RESULT_PROTECTION_COUNT_OFFSET, protectionCount);
+  if (!isLaunchValid) {
+    return launchResultPointer;
+  }
+  store<i32>(launchResultPointer + FORMULA_LAUNCH_RESULT_STATUS_OFFSET, FORMULA_LAUNCH_STATUS_SUCCESS);
+  store<f64>(
+    launchResultPointer + FORMULA_LAUNCH_RESULT_ANGLE_OFFSET,
+    equation == FORMULA_EQUATION_DY && !isFiniteTrajectoryValue(launchAngle) ? 0 : launchAngle,
+  );
+  store<f64>(launchResultPointer + FORMULA_LAUNCH_RESULT_X_OFFSET, launchX);
+  store<f64>(launchResultPointer + FORMULA_LAUNCH_RESULT_Y_OFFSET, launchY);
+  store<f64>(launchResultPointer + FORMULA_LAUNCH_RESULT_INITIAL_DY_OFFSET, initialDy);
+  store<f64>(launchResultPointer + FORMULA_LAUNCH_RESULT_Y_OFFSET_VALUE_OFFSET, yOffset);
+  store<u32>(launchResultPointer + FORMULA_LAUNCH_RESULT_MATERIAL_RESULT_POINTER_OFFSET, materialResultPointer);
+  store<u32>(
+    launchResultPointer + FORMULA_LAUNCH_RESULT_FORMULA_POINT_Y_POINTER_OFFSET,
+    load<u32>(inputPointer + FORMULA_INPUT_POINT_Y_POINTER_OFFSET),
+  );
+  return launchResultPointer;
+}
+
+/** Mirrors Graphwar's y= angle loop while retaining Java's last NaN value fallback. */
+function getExpressionNormalStartAngle(materialResultPointer: u32, centerX: f64): f64 {
+  const step = getGraphwarStepSize();
+  let angle = NativeMath.atan(
+    (evaluateFormulaMaterialValue(materialResultPointer, FORMULA_EQUATION_Y, centerX + step, 0, 0, 0, 0) -
+      evaluateFormulaMaterialValue(materialResultPointer, FORMULA_EQUATION_Y, centerX, 0, 0, 0, 0)) /
+      step,
+  );
+  let error = f64.POSITIVE_INFINITY;
+  let index: u32 = 0;
+  while (error > getGraphwarAngleError() && index < getGraphwarMaxAngleLoops()) {
+    const finalX = centerX + getGraphwarGameSoldierRadius() * NativeMath.cos(angle);
+    const nextAngle = NativeMath.atan(
+      (evaluateFormulaMaterialValue(materialResultPointer, FORMULA_EQUATION_Y, finalX + step, 0, 0, 0, 0) -
+        evaluateFormulaMaterialValue(materialResultPointer, FORMULA_EQUATION_Y, finalX, 0, 0, 0, 0)) /
+        step,
+    );
+    error = NativeMath.abs(nextAngle - angle);
+    angle = nextAngle;
+    index += 1;
+  }
+  return angle;
+}
+
+/** Mirrors Graphwar's y'= fixed-point launch loop using the same RK4 primitive as final replay. */
+function getExpressionFirstOrderStartAngle(
+  materialResultPointer: u32,
+  centerX: f64,
+  centerY: f64,
+  protectionPointer: u32,
+): f64 {
+  let angle = 0.0;
+  let error = f64.POSITIVE_INFINITY;
+  let index: u32 = 0;
+  const step = getGraphwarStepSize();
+  while (error > getGraphwarAngleError() && index < getGraphwarMaxAngleLoops()) {
+    const x = centerX + getGraphwarGameSoldierRadius() * NativeMath.cos(angle);
+    const y = centerY + getGraphwarGameSoldierRadius() * NativeMath.sin(angle);
+    const nextY = evaluateFirstOrderFormulaRk4Y(materialResultPointer, x, y, step, 0, protectionPointer);
+    const nextAngle = NativeMath.atan((nextY - y) / step);
+    error = NativeMath.abs(nextAngle - angle);
+    angle = nextAngle;
+    index += 1;
+  }
+  return angle;
+}
 
 function writeTrajectoryDependencyHash(inputPointer: u32, hashPointer: u32): void {
   store<u64>(hashPointer, TRAJECTORY_HASH_A_SEED);

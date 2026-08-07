@@ -269,6 +269,7 @@ jobs:
     name: Publish stable userscripts to dist branch
     needs: [prepare-release, build-userscripts, create-github-releases]
     if: |
+      always() &&
       needs.prepare-release.outputs.has-release-userscripts == 'true' &&
       needs.build-userscripts.result == 'success' &&
       needs.create-github-releases.result == 'success'

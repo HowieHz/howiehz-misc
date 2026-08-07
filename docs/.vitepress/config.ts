@@ -387,7 +387,6 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
 
   lastUpdated: true,
   cleanUrls: true,
-  metaChunk: true,
 
   sitemap: {
     hostname: `${baseUrl}${basePath}`,
@@ -411,7 +410,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
   markdown: {
     math: true,
     image: {
-      lazyLoading: true,
+      lazyLoad: true,
     },
     codeTransformers: [
       transformerTwoslash({

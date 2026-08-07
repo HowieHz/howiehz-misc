@@ -1,10 +1,12 @@
 "use strict";
 
+/** 用户脚本本地存储中的 BlogsClub 登录凭据；尚未配置时字段可以缺失。 */
 interface Credentials {
   email?: string;
   password?: string;
 }
 
+/** 发送 BlogsClub 请求所需的 GM_xmlhttpRequest 选项。 */
 interface RequestOptions {
   method: string;
   url: string;
@@ -14,6 +16,7 @@ interface RequestOptions {
   timeout?: number;
 }
 
+/** BlogsClub 接口共用的响应字段；具体接口只返回其中一部分。 */
 interface ApiResponse {
   code?: number;
   msg?: string;
@@ -21,6 +24,7 @@ interface ApiResponse {
   signin?: boolean;
 }
 
+/** 可供并发调用方复用的签到状态请求及其服务端起始时间。 */
 type SharedStatusPromise = Promise<ApiResponse> & { startedAt: number };
 
 if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
@@ -351,47 +355,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     return language === "en" ? "eng" : language === "zh-Hant" ? "cht" : "zho";
   }
 
-  let checking = null;
-  let signing = false;
-  let loginPromise = null;
-  let loginPagePromise = null;
-  let signinStatusPromise = null;
-  let signinStatusForce = false;
-  let captcha = null;
-  let captchaGeneration = 0;
-  let captchaLoading = null;
-  let captchaOpening = false;
-  let intervalMenuId = null;
-  let checkMenuId = null;
-  let accountMenuId = null;
-  let blogsClubAutoCheckOnlyMenuId = null;
-  let autoPopupMenuId = null;
-  let rushModeMenuId = null;
-  let rushLeadMenuId = null;
-  let rushSubmitDelayMenuId = null;
-  let rushSubmitRetriesMenuId = null;
-  let rushSubmitIntervalMenuId = null;
-  let languageMenuId = null;
-  let rushTimer = null;
-  let rushSubmitTimer = null;
-  // 用对象身份隔离并发回包，旧轮次不能影响新轮次的重试定时器。
-  let rushSubmitState = null;
-  let rushCaptchaPending = false;
-  // 验证码回调属于哪个 rush 流程；取消后保留旧值，使迟到回调被丢弃而非普通提交。
-  let rushCaptchaGeneration = null;
-  let rushSubmitAt = 0;
-  let rushTargetMidnight = 0;
-  let rushPreparing = null;
-  let rushPreparingGeneration = 0;
-  let rushPreparingTargetMidnight = 0;
-  let rushScheduleGeneration = 0; // 异步校准完成后只接受最新调度代号。
-  // 仅在关闭或手动重排时变更；次日排程不能误停当日仍在返回的重试请求。
-  let rushFlowGeneration = 0;
-  let signinSuccessSerial = 0;
-  let lastSigninSuccessAt = 0;
-  let serverClockOffsetMs = null;
-
   // 本地配置与油猴菜单。
+  const menuIds = new Map<string, ReturnType<typeof GM_registerMenuCommand>>();
+
   /**
    * 显示油猴通知；没有通知 API 时退回控制台。
    *
@@ -423,16 +389,17 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 注册或替换一个油猴菜单项。
    *
-   * @param {number | string | null | undefined} currentId 旧菜单编号。
+   * @param {string} name 菜单的稳定名称。
    * @param {string} label 菜单显示文本。
    * @param {Function} handler 点击菜单后的处理函数。
-   * @returns {number | string | undefined} 新菜单编号。
+   * @returns {void}
    */
-  function registerMenu(currentId, label, handler) {
-    if (currentId !== null && currentId !== undefined && typeof GM_unregisterMenuCommand === "function") {
+  function registerMenu(name, label, handler) {
+    const currentId = menuIds.get(name);
+    if (currentId !== undefined && typeof GM_unregisterMenuCommand === "function") {
       GM_unregisterMenuCommand(currentId);
     }
-    return GM_registerMenuCommand(label, handler);
+    menuIds.set(name, GM_registerMenuCommand(label, handler));
   }
 
   /**
@@ -634,11 +601,11 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerIntervalMenu() {
-    intervalMenuId = registerMenu(intervalMenuId, t("intervalMenu", { value: intervalMs() }), configureInterval);
+    registerMenu("interval", t("intervalMenu", { value: intervalMs() }), configureInterval);
   }
 
   function registerCheckMenu() {
-    checkMenuId = registerMenu(checkMenuId, t("checkNowMenu"), () => {
+    registerMenu("check", t("checkNowMenu"), () => {
       notify(t("checkingStatus"));
       return check({ isManual: true, shouldForceCaptcha: true });
     });
@@ -650,7 +617,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerAccountMenu() {
-    accountMenuId = registerMenu(accountMenuId, t("accountMenu", { status: accountStatusLabel() }), configureAccount);
+    registerMenu("account", t("accountMenu", { status: accountStatusLabel() }), configureAccount);
   }
 
   /**
@@ -659,8 +626,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerBlogsClubAutoCheckOnlyMenu() {
-    blogsClubAutoCheckOnlyMenuId = registerMenu(
-      blogsClubAutoCheckOnlyMenuId,
+    registerMenu(
+      "blogsClubAutoCheckOnly",
       t("blogsClubAutoCheckOnlyMenu", { state: t(isBlogsClubAutoCheckOnlyEnabled() ? "enabled" : "disabled") }),
       toggleBlogsClubAutoCheckOnly,
     );
@@ -672,8 +639,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerAutoPopupMenu() {
-    autoPopupMenuId = registerMenu(
-      autoPopupMenuId,
+    registerMenu(
+      "autoPopup",
       t("autoPopupMenu", { state: t(autoPopupEnabled() ? "enabled" : "disabled") }),
       toggleAutoPopup,
     );
@@ -685,8 +652,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerRushModeMenu() {
-    rushModeMenuId = registerMenu(
-      rushModeMenuId,
+    registerMenu(
+      "rushMode",
       t("rushModeMenu", { state: t(rushModeEnabled() ? "enabled" : "disabled") }),
       toggleRushMode,
     );
@@ -698,7 +665,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerRushLeadMenu() {
-    rushLeadMenuId = registerMenu(rushLeadMenuId, t("rushLeadMenu", { value: rushLeadSeconds() }), configureRushLead);
+    registerMenu("rushLead", t("rushLeadMenu", { value: rushLeadSeconds() }), configureRushLead);
   }
 
   /**
@@ -729,11 +696,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerRushSubmitDelayMenu() {
-    rushSubmitDelayMenuId = registerMenu(
-      rushSubmitDelayMenuId,
-      t("rushSubmitDelayMenu", { value: rushSubmitDelayMs() }),
-      configureRushSubmitDelay,
-    );
+    registerMenu("rushSubmitDelay", t("rushSubmitDelayMenu", { value: rushSubmitDelayMs() }), configureRushSubmitDelay);
   }
 
   /**
@@ -767,8 +730,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerRushSubmitRetriesMenu() {
-    rushSubmitRetriesMenuId = registerMenu(
-      rushSubmitRetriesMenuId,
+    registerMenu(
+      "rushSubmitRetries",
       t("rushSubmitRetriesMenu", { value: rushSubmitRetries() }),
       configureRushSubmitRetries,
     );
@@ -804,15 +767,15 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function registerRushSubmitIntervalMenu() {
-    rushSubmitIntervalMenuId = registerMenu(
-      rushSubmitIntervalMenuId,
+    registerMenu(
+      "rushSubmitInterval",
       t("rushSubmitIntervalMenu", { value: rushSubmitIntervalMs() }),
       configureRushSubmitInterval,
     );
   }
 
   function registerLanguageMenu() {
-    languageMenuId = registerMenu(languageMenuId, `🌐 ${t("languageMenu")}`, configureLanguage);
+    registerMenu("language", `🌐 ${t("languageMenu")}`, configureLanguage);
   }
 
   function registerMenus() {
@@ -846,7 +809,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     registerMenus();
     notify(t("languageChanged", { language: languageName(selected) }), t("configTitle"));
     if (hadVisibleCaptcha) {
-      openCaptchaWindow(rushCaptchaPending, rushCaptchaGeneration);
+      openCaptchaWindow(isRushCaptchaPending, rushCaptchaGeneration);
     }
   }
 
@@ -938,6 +901,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   // 网络请求与 BlogsClub 接口。
+  let loginPromise = null;
+  let loginPagePromise = null;
+  let signinStatusPromise = null;
+  let isSigninStatusLoginForced = false;
+  let serverClockOffsetMs = null;
+
   /**
    * 从 HTTP Date 响应头校准 BlogsClub 服务端时钟。
    *
@@ -1105,12 +1074,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 查询签到状态；必要时先用已保存凭据登录。
    *
-   * @param {boolean} [forceLogin=false] 是否跳过现有会话并重新登录。. Default is `false`
+   * @param {boolean} [shouldForceLogin=false] 是否跳过现有会话并重新登录。. Default is `false`
    * @returns {Promise<object>} 包含 signin 字段的接口响应。
    */
-  async function signinStatus(forceLogin = false) {
+  async function signinStatus(shouldForceLogin = false) {
     let result;
-    if (!forceLogin) {
+    if (!shouldForceLogin) {
       try {
         result = await profile("signinStatus");
         if (result.code === 1) return result;
@@ -1132,30 +1101,38 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 共享进行中的签到状态流程；强制登录请求不复用普通状态请求。
    *
-   * @param {boolean} [forceLogin=false] 是否跳过现有会话并重新登录。. Default is `false`
+   * @param {boolean} [shouldForceLogin=false] 是否跳过现有会话并重新登录。. Default is `false`
    * @returns {Promise<object>} 包含 signin 字段的接口响应。
    */
-  function sharedSigninStatus(forceLogin = false) {
-    if (signinStatusPromise && (!forceLogin || signinStatusForce)) {
+  function sharedSigninStatus(shouldForceLogin = false) {
+    if (signinStatusPromise && (!shouldForceLogin || isSigninStatusLoginForced)) {
       return signinStatusPromise;
     }
     const startedAt = serverNow();
-    const promise = signinStatus(forceLogin);
+    const promise = signinStatus(shouldForceLogin);
     const shared = promise.finally(() => {
       // 较早请求收尾时不能清空后来替代它的共享请求。
       if (signinStatusPromise === shared) {
         signinStatusPromise = null;
-        signinStatusForce = false;
+        isSigninStatusLoginForced = false;
       }
     }) as SharedStatusPromise;
     // 共享调用方必须使用最初请求的时间，不能用各自 await 前的时间覆盖它。
     shared.startedAt = startedAt;
     signinStatusPromise = shared;
-    signinStatusForce = forceLogin;
+    isSigninStatusLoginForced = shouldForceLogin;
     return shared;
   }
 
   // Geetest 加载和人工验证。
+  let captcha = null;
+  let captchaGeneration = 0;
+  let captchaLoadPromise = null;
+  let isCaptchaOpening = false;
+  let isSigning = false;
+  let signinSuccessSerial = 0;
+  let lastSigninSuccessAt = 0;
+
   /**
    * 判断当前页面是否已有可见的 Geetest 弹窗。
    *
@@ -1197,8 +1174,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    */
   function loadCaptcha() {
     if (geetestInit()) return Promise.resolve();
-    if (captchaLoading) return captchaLoading;
-    captchaLoading = new Promise<void>((resolve, reject) => {
+    if (captchaLoadPromise) return captchaLoadPromise;
+    captchaLoadPromise = new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
       script.src = "https://static.geetest.com/v4/gt4.js";
       script.onload = () =>
@@ -1212,9 +1189,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       script.onerror = () => reject(new Error(t("captchaLoadFailed")));
       (document.head || document.documentElement).appendChild(script);
     }).finally(() => {
-      captchaLoading = null;
+      captchaLoadPromise = null;
     });
-    return captchaLoading;
+    return captchaLoadPromise;
   }
 
   /**
@@ -1223,15 +1200,15 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {Promise<void>} 验证窗口处理完成。
    */
   async function openCaptcha() {
-    if (signing || captchaOpening || hasVisibleCaptcha()) return;
+    if (isSigning || isCaptchaOpening || hasVisibleCaptcha()) return;
     const generation = captchaGeneration;
-    const wasRush = rushCaptchaGeneration !== null;
-    captchaOpening = true;
+    const isRushCaptcha = rushCaptchaGeneration !== null;
+    isCaptchaOpening = true;
     try {
       await loadCaptcha();
       if (generation !== captchaGeneration) return;
       // 加载期间可能已关闭或重排 rush；旧流程不能在等待结束后再显示验证码。
-      if (rushCaptchaGeneration !== null && (rushCaptchaGeneration !== rushFlowGeneration || !rushCaptchaPending))
+      if (rushCaptchaGeneration !== null && (rushCaptchaGeneration !== rushFlowGeneration || !isRushCaptchaPending))
         return;
       if (!captcha) {
         const init = geetestInit();
@@ -1256,7 +1233,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         captcha = instance;
       }
       // 初始化回调本身也可能跨过取消边界，再次确认验证码仍归当前 rush。
-      if (rushCaptchaGeneration !== null && (rushCaptchaGeneration !== rushFlowGeneration || !rushCaptchaPending))
+      if (rushCaptchaGeneration !== null && (rushCaptchaGeneration !== rushFlowGeneration || !isRushCaptchaPending))
         return;
       captcha.showCaptcha();
     } catch (error) {
@@ -1265,9 +1242,10 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       if (!hasVisibleCaptcha()) notify(error.message || t("captchaLoadFailed"));
     } finally {
       const shouldReopen =
-        generation !== captchaGeneration && (rushCaptchaPending || (!wasRush && rushPreparing === null));
-      captchaOpening = false;
-      if (shouldReopen) openCaptchaWindow(rushCaptchaPending, rushCaptchaGeneration);
+        generation !== captchaGeneration &&
+        (isRushCaptchaPending || (!isRushCaptcha && rushPreparationPromise === null));
+      isCaptchaOpening = false;
+      if (shouldReopen) openCaptchaWindow(isRushCaptchaPending, rushCaptchaGeneration);
     }
   }
 
@@ -1306,8 +1284,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {Promise<void>} 签到请求完成。
    */
   async function sign(validation) {
-    if (signing || !validation) return;
-    signing = true;
+    if (isSigning || !validation) return;
+    isSigning = true;
     const submittedAt = serverNow();
     try {
       const result = await submitSignin(validation);
@@ -1317,13 +1295,30 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       notify(error.message || t("signinFailed"));
       captcha?.reset?.();
     } finally {
-      signing = false;
+      isSigning = false;
       // 普通提交占用验证码期间 rush 可能已完成准备；释放占用后补开当前验证码。
-      if (rushCaptchaPending) {
+      if (isRushCaptchaPending) {
         openCaptchaWindow(true, rushCaptchaGeneration);
       }
     }
   }
+
+  // 零点抢签到排程与提交流程。
+  let rushTimer = null;
+  let rushSubmitTimer = null;
+  // 用对象身份隔离并发回包，旧轮次不能影响新轮次的重试定时器。
+  let rushSubmitState = null;
+  let isRushCaptchaPending = false;
+  // 验证码回调属于哪个 rush 流程；取消后保留旧值，使迟到回调被丢弃而非普通提交。
+  let rushCaptchaGeneration = null;
+  let rushSubmitAt = 0;
+  let rushTargetMidnight = 0;
+  let rushPreparationPromise = null;
+  let rushPreparingGeneration = 0;
+  let rushPreparingTargetMidnight = 0;
+  let rushScheduleGeneration = 0; // 异步校准完成后只接受最新调度代号。
+  // 仅在关闭或手动重排时变更；次日排程不能误停当日仍在返回的重试请求。
+  let rushFlowGeneration = 0;
 
   /**
    * 返回按服务端时钟校准后的当前时间戳。
@@ -1364,15 +1359,15 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function clearRushFlow() {
-    const hadRushSubmission = rushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null;
+    const hadRushSubmission = isRushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null;
     if (rushSubmitTimer !== null) clearTimeout(rushSubmitTimer);
     if (rushSubmitState) rushSubmitState.finished = true;
     rushSubmitTimer = null;
     rushSubmitState = null;
-    rushCaptchaPending = false;
+    isRushCaptchaPending = false;
     rushSubmitAt = 0;
     rushTargetMidnight = 0;
-    rushPreparing = null;
+    rushPreparationPromise = null;
     rushPreparingGeneration = 0;
     rushPreparingTargetMidnight = 0;
     if (hadRushSubmission) {
@@ -1535,15 +1530,17 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       !rushModeEnabled() ||
       (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage()) ||
       (rushTargetMidnight === targetMidnight &&
-        (rushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null)) ||
-      (rushPreparing && rushPreparingGeneration === flowGeneration && rushPreparingTargetMidnight === targetMidnight)
+        (isRushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null)) ||
+      (rushPreparationPromise &&
+        rushPreparingGeneration === flowGeneration &&
+        rushPreparingTargetMidnight === targetMidnight)
     ) {
       return;
     }
     if (
       rushTargetMidnight !== 0 &&
       rushTargetMidnight !== targetMidnight &&
-      (rushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null)
+      (isRushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null)
     ) {
       // 新日期不能复用上一日的验证码或重试；旧回调由清理后的身份守卫隔离。
       clearRushFlow();
@@ -1598,7 +1595,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           return;
         }
         rushCaptchaGeneration = flowGeneration;
-        rushCaptchaPending = true;
+        isRushCaptchaPending = true;
         notify(t("rushCaptchaOpened"));
         openCaptchaWindow(true, flowGeneration);
       } catch (error) {
@@ -1617,16 +1614,16 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       }
     })().finally(() => {
       // 旧 Promise 收尾时不能清空新一轮的准备状态。
-      if (rushPreparing === preparing) {
-        rushPreparing = null;
+      if (rushPreparationPromise === preparing) {
+        rushPreparationPromise = null;
         rushPreparingGeneration = 0;
         rushPreparingTargetMidnight = 0;
       }
     });
-    rushPreparing = preparing;
+    rushPreparationPromise = preparing;
     rushPreparingGeneration = flowGeneration;
     rushPreparingTargetMidnight = targetMidnight;
-    return rushPreparing;
+    return rushPreparationPromise;
   }
 
   /**
@@ -1698,7 +1695,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     // 已取消、已换日或已排队的旧验证码回调不能降级为普通签到。
     if (
       flowGeneration !== rushFlowGeneration ||
-      !rushCaptchaPending ||
+      !isRushCaptchaPending ||
       rushSubmitState !== null ||
       rushSubmitTimer !== null ||
       !rushModeEnabled() ||
@@ -1708,7 +1705,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     const submitAt = rushSubmitAt;
     const targetMidnight = rushTargetMidnight;
     if (!submitAt || !targetMidnight) return;
-    rushCaptchaPending = false;
+    isRushCaptchaPending = false;
     if (serverNow() >= submitAt) {
       rushSubmitAt = 0;
       startRushSubmit(validation, flowGeneration, targetMidnight);
@@ -1733,6 +1730,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   // 轮询、通知和验证码窗口调度。
+  let checkPromise = null;
+
   /**
    * 后台轮询每个自然日最多通知一次未签到状态；手动检查每次通知。
    *
@@ -1760,8 +1759,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     if (!isManual && isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage()) {
       return Promise.resolve();
     }
-    if (checking) {
-      return checking.then((state) => {
+    if (checkPromise) {
+      return checkPromise.then((state) => {
         if (shouldForceCaptcha && state?.error) {
           notify(state.error.message || t("checkFailed"));
         } else if (shouldForceCaptcha && state?.result && !state.stale) {
@@ -1804,9 +1803,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     })();
     const settled = run.finally(() => {
       // 旧检查的 finally 不能清空新一轮检查引用。
-      if (checking === settled) checking = null;
+      if (checkPromise === settled) checkPromise = null;
     });
-    checking = settled;
+    checkPromise = settled;
     return settled;
   }
 
@@ -1837,17 +1836,17 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 在当前页面最多打开一个验证码窗口。
    *
-   * @param {boolean} [rush=false] 是否由 rush 准备流程调用。. Default is `false`
+   * @param {boolean} [isRush=false] 是否由 rush 准备流程调用。. Default is `false`
    * @param {number | null} [flowGeneration=null] Rush 流程代号。. Default is `null`
    * @returns {void}
    */
-  function openCaptchaWindow(rush = false, flowGeneration = null) {
+  function openCaptchaWindow(isRush = false, flowGeneration = null) {
     // rush 准备期间普通流程让位，避免两个异步回调争抢同一个验证码实例。
-    const canOpen = rush
-      ? flowGeneration === rushFlowGeneration && rushCaptchaGeneration === flowGeneration && rushCaptchaPending
-      : rushPreparing === null && !rushCaptchaPending;
+    const canOpen = isRush
+      ? flowGeneration === rushFlowGeneration && rushCaptchaGeneration === flowGeneration && isRushCaptchaPending
+      : rushPreparationPromise === null && !isRushCaptchaPending;
     if (rushSubmitTimer === null && rushSubmitState === null && canOpen && !hasVisibleCaptcha()) {
-      if (!rush) rushCaptchaGeneration = null;
+      if (!isRush) rushCaptchaGeneration = null;
       openCaptcha();
     }
   }

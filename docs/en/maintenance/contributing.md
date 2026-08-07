@@ -13,6 +13,7 @@ This document is for repository maintainers and code contributors. If you only w
 
 - `docs/`: the VitePress application, including documentation and online tools
 - `packages/compat-finder/`: the compatibility troubleshooting library and CLI published to npm
+- `packages/blogsclub-signin-helper/`: a BlogsClub check-in assistant userscript for [Tampermonkey](https://www.tampermonkey.net), [Violentmonkey](https://violentmonkey.github.io), [Greasemonkey](https://www.greasespot.net), [ScriptCat](https://docs.scriptcat.org), and similar engines
 - `packages/graphwar-killer-wasm/`: the private AssemblyScript/WASM kernel used by Graphwar Killer
 - `packages/graphwar-agent/`: a Java agent that exposes a local HTTP API for the official Graphwar client
 
@@ -25,6 +26,9 @@ docs
 
 graphwar-agent
 └── independent; sync:public copies its build artifacts into docs/public/
+
+blogsclub-signin-helper
+└── independent; builds an installable userscript
 ```
 
 See the README in each package directory for its behavior, usage, and constraints.
@@ -63,6 +67,7 @@ All three commands first build the required workspace dependencies; development 
 Run package scripts with `pnpm --filter PACKAGE SCRIPT`, for example `pnpm --filter compat-finder test`. Available scripts:
 
 - `compat-finder`: `cli`, `build`, `watch`, `test`
+- `blogsclub-signin-helper`: `build`, `dev`, `watch`, `preview`
 - `graphwar-killer-wasm`: `build`, `watch`, `test`
 - `graphwar-agent`: `build`, `openapi:test`, `test`
 - Build the agent and copy it into the docs site: `pnpm --filter graphwar-agent build && pnpm --filter graphwar-agent sync:public`

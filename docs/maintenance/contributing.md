@@ -13,6 +13,7 @@ outline: deep
 
 - `docs/`：VitePress 网站应用，包含文档和在线工具。
 - `packages/compat-finder/`：发布到 npm 的兼容性排查库和命令行工具。
+- `packages/blogsclub-signin-helper/`：通过 GitHub Release 发布 `.user.js` 资产，并同步到 Greasy Fork 的 BlogsClub 签到助手。
 - `packages/graphwar-killer-wasm/`：供 Graphwar Killer 使用的私有 AssemblyScript / WASM 内核。
 - `packages/graphwar-agent/`：为 Graphwar 官方客户端提供本机 HTTP API 的 Java Agent。
 
@@ -25,6 +26,9 @@ docs
 
 graphwar-agent
 └── 独立；构建产物通过 sync:public 同步到 docs/public/
+
+blogsclub-signin-helper
+└── 独立；构建产物为可安装的用户脚本
 ```
 
 各包的功能、用法和约束见对应目录内的 README。
@@ -63,6 +67,7 @@ pnpm install
 使用 `pnpm --filter PACKAGE SCRIPT` 运行包内脚本，例如 `pnpm --filter compat-finder test`。可用脚本：
 
 - `compat-finder`：`cli`、`build`、`watch`、`test`
+- `blogsclub-signin-helper`：`build`、`dev`、`watch`、`preview`
 - `graphwar-killer-wasm`：`build`、`watch`、`test`
 - `graphwar-agent`：`build`、`openapi:test`、`test`
 - 构建 Agent 并同步到文档站：`pnpm --filter graphwar-agent build && pnpm --filter graphwar-agent sync:public`
@@ -78,8 +83,8 @@ pnpm install
 ### Changeset
 
 - 生成发布变更记录：`pnpm changeset`
-- 当改动会影响任一已发布工作区包时，需要补 changeset；仅修改文档站、公开内容页或不影响已发布包行为的内部整理时不需要补
-- 运行后按提示选择受影响的已发布包，以及对应的语义化版本级别：`patch`、`minor` 或 `major`
+- 当改动会影响任一受发布流程管理的工作区包时，需要补 changeset；仅修改文档站、公开内容页或不影响发布产物的内部整理时不需要补
+- 运行后按提示选择受影响的包，以及对应的语义化版本级别：`patch`、`minor` 或 `major`
 - 将生成的 `.changeset/*.md` 与代码改动一起提交到 PR
 
 ## CI 检查

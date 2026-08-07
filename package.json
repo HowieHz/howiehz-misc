@@ -32,7 +32,7 @@
     "lint:md": "markdownlint --fix '**/*.md' --ignore-path .gitignore",
     "lint:oxlint+eslint": "oxlint --type-aware --report-unused-disable-directives --fix && eslint --fix",
     "lint:style": "stylelint --fix '**/*.{css,vue}' 'docs/.vitepress/**/*.{css,vue}' --ignore-path .gitignore",
-    "lint:type-check": "vue-tsc -b packages/compat-finder/tsconfig.json && vue-tsc -b docs/tsconfig.json",
+    "lint:type-check": "vue-tsc -b packages/compat-finder/tsconfig.json && vue-tsc -b docs/tsconfig.json && vue-tsc -b packages/blogsclub-signin-helper/tsconfig.json",
     "migrate:oxlint": "pnpm dlx @oxlint/migrate --type-aware --with-nursery && pnpm oxfmt -- --write .oxlintrc.json",
     "preinstall": "npx only-allow pnpm",
     "test": "node scripts/test-all.js"

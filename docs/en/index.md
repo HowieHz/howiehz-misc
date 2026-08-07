@@ -39,4 +39,9 @@ features:
     details: A library and CLI for narrowing down compatibility issues across many targets.
     link: /en/compat-finder/
     linkText: View docs
+  - icon: ✅
+    title: BlogsClub Check-in Helper
+    details: A userscript for checking BlogsClub daily check-ins and helping complete them.
+    link: /en/blogsclub-signin-helper/
+    linkText: View docs
 ---

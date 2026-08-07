@@ -6,6 +6,9 @@
       "path": "./packages/compat-finder/tsconfig.json"
     },
     {
+      "path": "./packages/blogsclub-signin-helper/tsconfig.json"
+    },
+    {
       "path": "./docs/tsconfig.json"
     }
   ]

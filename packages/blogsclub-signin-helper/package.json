@@ -1,0 +1,21 @@
+{
+  "name": "blogsclub-signin-helper",
+  "version": "0.2.0",
+  "private": true,
+  "description": "BlogsClub check-in helper userscript.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite dev",
+    "preview": "vite build && vite preview",
+    "watch": "vite build --watch"
+  },
+  "devDependencies": {
+    "vite": "^8.0.11",
+    "vite-plugin-monkey": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "releaseAsset": "dist/blogsclub-signin-helper.user.js"
+}

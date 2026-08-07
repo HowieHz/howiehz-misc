@@ -1,5 +1,11 @@
 # blogsclub-signin-helper
 
+## 1.0.0
+
+### Major Changes
+
+- [`d54e7cc`](https://github.com/HowieHz/howiehz-misc/commit/d54e7ccd1c16f8b7d596b86d54112ff49f908925) Thanks [@HowieHz](https://github.com/HowieHz)! - Change the default background check interval to 1000 milliseconds.
+
 ## 0.3.2
 
 ### Patch Changes

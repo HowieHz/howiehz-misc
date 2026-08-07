@@ -37,12 +37,13 @@ englishCompactTitles.push(englishGraphwarKillerLocale.ui.point.coordinateTitle("
 describe("Chinese Graphwar Killer locale", () => {
   it("describes the non-persistent experimental WASM runtime states", () => {
     expect(graphwarKillerLocale.ui.settings.runtime).toEqual({
-      degraded: "⚠ 已降级",
+      degraded: "已降级",
       heading: "运行设置",
       loading: "正在加载…",
       ready: "WASM 已就绪",
       wasmAcceleration: "WASM 加速（实验性）",
-      wasmAccelerationTitle: "开启后优先使用 WASM 执行识图、公式、轨迹和寻路；不可用时自动回退 TypeScript，刷新后重置",
+      wasmAccelerationTitle:
+        "开启后优先使用 WASM 执行截图识别、公式计算、轨迹、路线查询、智能寻路、一键清图和邪道模式；不可用时自动回退 TypeScript，刷新后重置。目前不支持 SIMD 指令集优化",
     });
   });
 
@@ -150,13 +151,13 @@ describe("Chinese Graphwar Killer locale", () => {
 describe("English Graphwar Killer locale", () => {
   it("describes the non-persistent experimental WASM runtime states", () => {
     expect(englishGraphwarKillerLocale.ui.settings.runtime).toEqual({
-      degraded: "⚠ Degraded",
+      degraded: "Degraded",
       heading: "Runtime",
       loading: "Loading…",
       ready: "WASM ready",
       wasmAcceleration: "WASM acceleration (experimental)",
       wasmAccelerationTitle:
-        "Prefer WASM for recognition, formulas, trajectories, and pathfinding; fall back to TypeScript when unavailable. Resets on refresh",
+        "Prefer WASM for screenshot recognition, formula calculation, trajectories, route queries, smart pathfinding, One-Click Clear, and Step-glitch; fall back to TypeScript when unavailable and reset on refresh. SIMD instruction-set optimizations are not currently supported",
     });
   });
 

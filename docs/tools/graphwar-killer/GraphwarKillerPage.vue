@@ -2176,9 +2176,13 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     isEnabled: isWasmAccelerationEnabled.value,
     state: graphwarWasmRuntimeState.value.type,
     statusTitle:
-      graphwarWasmRuntimeState.value.type === "degraded"
-        ? `${locale.ui.settings.runtime.degraded}: ${graphwarWasmRuntimeState.value.reason}`
-        : locale.ui.settings.runtime.wasmAccelerationTitle,
+      graphwarWasmRuntimeState.value.type === "loading"
+        ? locale.ui.settings.runtime.loading
+        : graphwarWasmRuntimeState.value.type === "ready"
+          ? locale.ui.settings.runtime.ready
+          : graphwarWasmRuntimeState.value.type === "degraded"
+            ? `${locale.ui.settings.runtime.degraded}: ${graphwarWasmRuntimeState.value.reason}`
+            : undefined,
   },
   simulator: {
     shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY.value,

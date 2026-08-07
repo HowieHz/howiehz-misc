@@ -60,15 +60,39 @@ describe("AdvancedPanel", () => {
     expect(wrapper.emitted("toggleWasmAcceleration")).toHaveLength(1);
 
     await wrapper.setProps({
-      panel: { ...panel, runtime: { canToggle: true, isEnabled: true, state: "loading" } },
+      panel: {
+        ...panel,
+        runtime: {
+          canToggle: true,
+          isEnabled: true,
+          state: "loading",
+          statusTitle: graphwarKillerLocale.ui.settings.runtime.loading,
+        },
+      },
     });
     expect(wasmToggle.attributes("aria-checked")).toBe("true");
-    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+    expect(wrapper.get('[role="img"]').attributes()).toMatchObject({
+      "aria-label": graphwarKillerLocale.ui.settings.runtime.loading,
+      title: graphwarKillerLocale.ui.settings.runtime.loading,
+    });
+    expect(wrapper.get('[role="img"]').text()).toBe("🟡");
 
     await wrapper.setProps({
-      panel: { ...panel, runtime: { canToggle: true, isEnabled: true, state: "ready" } },
+      panel: {
+        ...panel,
+        runtime: {
+          canToggle: true,
+          isEnabled: true,
+          state: "ready",
+          statusTitle: graphwarKillerLocale.ui.settings.runtime.ready,
+        },
+      },
     });
-    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.ready);
+    expect(wrapper.get('[role="img"]').attributes()).toMatchObject({
+      "aria-label": graphwarKillerLocale.ui.settings.runtime.ready,
+      title: graphwarKillerLocale.ui.settings.runtime.ready,
+    });
+    expect(wrapper.get('[role="img"]').text()).toBe("🟢");
 
     const degradedTitle = `${graphwarKillerLocale.ui.settings.runtime.degraded}: trap: test fault`;
     await wrapper.setProps({
@@ -77,8 +101,12 @@ describe("AdvancedPanel", () => {
         runtime: { canToggle: true, isEnabled: true, state: "degraded", statusTitle: degradedTitle },
       },
     });
-    expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.degraded);
-    expect(wasmToggle.attributes("title")).toBe(degradedTitle);
+    expect(wrapper.get('[role="img"]').attributes()).toMatchObject({
+      "aria-label": degradedTitle,
+      title: degradedTitle,
+    });
+    expect(wrapper.get('[role="img"]').text()).toBe("🔴");
+    expect(wasmToggle.attributes("title")).toBe(graphwarKillerLocale.ui.settings.runtime.wasmAccelerationTitle);
 
     await wrapper.setProps({ panel });
     const routeToleranceInputs = wrapper
@@ -153,9 +181,9 @@ describe("AdvancedPanel", () => {
 
     await wrapper.setProps({ panel: { ...panel, isSolverSettingsVisible: false } });
     expect(wrapper.findAll("h3").map((heading) => heading.text())).toEqual([
+      graphwarKillerLocale.ui.settings.runtime.heading,
       graphwarKillerLocale.ui.settings.bounds.heading,
       graphwarKillerLocale.ui.settings.simulator,
-      graphwarKillerLocale.ui.settings.runtime.heading,
     ]);
     expect(
       [

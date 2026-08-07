@@ -937,10 +937,10 @@ export const graphwarKillerLocale = {
         heading: "运行设置",
         wasmAcceleration: "WASM 加速（实验性）",
         wasmAccelerationTitle:
-          "开启后优先使用 WASM 执行识图、公式、轨迹和寻路；不可用时自动回退 TypeScript，刷新后重置",
+          "开启后优先使用 WASM 执行截图识别、公式计算、轨迹、路线查询、智能寻路、一键清图和邪道模式；不可用时自动回退 TypeScript，刷新后重置。目前不支持 SIMD 指令集优化",
         loading: "正在加载…",
         ready: "WASM 已就绪",
-        degraded: "⚠ 已降级",
+        degraded: "已降级",
       },
       recognition: {
         candidateTopRatio: "候选保留比例",

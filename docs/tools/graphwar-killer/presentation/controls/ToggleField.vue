@@ -12,6 +12,8 @@ const props = defineProps<{
   checked: boolean;
   /** User-facing switch label. */
   label: string;
+  /** Optional status marker rendered immediately before the switch label. */
+  labelPrefix?: { text: string; title: string };
   /** Optional supporting description shown before a state reason. */
   description?: string;
   /** Capability reason; busy reasons move into the title while persistent reasons remain visible. */
@@ -55,7 +57,16 @@ const controlTitle = computed(() =>
       type="button"
       @click="emit('toggle')"
     >
-      <span class="graphwar-killer-toggle-field__text">{{ label }}</span>
+      <span class="graphwar-killer-toggle-field__text">
+        <span
+          v-if="labelPrefix"
+          :aria-label="labelPrefix.title"
+          class="graphwar-killer-toggle-field__label-prefix"
+          role="img"
+          :title="labelPrefix.title"
+        >{{ labelPrefix.text }}</span>
+        <span>{{ label }}</span>
+      </span>
       <span
         class="graphwar-killer-toggle-field__track"
         aria-hidden="true"
@@ -122,11 +133,18 @@ const controlTitle = computed(() =>
 }
 
 .graphwar-killer-toggle-field__text {
+  align-items: center;
+  display: flex;
   font-size: 0.9rem;
   font-weight: 700;
+  gap: 4px;
   line-height: 1.3;
   overflow-wrap: anywhere;
   transition: color 0.2s ease;
+}
+
+.graphwar-killer-toggle-field__label-prefix {
+  flex: none;
 }
 
 .graphwar-killer-toggle-field__track {

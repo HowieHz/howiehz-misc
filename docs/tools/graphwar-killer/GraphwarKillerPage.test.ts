@@ -1475,7 +1475,11 @@ describe("Graphwar Killer page settings", () => {
       await toggle.trigger("click");
       await nextTick();
       expect(toggle.attributes("aria-checked")).toBe("true");
-      expect(wrapper.text()).toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+      expect(wrapper.get('[role="img"]').attributes()).toMatchObject({
+        "aria-label": graphwarKillerLocale.ui.settings.runtime.loading,
+        title: graphwarKillerLocale.ui.settings.runtime.loading,
+      });
+      expect(wrapper.get('[role="img"]').text()).toBe("🟡");
       expect(toggle.attributes("disabled")).toBeUndefined();
       expect(clearResultCache).toHaveBeenCalledOnce();
       expect(clearWorkerCache).toHaveBeenCalledOnce();
@@ -1487,7 +1491,7 @@ describe("Graphwar Killer page settings", () => {
       await toggle.trigger("click");
       await nextTick();
       expect(toggle.attributes("aria-checked")).toBe("false");
-      expect(wrapper.text()).not.toContain(graphwarKillerLocale.ui.settings.runtime.loading);
+      expect(wrapper.find('[role="img"]').exists()).toBe(false);
       expect(toggle.attributes("disabled")).toBeDefined();
       expect(clearResultCache).toHaveBeenCalledTimes(2);
       expect(clearWorkerCache).toHaveBeenCalledTimes(2);
@@ -1910,9 +1914,9 @@ describe("Graphwar Killer page settings", () => {
         .findAll("h3")
         .map((heading) => heading.text()),
     ).toEqual([
+      graphwarKillerLocale.ui.settings.runtime.heading,
       graphwarKillerLocale.ui.settings.bounds.heading,
       graphwarKillerLocale.ui.settings.simulator,
-      graphwarKillerLocale.ui.settings.runtime.heading,
     ]);
     wrapper.unmount();
   });

@@ -8,7 +8,7 @@ export {
   resolveAbsSecondDerivativePulse,
   writeAbsSecondDerivativeLandingQuality,
   writeAbsSecondDerivativeTerminalProbeBounds,
-} from "../../assembly/formula-refinement-abs";
+} from "../../assembly/formula/refinement/abs";
 export {
   getArenaAllocatorCallCount,
   getArenaBase,
@@ -18,4 +18,4 @@ export {
   markArena,
   reserveArena,
   resetArena,
-} from "../../assembly/memory";
+} from "../../assembly/core/memory";

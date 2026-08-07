@@ -1,4 +1,4 @@
-import { floorFormulaDecimal, quantizeFormulaOffsetCenter } from "./decimal";
+import { floorFormulaDecimal, quantizeFormulaOffsetCenter } from "../../core/decimal";
 import {
   FORMULA_EQUATION_DDY,
   FORMULA_EQUATION_DY,
@@ -13,14 +13,14 @@ import {
   STEP_GLITCH_RECORD_PULSE_END_X_OFFSET,
   STEP_GLITCH_RECORD_START_X_OFFSET,
   STEP_GLITCH_RECORD_TARGET_Y_OFFSET,
-} from "./formula-layout";
+} from "../layout";
 import {
   getGraphwarFuncMinXStepDistance,
   getGraphwarGameSoldierRadius,
   getGraphwarPlaneHeight,
   getGraphwarPlaneLength,
   getGraphwarStepSize,
-} from "./game-constants";
+} from "../../core/game-constants";
 
 const MAX_FORMULA_DECIMAL_PLACES: i32 = 15;
 

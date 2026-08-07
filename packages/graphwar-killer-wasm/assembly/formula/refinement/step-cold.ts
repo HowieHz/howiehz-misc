@@ -1,4 +1,4 @@
-import { quantizeFormulaOffsetCenter } from "./decimal";
+import { quantizeFormulaOffsetCenter } from "../../core/decimal";
 import {
   FORMULA_EQUATION_DDY,
   FORMULA_EQUATION_DY,
@@ -41,7 +41,7 @@ import {
   STEP_GLITCH_FIXED_WINDOW_PRESENCE_OFFSET,
   STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET,
   STEP_MATERIAL_BYTE_LENGTH,
-} from "./formula-layout";
+} from "../layout";
 import {
   calculateStepRefinedFormulaCenterX,
   createStepFirstOrderGlitchSegment,
@@ -59,17 +59,17 @@ import {
   STEP_GLITCH_RK4_CONTRIBUTION_FACTOR_COUNT,
   STEP_GLITCH_SECOND_ORDER_PROFILE_COUNT,
   stepGlitchObstacleEnvelopeHitsObstacle,
-} from "./formula-refinement-step";
-import { runStepLaunchBatch } from "./formula-step";
+} from "./step";
+import { runStepLaunchBatch } from "../step";
 import {
   createStepFormulaResolution,
   getStepFormulaResolutionSteepness,
   resolveStepFormulaTransition,
   STEP_TRANSITION_BYTE_LENGTH,
   STEP_TRANSITION_EFFECTIVE_DELTA_Y_OFFSET,
-} from "./formula-step-resolution";
-import { getGraphwarGameSoldierRadius, getGraphwarPlaneHeight, getGraphwarStepSize } from "./game-constants";
-import { markArena, reserveArena, resetArena } from "./memory";
+} from "../step-resolution";
+import { getGraphwarGameSoldierRadius, getGraphwarPlaneHeight, getGraphwarStepSize } from "../../core/game-constants";
+import { markArena, reserveArena, resetArena } from "../../core/memory";
 import {
   initializeTrajectoryScalarState,
   recordTrajectoryDebugReplayStart,
@@ -97,7 +97,7 @@ import {
   TRAJECTORY_SCALAR_STATE_PREVIOUS_Y_OFFSET,
   TRAJECTORY_SCALAR_STATE_SAMPLE_INDEX_OFFSET,
   TRAJECTORY_SCALAR_STOP_REASON_STOP_X,
-} from "./trajectory-scalar";
+} from "../../trajectory/scalar";
 
 export const STEP_COLD_REFINEMENT_INVALID: i32 = 0;
 export const STEP_COLD_REFINEMENT_SUCCESS: i32 = 1;

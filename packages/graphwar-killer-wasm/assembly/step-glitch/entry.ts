@@ -1,11 +1,11 @@
-import { floorFormulaDecimal, roundFormulaDecimal } from "./decimal";
-import * as FormulaLayout from "./formula-layout";
-import { runPrepareLaunch } from "./formula-launch";
-import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants";
-import { commitArena, markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
-import * as Layout from "./step-glitch-layout";
-import { runTrajectoryRequest, runTrajectoryRequestWithMetadata } from "./trajectory";
-import * as TrajectoryLayout from "./trajectory-layout";
+import { floorFormulaDecimal, roundFormulaDecimal } from "../core/decimal";
+import * as FormulaLayout from "../formula/layout";
+import { runPrepareLaunch } from "../formula/launch";
+import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "../core/game-constants";
+import { commitArena, markArena, requireArenaRange, reserveArena, resetArena } from "../core/memory";
+import * as Layout from "./layout";
+import { runTrajectoryRequest, runTrajectoryRequestWithMetadata } from "../trajectory/entry";
+import * as TrajectoryLayout from "../trajectory/layout";
 
 @inline
 function trap(): void {

@@ -1,5 +1,5 @@
-import { floorFormulaDecimal, quantizeFormulaCoefficient, roundFormulaDecimal } from "./decimal";
-import { runCurveBatch } from "./formula-curves";
+import { floorFormulaDecimal, quantizeFormulaCoefficient, roundFormulaDecimal } from "../../core/decimal";
+import { runCurveBatch } from "../curves";
 import {
   FORMULA_EQUATION_DDY,
   FORMULA_INPUT_ABS_PULSE_CENTER_X_POINTER_OFFSET,
@@ -21,14 +21,14 @@ import {
   FORMULA_LAUNCH_INVALID_REASON_NONE,
   FORMULA_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
-} from "./formula-layout";
+} from "../layout";
 import {
   getGraphwarFuncMinXStepDistance,
   getGraphwarGameSoldierRadius,
   getGraphwarPlaneHeight,
   getGraphwarPlaneLength,
-} from "./game-constants";
-import { markArena, reserveArena, resetArena } from "./memory";
+} from "../../core/game-constants";
+import { markArena, reserveArena, resetArena } from "../../core/memory";
 import {
   initializeTrajectoryScalarState,
   recordTrajectoryDebugScalarReplay,
@@ -41,7 +41,7 @@ import {
   TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET,
   TRAJECTORY_SCALAR_STATE_DY_OFFSET,
   TRAJECTORY_SCALAR_STOP_REASON_STOP_X,
-} from "./trajectory-scalar";
+} from "../../trajectory/scalar";
 
 /** Raw target-state record used by ABS second-derivative refinement. */
 export const ABS_SECOND_DERIVATIVE_TARGET_STATE_X_OFFSET: u32 = 0;

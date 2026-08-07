@@ -10,7 +10,7 @@ import {
   DECIMAL_RESULT_LIMB_POINTER_OFFSET,
   DECIMAL_RESULT_ROUNDED_VALUE_OFFSET,
   DECIMAL_RESULT_SIGN_OFFSET,
-} from "./formula-layout";
+} from "../formula/layout";
 import {
   addSignedMagnitudeToState,
   signedLimbMagnitudeToF64,

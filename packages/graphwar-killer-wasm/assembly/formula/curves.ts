@@ -1,5 +1,5 @@
-import { floorFormulaDecimal, quantizeFormulaCoefficient, roundFormulaDecimal } from "./decimal";
-import { getGraphwarFuncMinXStepDistance, requireGraphwarGameConstantsInitialized } from "./game-constants";
+import { floorFormulaDecimal, quantizeFormulaCoefficient, roundFormulaDecimal } from "../core/decimal";
+import { getGraphwarFuncMinXStepDistance, requireGraphwarGameConstantsInitialized } from "../core/game-constants";
 import {
   ABS_CONNECTOR_BYTE_LENGTH,
   ABS_CONNECTOR_COEFFICIENT_OFFSET,
@@ -62,8 +62,8 @@ import {
   SOFT_SECOND_POWER_COEFFICIENT_OFFSET,
   SOFT_START_X_OFFSET,
   SOFT_WIDTH_OFFSET,
-} from "./formula-layout";
-import { markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
+} from "./layout";
+import { markArena, requireArenaRange, reserveArena, resetArena } from "../core/memory";
 
 const SOFT_POWER: i32 = 16;
 const SIGN_ROLE_START_X: u32 = 1;

@@ -240,9 +240,9 @@ async function compileLimbHarness() {
   await writeFile(
     sourcePath,
     [
-      'export { createSignedLimbState, resetSignedLimbState, signedLimbToF64 } from "../assembly/limb-integer";',
-      'export { addQuantizedDecimalUnits } from "../assembly/decimal";',
-      'export { initializeArena } from "../assembly/memory";',
+      'export { createSignedLimbState, resetSignedLimbState, signedLimbToF64 } from "../assembly/core/limb-integer";',
+      'export { addQuantizedDecimalUnits } from "../assembly/core/decimal";',
+      'export { initializeArena } from "../assembly/core/memory";',
     ].join("\n"),
     "utf8",
   );

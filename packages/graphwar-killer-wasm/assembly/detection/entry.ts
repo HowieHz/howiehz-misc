@@ -60,20 +60,20 @@ import {
   DETECTION_TASK_KNOWN_BOUNDS,
   DETECTION_TEMPLATE_SHARD_RESULT_BYTE_LENGTH,
   DETECTION_MATCH_BYTE_LENGTH,
-} from "./detection-layout";
+} from "./layout";
 import {
   buildDetectionObstacleSourceMask,
   filterDetectionObstacleComponents,
   getDetectionObstacleMaskLength,
-} from "./detection-obstacle";
+} from "./obstacle";
 import {
   collectDetectionCandidates,
   detectionMatchCandidateIndexOffset,
   finalizeDetectionTemplateMatches,
   scoreDetectionTemplateCandidates,
   validateDetectionTemplateTables,
-} from "./detection-template";
-import { markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
+} from "./template";
+import { markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "../core/memory";
 
 const SETTINGS_LENGTH: u32 = 4;
 const EDGE_LENGTH: u32 = 4;

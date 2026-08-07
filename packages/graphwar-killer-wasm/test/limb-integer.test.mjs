@@ -222,8 +222,8 @@ async function compileHarness() {
         "  addSignedMagnitudeToState,",
         "  compareSignedLimbMagnitudes,",
         "  createSignedLimbState,",
-        '} from "../assembly/limb-integer";',
-        'export { initializeArena, reserveArena } from "../assembly/memory";',
+        '} from "../assembly/core/limb-integer";',
+        'export { initializeArena, reserveArena } from "../assembly/core/memory";',
       ].join("\n"),
       "utf8",
     );

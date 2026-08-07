@@ -1,17 +1,17 @@
-import { roundFormulaDecimal } from "./decimal";
-import { runCurveBatch } from "./formula-curves";
-import { evaluateFormulaMaterialValue } from "./formula-evaluator";
-import { refineAbsSecondDerivativeLaunch } from "./formula-refinement-abs";
+import { roundFormulaDecimal } from "../core/decimal";
+import { runCurveBatch } from "./curves";
+import { evaluateFormulaMaterialValue } from "./evaluator";
+import { refineAbsSecondDerivativeLaunch } from "./refinement/abs";
 import {
   ABS_FIRST_ORDER_COLD_REFINEMENT_INVALID,
   ABS_FIRST_ORDER_COLD_REFINEMENT_PROTECTION_CHANGED,
   collectAbsFirstOrderSegmentStartsCold,
-} from "./formula-refinement-abs-first-order-cold";
+} from "./refinement/abs-first-order-cold";
 import {
   refineStepFormulaCold,
   STEP_COLD_REFINEMENT_INVALID,
   STEP_COLD_REFINEMENT_PROTECTION_CHANGED,
-} from "./formula-refinement-step-cold";
+} from "./refinement/step-cold";
 import {
   getGraphwarAngleError,
   getGraphwarGameSoldierRadius,
@@ -20,7 +20,7 @@ import {
   getGraphwarPlaneLength,
   getGraphwarStepSize,
   requireGraphwarGameConstantsInitialized,
-} from "./game-constants";
+} from "../core/game-constants";
 import {
   FORMULA_ALGORITHM_ABS,
   FORMULA_ALGORITHM_AKIMA,
@@ -115,21 +115,21 @@ import {
   STEP_GLITCH_FIXED_WINDOW_RESERVED_OFFSET,
   STEP_GLITCH_FIXED_WINDOW_START_X_OFFSET,
   STEP_MATERIAL_BYTE_LENGTH,
-} from "./formula-layout";
-import { runStepLaunchBatch } from "./formula-step";
+} from "./layout";
+import { runStepLaunchBatch } from "./step";
 import {
   createStepFormulaResolution,
   getStepFormulaResolutionSteepness,
   resolveStepFormulaTransition,
   STEP_TRANSITION_BYTE_LENGTH,
   STEP_TRANSITION_EFFECTIVE_DELTA_Y_OFFSET,
-} from "./formula-step-resolution";
-import { commitArena, markArena, requireArenaRange, reserveArena, resetArena } from "./memory";
+} from "./step-resolution";
+import { commitArena, markArena, requireArenaRange, reserveArena, resetArena } from "../core/memory";
 import {
   evaluateFirstOrderFormulaRk4Y,
   initializeTrajectoryScalarState,
   recordTrajectoryDebugLaunchRk4Step,
-} from "./trajectory-scalar";
+} from "../trajectory/scalar";
 
 const FORMULA_STATE_HEADER_BYTE_LENGTH: u32 = 24;
 

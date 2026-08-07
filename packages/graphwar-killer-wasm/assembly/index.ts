@@ -1,6 +1,6 @@
-export { beginDetectionTask, resumeDetectionTask, runDetectionTemplateShard } from "./detection";
-export { runFormula } from "./formula";
-export { initializeGraphwarGameConstants } from "./game-constants";
+export { beginDetectionTask, resumeDetectionTask, runDetectionTemplateShard } from "./detection/entry";
+export { runFormula } from "./formula/entry";
+export { initializeGraphwarGameConstants } from "./core/game-constants";
 export {
   getArenaAllocatorCallCount,
   getArenaBase,
@@ -13,7 +13,7 @@ export {
   reserveArena,
   resetArena,
   resetArenaAfterFault,
-} from "./memory";
+} from "./core/memory";
 export {
   assignOneClickTargets,
   beginOneClickClear,
@@ -21,5 +21,5 @@ export {
   resumeOneClickClear,
   runRouteTask,
   runSmartPathfinding,
-} from "./pathfinding";
-export { runTrajectory, runTrajectoryWithMetadata } from "./trajectory";
+} from "./pathfinding/entry";
+export { runTrajectory, runTrajectoryWithMetadata } from "./trajectory/entry";

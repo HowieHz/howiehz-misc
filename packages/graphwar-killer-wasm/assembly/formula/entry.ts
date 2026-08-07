@@ -1,7 +1,7 @@
-import { runCanonicalDecimal } from "./decimal";
+import { runCanonicalDecimal } from "../core/decimal";
 import { runExpressionBatch } from "./expression";
-import { runCurveBatch } from "./formula-curves";
-import { runPrepareLaunch } from "./formula-launch";
+import { runCurveBatch } from "./curves";
+import { runPrepareLaunch } from "./launch";
 import {
   DECIMAL_INPUT_BYTE_LENGTH,
   EXPRESSION_INPUT_BYTE_LENGTH,
@@ -12,9 +12,9 @@ import {
   FORMULA_COMMAND_NOOP,
   FORMULA_COMMAND_PREPARE_LAUNCH,
   FORMULA_INPUT_BYTE_LENGTH,
-} from "./formula-layout";
-import { runStepBatch } from "./formula-step";
-import { requireArenaInitialized } from "./memory";
+} from "./layout";
+import { runStepBatch } from "./step";
+import { requireArenaInitialized } from "../core/memory";
 
 @inline
 function trap(): void {

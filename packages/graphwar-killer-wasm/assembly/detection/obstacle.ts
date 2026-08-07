@@ -10,7 +10,7 @@ import {
   DETECTION_INPUT_SETTINGS_POINTER_OFFSET,
   DETECTION_INPUT_WIDTH_OFFSET,
   DETECTION_MATCH_BYTE_LENGTH,
-} from "./detection-layout";
+} from "./layout";
 import {
   detectionMatchMirroredOffset,
   detectionMatchXOffset,
@@ -19,9 +19,9 @@ import {
   getDetectionSoldierVisibleCenterX,
   getDetectionSoldierVisibleCenterY,
   getDetectionSoldierVisibleRadius,
-} from "./detection-template";
-import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "./game-constants";
-import { reserveArena } from "./memory";
+} from "./template";
+import { getGraphwarPlaneHeight, getGraphwarPlaneLength } from "../core/game-constants";
+import { reserveArena } from "../core/memory";
 
 @inline
 function planeWidth(): u32 {

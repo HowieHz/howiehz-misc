@@ -1,5 +1,5 @@
-import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "./game-constants";
-import { floorFormulaDecimal, serializeMagnitudeDecimal } from "./decimal";
+import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "../core/game-constants";
+import { floorFormulaDecimal, serializeMagnitudeDecimal } from "../core/decimal";
 import {
   FORMULA_EQUATION_DDY,
   FORMULA_EQUATION_DY,
@@ -11,7 +11,7 @@ import {
   FORMULA_INPUT_BOUNDS_MAX_X_OFFSET,
   FORMULA_INPUT_BOUNDS_MIN_Y_OFFSET,
   FORMULA_INPUT_BOUNDS_MAX_Y_OFFSET,
-} from "./formula-layout";
+} from "../formula/layout";
 import {
   createStepFormulaResolutionFromPlateauState,
   getStepFormulaResolutionStateCount,
@@ -22,10 +22,10 @@ import {
   STEP_TRANSITION_IS_VALID_OFFSET,
   STEP_TRANSITION_RESOLVED_END_Y_OFFSET,
   STEP_TRANSITION_RESOLVED_START_Y_OFFSET,
-} from "./formula-step-resolution";
-import { commitArena, markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "./memory";
-import * as Layout from "./pathfinding-layout";
-import { runTrajectoryRequest } from "./trajectory";
+} from "../formula/step-resolution";
+import { commitArena, markArena, requireArenaInitialized, requireArenaRange, reserveArena, resetArena } from "../core/memory";
+import * as Layout from "./layout";
+import { runTrajectoryRequest } from "../trajectory/entry";
 import {
   TRAJECTORY_INPUT_BYTE_LENGTH,
   TRAJECTORY_INPUT_BOUNDS_RECT_X_OFFSET,
@@ -49,7 +49,7 @@ import {
   TRAJECTORY_RESULT_POINT_Y_POINTER_OFFSET,
   TRAJECTORY_RESULT_FLAG_HAS_PATH_ERROR,
   TRAJECTORY_RESULT_LAUNCH_STATUS_SUCCESS,
-} from "./trajectory-layout";
+} from "../trajectory/layout";
 import {
   createStepGlitchGeometryContext,
   prepareStepGlitchCandidateFormulaForTest,
@@ -62,7 +62,7 @@ import {
   replayStepGlitch,
   composeStepGlitchSmartPath,
   composeStepGlitchOneClickSession,
-} from "./step-glitch";
+} from "../step-glitch/entry";
 
 const ROUTE_POLICY_VALUE_COUNT: u32 = 12;
 const THETA_STAR_LOOKAHEAD_OFFSET_COUNT: u32 = 8;

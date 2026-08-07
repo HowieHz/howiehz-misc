@@ -1,4 +1,4 @@
-import { runCurveBatch } from "./formula-curves";
+import { runCurveBatch } from "../curves";
 import {
   FORMULA_EQUATION_DY,
   FORMULA_INPUT_BOUNDS_MAX_X_OFFSET,
@@ -14,8 +14,8 @@ import {
   FORMULA_INPUT_SIGN_PROTECTION_POINTER_OFFSET,
   FORMULA_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
-} from "./formula-layout";
-import { markArena, reserveArena, resetArena } from "./memory";
+} from "../layout";
+import { markArena, reserveArena, resetArena } from "../../core/memory";
 import {
   recordTrajectoryDebugScalarReplay,
   replayFormulaTrajectoryScalarToStopX,
@@ -25,7 +25,7 @@ import {
   TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET,
   TRAJECTORY_SCALAR_STATE_CURRENT_Y_OFFSET,
   TRAJECTORY_SCALAR_STOP_REASON_STOP_X,
-} from "./trajectory-scalar";
+} from "../../trajectory/scalar";
 
 export const ABS_FIRST_ORDER_COLD_REFINEMENT_INVALID: i32 = 0;
 export const ABS_FIRST_ORDER_COLD_REFINEMENT_SUCCESS: i32 = 1;

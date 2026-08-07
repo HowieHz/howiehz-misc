@@ -27,9 +27,9 @@ import {
   DETECTION_INPUT_TEMPLATE_RECORDS_POINTER_OFFSET,
   DETECTION_INPUT_WIDTH_OFFSET,
   DETECTION_MATCH_BYTE_LENGTH,
-} from "./detection-layout";
-import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "./game-constants";
-import { requireArenaRange, reserveArena } from "./memory";
+} from "./layout";
+import { getGraphwarPlaneHeight, getGraphwarPlaneLength, requireGraphwarGameConstantsInitialized } from "../core/game-constants";
+import { requireArenaRange, reserveArena } from "../core/memory";
 
 const PROFILE_LENGTH: u32 = 10;
 const BASE_COUNT: u32 = 2;

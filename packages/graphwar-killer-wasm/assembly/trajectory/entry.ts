@@ -31,10 +31,10 @@ import {
   FORMULA_RESULT_BYTE_LENGTH,
   FORMULA_RESULT_PROTECTION_COUNT_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
-} from "./formula-layout";
-import { validateExpressionProgram } from "./expression";
-import { evaluateFormulaMaterialValue } from "./formula-evaluator";
-import { mergeProtectionBits, runPrepareLaunch } from "./formula-launch";
+} from "../formula/layout";
+import { validateExpressionProgram } from "../formula/expression";
+import { evaluateFormulaMaterialValue } from "../formula/evaluator";
+import { mergeProtectionBits, runPrepareLaunch } from "../formula/launch";
 import {
   getGraphwarAngleError,
   getGraphwarGameSoldierRadius,
@@ -44,7 +44,7 @@ import {
   getGraphwarPlaneLength,
   getGraphwarStepSize,
   requireGraphwarGameConstantsInitialized,
-} from "./game-constants";
+} from "../core/game-constants";
 import {
   commitArena,
   markArena,
@@ -52,7 +52,7 @@ import {
   requireArenaRange,
   reserveArena,
   resetArena,
-} from "./memory";
+} from "../core/memory";
 import {
   beginTrajectoryDebugCounters,
   endTrajectoryDebugCounters,
@@ -96,7 +96,7 @@ import {
   TRAJECTORY_TARGET_STATE_REQUIRED_HITS_POINTER_OFFSET,
   TRAJECTORY_TARGET_STATE_TARGET_HIT_INDEX_OFFSET,
   TRAJECTORY_TARGET_STATE_TRACKED_HIT_INDEXES_POINTER_OFFSET,
-} from "./trajectory-scalar";
+} from "./scalar";
 import {
   TRAJECTORY_INPUT_BYTE_LENGTH,
   TRAJECTORY_INPUT_BOUNDARY_EXPANSION_OFFSET,
@@ -214,7 +214,7 @@ import {
   TRAJECTORY_REPLAY_METADATA_LAUNCH_RESULT_POINTER_OFFSET,
   TRAJECTORY_REPLAY_METADATA_MATERIAL_RESULT_POINTER_OFFSET,
   TRAJECTORY_REPLAY_METADATA_TRAJECTORY_RESULT_POINTER_OFFSET,
-} from "./trajectory-layout";
+} from "./layout";
 
 function trap(): void {
   unreachable();

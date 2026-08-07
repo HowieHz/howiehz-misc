@@ -344,7 +344,9 @@ test("watch mode keeps the synchronized kernel and waits without an initial rebu
 
 test("guards the source and release configuration against managed hot-path allocation", async () => {
   const assemblyDirectory = join(packageRoot, "assembly");
-  const sourceFiles = (await readdir(assemblyDirectory, { recursive: true })).filter((file) => file.endsWith(".ts"));
+  const sourceFiles = (await readdir(assemblyDirectory, { recursive: true }))
+    .filter((file) => file.endsWith(".ts"))
+    .map((file) => file.replaceAll("\\", "/"));
   const sources = await Promise.all(
     sourceFiles.map(async (file) => ({ file, source: await readFile(join(assemblyDirectory, file), "utf8") })),
   );
@@ -359,14 +361,18 @@ test("guards the source and release configuration against managed hot-path alloc
   const heapAllocMatches = combinedSource.match(/\bheap\.alloc\s*\(/g) ?? [];
   assert.equal(heapAllocMatches.length, 1);
 
-  const trajectorySource = executableSources.find(({ file }) => file === "trajectory.ts")?.source ?? "";
-  const stepGlitchSource = executableSources.find(({ file }) => file === "step-glitch.ts")?.source ?? "";
-  const pathfindingSource = executableSources.find(({ file }) => file === "pathfinding.ts")?.source ?? "";
+  const trajectorySource = executableSources.find(({ file }) => file === "trajectory/entry.ts")?.source ?? "";
+  const stepGlitchSource = executableSources.find(({ file }) => file === "step-glitch/entry.ts")?.source ?? "";
+  const pathfindingSource = executableSources.find(({ file }) => file === "pathfinding/entry.ts")?.source ?? "";
   const trajectoryRequestReferenceFiles = executableSources
     .filter(({ source }) => /\brunTrajectoryRequest\b/.test(source))
     .map(({ file }) => file)
     .sort();
-  assert.deepEqual(trajectoryRequestReferenceFiles, ["pathfinding.ts", "step-glitch.ts", "trajectory.ts"]);
+  assert.deepEqual(trajectoryRequestReferenceFiles, [
+    "pathfinding/entry.ts",
+    "step-glitch/entry.ts",
+    "trajectory/entry.ts",
+  ]);
   assert.equal((combinedSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 8);
   assert.equal((trajectorySource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 2);
   assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 3);
@@ -380,7 +386,12 @@ test("guards the source and release configuration against managed hot-path alloc
     .filter(({ source }) => /\brunPrepareLaunch\b/.test(source))
     .map(({ file }) => file)
     .sort();
-  assert.deepEqual(prepareLaunchReferenceFiles, ["formula-launch.ts", "formula.ts", "step-glitch.ts", "trajectory.ts"]);
+  assert.deepEqual(prepareLaunchReferenceFiles, [
+    "formula/entry.ts",
+    "formula/launch.ts",
+    "step-glitch/entry.ts",
+    "trajectory/entry.ts",
+  ]);
   assert.equal((combinedSource.match(/\brunPrepareLaunch\b/g) ?? []).length, 7);
   assert.equal((stepGlitchSource.match(/\brunPrepareLaunch\b/g) ?? []).length, 2);
   assert.equal((combinedSource.match(/\brunPrepareLaunch\s*\(/g) ?? []).length, 4);
@@ -455,7 +466,10 @@ test("guards the source and release configuration against managed hot-path alloc
 });
 
 test("publishes a one-click session only after its waiting result is allocated", async () => {
-  const source = (await readFile(join(packageRoot, "assembly", "pathfinding.ts"), "utf8")).replace(/\r\n?/gu, "\n");
+  const source = (await readFile(join(packageRoot, "assembly", "pathfinding", "entry.ts"), "utf8")).replace(
+    /\r\n?/gu,
+    "\n",
+  );
   const waitingResult = source.indexOf(
     "const resultPointer = writeOneClickResult(\n    Layout.ONE_CLICK_RESULT_STATUS_WAITING_EDGE_BATCH,",
   );

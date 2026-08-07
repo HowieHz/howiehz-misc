@@ -1,4 +1,4 @@
-import { evaluateCurveMaterialValue } from "./formula-curves";
+import { evaluateCurveMaterialValue } from "./curves";
 import { evaluateExpressionProgram } from "./expression";
 import {
   FORMULA_MATERIAL_EXPRESSION,
@@ -9,8 +9,8 @@ import {
   FORMULA_RESULT_MATERIAL_POINTER_OFFSET,
   FORMULA_RESULT_MATERIAL_TYPE_OFFSET,
   FORMULA_RESULT_PROTECTION_POINTER_OFFSET,
-} from "./formula-layout";
-import { evaluateStepMaterialValue } from "./formula-step";
+} from "./layout";
+import { evaluateStepMaterialValue } from "./step";
 
 /** Step result bit preserving the leading negative term's canonical second-derivative zero. */
 const STEP_RESULT_FLAG_NORMALIZE_SECOND_DERIVATIVE_ZERO: u32 = 1;

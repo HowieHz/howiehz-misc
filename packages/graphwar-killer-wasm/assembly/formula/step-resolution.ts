@@ -6,15 +6,15 @@ import {
   resetSignedLimbState,
   roundFormulaDecimal,
   signedLimbToF64,
-} from "./decimal";
+} from "../core/decimal";
 import {
   createSignedLimbStateFromMagnitude,
   getSignedLimbStateCount,
   getSignedLimbStatePointer,
   getSignedLimbStateSign,
-} from "./limb-integer";
-import { FORMULA_EQUATION_DY, FORMULA_EQUATION_Y } from "./formula-layout";
-import { reserveArena } from "./memory";
+} from "../core/limb-integer";
+import { FORMULA_EQUATION_DY, FORMULA_EQUATION_Y } from "./layout";
+import { reserveArena } from "../core/memory";
 
 const STEP_RESOLUTION_ORIGIN_Y_OFFSET: u32 = 0;
 const STEP_RESOLUTION_RESOLVED_Y_OFFSET: u32 = 8;

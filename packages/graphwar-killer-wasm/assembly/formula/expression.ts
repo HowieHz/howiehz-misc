@@ -12,8 +12,8 @@ import {
   FORMULA_RESULT_BYTE_LENGTH,
   FORMULA_RESULT_VALUE_COUNT_OFFSET,
   FORMULA_RESULT_VALUE_POINTER_OFFSET,
-} from "./formula-layout";
-import { requireArenaRange, reserveArena } from "./memory";
+} from "./layout";
+import { requireArenaRange, reserveArena } from "../core/memory";
 
 const MAX_U32: u64 = 0xffff_ffff;
 const F64_BYTE_LENGTH: u32 = sizeof<f64>();

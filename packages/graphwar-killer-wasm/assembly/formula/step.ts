@@ -1,4 +1,4 @@
-import { floorFormulaDecimal, quantizeFormulaCoefficient, quantizeFormulaOffsetCenter } from "./decimal";
+import { floorFormulaDecimal, quantizeFormulaCoefficient, quantizeFormulaOffsetCenter } from "../core/decimal";
 import {
   FORMULA_ALGORITHM_STEP,
   FORMULA_EQUATION_DDY,
@@ -66,8 +66,8 @@ import {
   STEP_MATERIAL_SECOND_COEFFICIENT_OFFSET,
   STEP_MATERIAL_SOURCE_SEGMENT_OFFSET,
   STEP_MATERIAL_Y_COEFFICIENT_OFFSET,
-} from "./formula-layout";
-import { requireArenaRange, reserveArena } from "./memory";
+} from "./layout";
+import { requireArenaRange, reserveArena } from "../core/memory";
 import {
   createStepFormulaResolution,
   getStepFormulaResolutionSteepness,
@@ -78,7 +78,7 @@ import {
   STEP_TRANSITION_IS_VALID_OFFSET,
   STEP_TRANSITION_SECOND_COEFFICIENT_OFFSET,
   STEP_TRANSITION_Y_COEFFICIENT_OFFSET,
-} from "./formula-step-resolution";
+} from "./step-resolution";
 
 const SIGN_ROLE_START_X: u32 = 1;
 const SIGN_ROLE_END_X: u32 = 2;

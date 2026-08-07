@@ -1,4 +1,4 @@
-import { evaluateFormulaMaterialValue } from "./formula-evaluator";
+import { evaluateFormulaMaterialValue } from "../formula/evaluator";
 import {
   FORMULA_EQUATION_DDY,
   FORMULA_EQUATION_DY,
@@ -6,7 +6,7 @@ import {
   FORMULA_MATERIAL_EXPRESSION,
   FORMULA_RESULT_BYTE_LENGTH,
   FORMULA_RESULT_MATERIAL_TYPE_OFFSET,
-} from "./formula-layout";
+} from "../formula/layout";
 import {
   getGraphwarFuncMaxStepDistanceSquared,
   getGraphwarFuncMaxSteps,
@@ -15,8 +15,8 @@ import {
   getGraphwarPlaneLength,
   getGraphwarStepSize,
   requireGraphwarGameConstantsInitialized,
-} from "./game-constants";
-import { requireArenaRange } from "./memory";
+} from "../core/game-constants";
+import { requireArenaRange } from "../core/memory";
 
 /** Caller-owned resumable scalar state. Optional evidence is represented atomically by flags. */
 export const TRAJECTORY_SCALAR_STATE_CURRENT_X_OFFSET: u32 = 0;

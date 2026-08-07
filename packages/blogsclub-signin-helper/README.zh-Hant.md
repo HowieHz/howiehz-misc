@@ -27,7 +27,7 @@ BlogsClub 簽到助手是一個使用者腳本，用於在背景檢查 BlogsClub
 ## 快速開始
 
 1. 安裝相容的使用者腳本管理器。
-2. 建置本套件，並在管理器中安裝 `dist/blogsclub-signin-helper.user.js`。
+2. 開啟 [Greasy Fork 上的 BlogsClub 簽到助手](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper) 並安裝。
 3. 開啟 `https://www.blogsclub.org/` 或其他 BlogsClub 頁面。
 4. 在使用者腳本管理器選單中選擇 `BlogsClub 帳號：未設定`，輸入電子郵件和密碼。
 5. 選擇 `立即檢查/簽到` 立即檢查；如果當天尚未簽到，腳本會開啟 Geetest 驗證碼。

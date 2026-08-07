@@ -459,8 +459,8 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           {
             text: "子项目文档",
             items: [
-              { text: "compat-finder", link: "/compat-finder/" },
-              { text: "blogsclub-signin-helper", link: "/blogsclub-signin-helper/" },
+              { text: "兼容性问题排查器", link: "/compat-finder/" },
+              { text: "BlogsClub 签到助手", link: "/blogsclub-signin-helper/" },
             ],
           },
           { text: "文章归档", link: "/posts/" },
@@ -542,8 +542,8 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           {
             text: "Subproject Docs",
             items: [
-              { text: "compat-finder", link: "/en/compat-finder/" },
-              { text: "blogsclub-signin-helper", link: "/en/blogsclub-signin-helper/" },
+              { text: "Compatibility Finder", link: "/en/compat-finder/" },
+              { text: "BlogsClub Check-in Helper", link: "/en/blogsclub-signin-helper/" },
             ],
           },
           { text: "Archive", link: "/en/posts/" },

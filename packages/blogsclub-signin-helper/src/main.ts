@@ -37,9 +37,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   const DEFAULT_RUSH_SUBMIT_DELAY_MS = 500; // 默认服务端零点后 500 毫秒提交
   const MIN_RUSH_SUBMIT_DELAY_MS = 0;
   const MAX_RUSH_SUBMIT_DELAY_MS = 60 * 1000;
-  const DEFAULT_RUSH_SUBMIT_RETRIES = 10; // 不含首次提交
+  const DEFAULT_RUSH_SUBMIT_RETRIES = 50; // 不含首次提交
   const MIN_RUSH_SUBMIT_RETRIES = 0;
-  const MAX_RUSH_SUBMIT_RETRIES = 100;
+  const MAX_RUSH_SUBMIT_RETRIES = Number.MAX_SAFE_INTEGER;
   const DEFAULT_RUSH_SUBMIT_INTERVAL_MS = 200;
   const MIN_RUSH_SUBMIT_INTERVAL_MS = 1;
   const MAX_RUSH_SUBMIT_INTERVAL_MS = 60 * 1000;
@@ -91,6 +91,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       accountPasswordPrompt: "BlogsClub login password",
       credentialsEmpty: "Email or password cannot be empty.",
       accountSaved: "Account saved.",
+      loginSuccess: "Login succeeded.",
       intervalPrompt: "Check interval (milliseconds, {min}-{max})",
       invalidInterval: "Enter an integer from {min} to {max}.",
       intervalSaved: "Check interval set to {value} ms.",
@@ -169,6 +170,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       accountPasswordPrompt: "BlogsClub 登录密码",
       credentialsEmpty: "邮箱或密码不能为空。",
       accountSaved: "账号已保存。",
+      loginSuccess: "登录成功。",
       intervalPrompt: "检查周期（毫秒，{min}～{max}）",
       invalidInterval: "请输入 {min}～{max} 的整数。",
       intervalSaved: "检查周期已设置为 {value} 毫秒。",
@@ -246,6 +248,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       accountPasswordPrompt: "BlogsClub 登入密碼",
       credentialsEmpty: "電子郵件或密碼不能為空。",
       accountSaved: "帳號已儲存。",
+      loginSuccess: "登入成功。",
       intervalPrompt: "檢查週期（毫秒，{min}～{max}）",
       invalidInterval: "請輸入 {min}～{max} 的整數。",
       intervalSaved: "檢查週期已設定為 {value} 毫秒。",
@@ -426,18 +429,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @param {number | string | null | undefined} currentId 旧菜单编号。
    * @param {string} label 菜单显示文本。
    * @param {Function} handler 点击菜单后的处理函数。
-   * @param {boolean} [isLanguageMenu=false] 是否为语言菜单。. Default is `false`
    * @returns {number | string | undefined} 新菜单编号。
    */
-  function registerMenu(currentId, label, handler, isLanguageMenu = false) {
+  function registerMenu(currentId, label, handler) {
     if (currentId !== null && currentId !== undefined && typeof GM_unregisterMenuCommand === "function") {
       GM_unregisterMenuCommand(currentId);
     }
-    const menuId = GM_registerMenuCommand(label, handler);
-    if (!isLanguageMenu && languageMenuId !== null && languageMenuId !== undefined) {
-      registerLanguageMenu();
-    }
-    return menuId;
+    return GM_registerMenuCommand(label, handler);
   }
 
   /**
@@ -460,7 +458,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   /**
-   * 通过菜单配置 BlogsClub 账号，并立即触发一次检查。
+   * 通过菜单配置 BlogsClub 账号，验证凭据后触发一次检查。
    *
    * @returns {void}
    */
@@ -476,13 +474,22 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     }
     GM_setValue(KEYS.credentials, { email: email.trim(), password });
     GM_setValue(KEYS.accountStatus, "已保存");
-    registerAccountMenu();
+    registerMenus();
     notify(t("accountSaved"), t("configTitle"));
     if (rushModeEnabled()) {
       // 凭据变更后，旧验证码和旧会话请求不能继续提交到新账号流程。
       restartRushCheck();
     }
-    check();
+    void login()
+      .then(() => {
+        setAccountStatus("已登录");
+        notify(t("loginSuccess"), t("configTitle"));
+        check();
+      })
+      .catch(() => {
+        setAccountStatus("登录失败");
+        notify(t("loginFailed"), t("configTitle"));
+      });
   }
 
   /**
@@ -511,7 +518,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       return;
     }
     GM_setValue(KEYS.interval, value);
-    registerIntervalMenu();
+    registerMenus();
     notify(t("intervalSaved", { value }), t("configTitle"));
     check();
   }
@@ -522,7 +529,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {boolean} 是否启用自动弹窗。
    */
   function autoPopupEnabled() {
-    return GM_getValue<boolean>(KEYS.autoPopup, false) === true;
+    return GM_getValue<boolean>(KEYS.autoPopup, true) === true;
   }
 
   /**
@@ -531,7 +538,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {boolean} 是否启用抢签到模式。
    */
   function rushModeEnabled() {
-    return GM_getValue<boolean>(KEYS.rushMode, false) === true;
+    return GM_getValue<boolean>(KEYS.rushMode, true) === true;
   }
 
   /**
@@ -714,7 +721,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       return;
     }
     GM_setValue(KEYS.rushLeadSeconds, value);
-    registerRushLeadMenu();
+    registerMenus();
     notify(t("rushLeadSaved", { value }), t("configTitle"));
     if (rushModeEnabled()) restartRushCheck();
   }
@@ -752,7 +759,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       return;
     }
     GM_setValue(KEYS.rushSubmitDelayMs, value);
-    registerRushSubmitDelayMenu();
+    registerMenus();
     notify(t("rushSubmitDelaySaved", { value }), t("configTitle"));
     if (rushModeEnabled()) restartRushCheck();
   }
@@ -790,7 +797,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       return;
     }
     GM_setValue(KEYS.rushSubmitRetries, value);
-    registerRushSubmitRetriesMenu();
+    registerMenus();
     notify(t("rushSubmitRetriesSaved", { value }), t("configTitle"));
   }
 
@@ -808,7 +815,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   function registerLanguageMenu() {
-    languageMenuId = registerMenu(languageMenuId, `🌐 ${t("languageMenu")}`, configureLanguage, true);
+    languageMenuId = registerMenu(languageMenuId, `🌐 ${t("languageMenu")}`, configureLanguage);
   }
 
   function registerMenus() {
@@ -866,7 +873,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       return;
     }
     GM_setValue(KEYS.rushSubmitIntervalMs, value);
-    registerRushSubmitIntervalMenu();
+    registerMenus();
     notify(t("rushSubmitIntervalSaved", { value }), t("configTitle"));
   }
 
@@ -878,7 +885,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function toggleAutoPopup() {
     const enabled = !autoPopupEnabled();
     GM_setValue(KEYS.autoPopup, enabled);
-    registerAutoPopupMenu();
+    registerMenus();
     notify(t("autoPopupChanged", { state: enabled ? t("enabled") : t("disabled") }), t("configTitle"));
     if (enabled) check(true);
   }
@@ -891,7 +898,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function toggleBlogsClubOnly() {
     const enabled = !blogsClubOnlyEnabled();
     GM_setValue(KEYS.blogsClubOnly, enabled);
-    registerBlogsClubOnlyMenu();
+    registerMenus();
     notify(t("blogsClubOnlyChanged", { state: enabled ? t("enabled") : t("disabled") }), t("configTitle"));
     if (rushModeEnabled()) {
       // 页面范围改变后，旧 rush 流程不能继续按过期的页面许可提交。
@@ -912,7 +919,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function toggleRushMode() {
     const enabled = !rushModeEnabled();
     GM_setValue(KEYS.rushMode, enabled);
-    registerRushModeMenu();
+    registerMenus();
     notify(t("rushModeChanged", { state: enabled ? t("enabled") : t("disabled") }), t("configTitle"));
     if (enabled) {
       scheduleRushCheck();
@@ -930,7 +937,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function setAccountStatus(status) {
     if (accountStatus() === status) return;
     GM_setValue(KEYS.accountStatus, status);
-    registerAccountMenu();
+    registerMenus();
   }
 
   // 网络请求与 BlogsClub 接口。
@@ -1527,6 +1534,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     // 网络等待期间可能发生重排；旧流程只能退出，不能写入当前 rush 状态。
     if (
       flowGeneration !== rushFlowGeneration ||
+      !hasCredentials() ||
       !rushModeEnabled() ||
       (blogsClubOnlyEnabled() && !isBlogsClubPage()) ||
       (rushTargetMidnight === targetMidnight &&
@@ -1559,6 +1567,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         const result = await statusRequest;
         if (
           flowGeneration !== rushFlowGeneration ||
+          !hasCredentials() ||
           rushSubmitAt !== submitAt ||
           rushTargetMidnight !== targetMidnight ||
           !rushModeEnabled() ||
@@ -1583,6 +1592,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         if (captchaError) throw captchaError;
         if (
           flowGeneration !== rushFlowGeneration ||
+          !hasCredentials() ||
           rushSubmitAt !== submitAt ||
           rushTargetMidnight !== targetMidnight ||
           !rushModeEnabled() ||
@@ -1597,6 +1607,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       } catch (error) {
         if (
           flowGeneration !== rushFlowGeneration ||
+          !hasCredentials() ||
           rushSubmitAt !== submitAt ||
           rushTargetMidnight !== targetMidnight ||
           !rushModeEnabled() ||
@@ -1632,13 +1643,14 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     const flowGeneration = rushFlowGeneration;
     if (rushTimer !== null) clearTimeout(rushTimer);
     rushTimer = null;
-    if (!rushModeEnabled() || (blogsClubOnlyEnabled() && !isBlogsClubPage())) {
+    if (!hasCredentials() || !rushModeEnabled() || (blogsClubOnlyEnabled() && !isBlogsClubPage())) {
       return;
     }
     await calibrateServerClock();
     if (
       scheduleGeneration !== rushScheduleGeneration ||
       flowGeneration !== rushFlowGeneration ||
+      !hasCredentials() ||
       !rushModeEnabled() ||
       (blogsClubOnlyEnabled() && !isBlogsClubPage())
     ) {
@@ -1652,6 +1664,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         if (
           scheduleGeneration !== rushScheduleGeneration ||
           flowGeneration !== rushFlowGeneration ||
+          !hasCredentials() ||
           !rushModeEnabled() ||
           (blogsClubOnlyEnabled() && !isBlogsClubPage())
         )

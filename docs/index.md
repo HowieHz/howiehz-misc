@@ -39,4 +39,9 @@ features:
     details: 多目标兼容性问题排查库与命令行工具。
     link: /compat-finder/
     linkText: 查看文档
+  - icon: ✅
+    title: BlogsClub 签到助手
+    details: 用于后台检查 BlogsClub 每日签到并辅助完成签到的用户脚本。
+    link: /blogsclub-signin-helper/
+    linkText: 查看文档
 ---

@@ -25,7 +25,7 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 ## Getting Started
 
 1. Install a compatible userscript manager.
-2. Build this package and install `dist/blogsclub-signin-helper.user.js` in the manager.
+2. Open [BlogsClub Check-in Helper on Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper) and install it.
 3. Open `https://www.blogsclub.org/` or another BlogsClub page.
 4. Open the userscript manager menu and choose `BlogsClub 账号：未设置`.
 5. Enter your BlogsClub email address and password.
@@ -42,12 +42,14 @@ By default, checks run only on BlogsClub pages. When the “Only check on BlogsC
 | `BlogsClub 账号：...`           | `未设置`   | Save or update the email address and password.                                                                                 |
 | `检查周期：10000 毫秒`          | 10 seconds | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours. |
 | `仅在 BlogsClub 页面检查：启用` | Enabled    | Send check requests only on `blogsclub.org` and its subdomains.                                                                |
-| `可签到时自动验证码弹窗：关闭`  | Disabled   | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
-| `零点抢签到模式：关闭`          | Disabled   | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
+| `可签到时自动验证码弹窗：启用`  | Enabled    | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
+| `零点抢签到模式：启用`          | Enabled    | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
 | `抢签到提前加载验证码：5 秒`    | 5 seconds  | Set how long before server midnight to start preparing the CAPTCHA; from 1 to 60 seconds.                                      |
 | `抢签到提交延迟：500 毫秒`      | 500 ms     | Delay the first submission after server midnight; from 0 to 60000 ms.                                                          |
-| `抢签到提交重试次数：10 次`     | 10 retries | Maximum retries while no success response has arrived; from 0 to 100.                                                          |
+| `抢签到提交重试次数：50 次`     | 50 retries | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                            |
 | `抢签到提交重试间隔：200 毫秒`  | 200 ms     | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                |
+
+A high retry count combined with a short interval can send many concurrent requests in a short time. Set it according to the site's rate limits.
 
 ### Switch Language
 
@@ -64,7 +66,7 @@ The password is stored in the userscript manager's local storage. It is not sent
 
 ## Normal Mode
 
-Normal mode is on by default. Rush Check-in mode is off by default.
+Normal mode and Rush Check-in mode are on by default.
 
 ### Background Polling
 

@@ -27,7 +27,7 @@ For full behavior, settings, network activity, privacy notes, troubleshooting, a
 ## Quick Start
 
 1. Install a compatible userscript manager.
-2. Build this package and install `dist/blogsclub-signin-helper.user.js` in the manager.
+2. Open [BlogsClub Check-in Helper on Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper) and install it.
 3. Open `https://www.blogsclub.org/` or another BlogsClub page.
 4. Choose `BlogsClub 账号：未设置` from the userscript manager menu and enter your email and password.
 5. Choose `立即检查/签到` to check immediately. The script opens Geetest when today's check-in is still missing.

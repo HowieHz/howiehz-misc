@@ -1,9 +1,16 @@
+import path from "node:path";
+
 import { defineConfig } from "vite";
 import monkey from "vite-plugin-monkey";
 
 import pkg from "./package.json" with { type: "json" };
 
+const releaseAsset = path.posix.parse(pkg.releaseAsset);
+
 export default defineConfig({
+  build: {
+    outDir: releaseAsset.dir,
+  },
   plugins: [
     monkey({
       entry: "src/main.ts",
@@ -41,7 +48,7 @@ export default defineConfig({
         connect: ["www.blogsclub.org", "static.geetest.com"],
       },
       build: {
-        fileName: "blogsclub-signin-helper.user.js",
+        fileName: releaseAsset.base,
       },
     }),
   ],

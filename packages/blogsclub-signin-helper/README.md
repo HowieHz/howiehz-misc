@@ -32,7 +32,7 @@ For full behavior, settings, network activity, privacy notes, troubleshooting, a
 4. Choose `BlogsClub 账号：未设置` from the userscript manager menu and enter your email and password.
 5. Choose `立即检查/签到` to check immediately. The script opens Geetest when today's check-in is still missing.
 
-By default, checks run only on BlogsClub pages. The password is stored in the userscript manager's local storage and is sent only to the BlogsClub login endpoint.
+By default, automatic status checks run only on BlogsClub pages; manual checks are available on any matched page. The password is stored in the userscript manager's local storage and is sent only to the BlogsClub login endpoint.
 
 ## Development
 

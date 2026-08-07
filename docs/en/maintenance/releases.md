@@ -5,11 +5,12 @@ outline: deep
 
 # Release Guide
 
-## Released Packages
+## Release-Managed Packages
 
 The npm packages currently released from this repository through Changesets are:
 
 - [`compat-finder`](https://www.npmjs.com/package/compat-finder): [changelog](https://github.com/HowieHz/howiehz-misc/blob/main/packages/compat-finder/CHANGELOG.md)
+- `blogsclub-signin-helper`: not published to npm; its `.user.js` asset is uploaded to GitHub Releases and synchronized by a Greasy Fork webhook.
 
 ## Versioning
 
@@ -28,15 +29,33 @@ Before cutting a release, confirm the following:
 
 ## Release Flow Overview
 
-This repository uses Changesets for versioning and changelog generation, and [`release-packages.yml`](https://github.com/HowieHz/howiehz-misc/blob/main/.github/workflows/release-packages.yml) to create release PRs and publish to npm.
+This repository uses Changesets for versioning and changelog generation, and [`release-packages.yml`](https://github.com/HowieHz/howiehz-misc/blob/main/.github/workflows/release-packages.yml) to create release PRs and publish either npm packages or GitHub Release assets according to the package type.
 
 The flow has two stages:
 
-1. After a normal PR is merged into `main`, npm publishing does not happen immediately. The workflow creates or updates a release PR first.
-2. After the release PR is merged into `main`, the workflow performs the actual npm publish.
+1. After a normal PR is merged into `main`, publishing does not happen immediately. The workflow creates or updates a release PR first.
+2. After the release PR is merged into `main`, the workflow publishes the npm package or GitHub Release asset.
 
 ## Build Provenance Verification
 
 The release pipeline follows GitHub's recommended reusable-workflow pattern: package builds, `npm pack` packaging, artifact upload, and artifact attestation issuance all happen inside the reusable build workflow.
 
 Before npm publishing begins, the workflow runs `gh attestation verify` against every generated `.tgz` package to confirm each file was produced and signed by the expected reusable build workflow. Publishing continues only after verification passes, so the packages released to npm have verifiable provenance and have not been tampered with.
+
+## Greasy Fork Synchronization
+
+`blogsclub-signin-helper` is not published to npm. The release workflow builds and uploads this GitHub Release asset:
+
+```text
+blogsclub-signin-helper.user.js
+```
+
+Generate a secret on Greasy Fork's [webhook information page](https://greasyfork.org/zh-CN/users/webhook-info), then add a webhook in the GitHub repository under Settings → Webhooks. Use the Payload URL shown by Greasy Fork, select `application/json`, enable only Release events, and keep the webhook active.
+
+Set the Greasy Fork sync URL to:
+
+```text
+https://github.com/HowieHz/howiehz-misc/releases/latest/download/blogsclub-signin-helper.user.js
+```
+
+After the Changesets release PR is merged, publishing the GitHub Release triggers Greasy Fork to update the script.

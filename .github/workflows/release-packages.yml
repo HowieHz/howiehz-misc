@@ -6,7 +6,7 @@ on:
 
 concurrency:
   group: release-packages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   prepare-release:
@@ -19,6 +19,8 @@ jobs:
       has-changesets: ${{ steps.changesets.outputs.hasChangesets }}
       has-release-packages: ${{ steps.release-packages.outputs.has_packages }}
       package-directories-json: ${{ steps.release-packages.outputs.package_directories_json }}
+      has-release-userscripts: ${{ steps.release-packages.outputs.has_userscripts }}
+      userscript-directories-json: ${{ steps.release-packages.outputs.userscript_directories_json }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -53,6 +55,8 @@ jobs:
       - name: Resolve packages to publish
         id: release-packages
         if: steps.changesets.outputs.hasChangesets == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/resolve-release-packages.js
 
   build-packages:
@@ -68,6 +72,78 @@ jobs:
     with:
       artifact-name: npm-package-artifacts
       package-directories-json: ${{ needs.prepare-release.outputs.package-directories-json }}
+
+  build-userscripts:
+    name: Build userscript release assets
+    needs: prepare-release
+    if: needs.prepare-release.outputs.has-release-userscripts == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # https://github.com/actions/checkout/releases/tag/v7.0.1
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # https://github.com/pnpm/action-setup/releases/tag/v6.0.10
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # https://github.com/actions/setup-node/releases/tag/v7.0.0
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build userscript release assets
+        env:
+          USER_SCRIPT_DIRECTORIES_JSON: ${{ needs.prepare-release.outputs.userscript-directories-json }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { copyFile, mkdir, readFile } from "node:fs/promises";
+          import path from "node:path";
+          import { spawnSync } from "node:child_process";
+
+          const packageDirectories = JSON.parse(process.env.USER_SCRIPT_DIRECTORIES_JSON ?? "[]");
+          const outputDirectory = path.resolve("dist/userscript-assets");
+          await mkdir(outputDirectory, { recursive: true });
+
+          for (const directory of packageDirectories) {
+            if (typeof directory !== "string" || directory.length === 0) {
+              console.error(`Invalid userscript package directory: ${directory}`);
+              process.exit(1);
+            }
+
+            const packageDirectory = path.resolve(directory);
+            const packageJson = JSON.parse(await readFile(path.join(packageDirectory, "package.json"), "utf8"));
+            const result = spawnSync("pnpm", ["--filter", packageJson.name, "build"], { stdio: "inherit" });
+            if (result.status !== 0) process.exit(result.status ?? 1);
+
+            if (typeof packageJson.releaseAsset !== "string" || path.isAbsolute(packageJson.releaseAsset)) {
+              console.error(`releaseAsset must be a relative path: ${directory}`);
+              process.exit(1);
+            }
+
+            const assetPath = path.resolve(packageDirectory, packageJson.releaseAsset);
+            const relativeAssetPath = path.relative(packageDirectory, assetPath);
+            if (relativeAssetPath.length === 0 || relativeAssetPath.startsWith("..") || path.isAbsolute(relativeAssetPath)) {
+              console.error(`releaseAsset must stay inside its package: ${directory}`);
+              process.exit(1);
+            }
+
+            const destinationPath = path.join(outputDirectory, path.basename(directory), path.basename(assetPath));
+            await mkdir(path.dirname(destinationPath), { recursive: true });
+            await copyFile(assetPath, destinationPath);
+          }
+          EOF
+
+      - name: Upload userscript release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        with:
+          name: userscript-release-assets
+          path: dist/userscript-assets
 
   verify-attestations:
     name: Verify package attestations
@@ -157,8 +233,12 @@ jobs:
 
   create-github-releases:
     name: Create GitHub releases
-    needs: [prepare-release, publish-packages]
-    if: needs.prepare-release.outputs.has-release-packages == 'true'
+    needs: [prepare-release, publish-packages, build-userscripts]
+    if: |
+      always() &&
+      (needs.prepare-release.outputs.has-release-packages == 'true' || needs.prepare-release.outputs.has-release-userscripts == 'true') &&
+      (needs.prepare-release.outputs.has-release-packages != 'true' || needs.publish-packages.result == 'success') &&
+      (needs.prepare-release.outputs.has-release-userscripts != 'true' || needs.build-userscripts.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -170,8 +250,17 @@ jobs:
             .github/scripts
             packages
 
+      - name: Download userscript release assets
+        if: needs.prepare-release.outputs.has-release-userscripts == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # https://github.com/actions/download-artifact/releases/tag/v8.0.1
+        with:
+          name: userscript-release-assets
+          path: dist/userscript-assets
+
       - name: Create Git tags and GitHub releases
         env:
           GITHUB_TOKEN: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
           PACKAGE_DIRECTORIES_JSON: ${{ needs.prepare-release.outputs.package-directories-json }}
+          USERSCRIPT_DIRECTORIES_JSON: ${{ needs.prepare-release.outputs.userscript-directories-json }}
+          RELEASE_ASSET_ROOT: dist/userscript-assets
         run: node .github/scripts/create-github-releases.js

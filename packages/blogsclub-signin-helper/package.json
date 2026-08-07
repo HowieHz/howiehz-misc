@@ -16,5 +16,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "releaseAsset": "dist/blogsclub-signin-helper.user.js"
 }

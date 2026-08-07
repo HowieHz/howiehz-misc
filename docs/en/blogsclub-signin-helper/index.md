@@ -32,22 +32,22 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 6. The account status initially shows `已保存` (Saved). After a successful status check or login, it shows `已登录` (Logged in).
 7. Choose `立即检查/签到` to check immediately.
 
-By default, checks run only on BlogsClub pages. When the “Only check on BlogsClub pages” setting is enabled and you are on another site, a manual action tells you to switch to a BlogsClub page.
+By default, automatic status checks run only on BlogsClub pages. Manual `Check now / check in` actions are available on any matched page.
 
 ## Menu and Settings
 
-| Menu item                       | Default    | What it controls                                                                                                               |
-| ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `立即检查/签到`                 | —          | Check now. If you have not checked in, open the CAPTCHA and allow a manual check-in.                                           |
-| `BlogsClub 账号：...`           | `未设置`   | Save or update the email address and password.                                                                                 |
-| `检查周期：10000 毫秒`          | 10 seconds | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours. |
-| `仅在 BlogsClub 页面检查：启用` | Enabled    | Send check requests only on `blogsclub.org` and its subdomains.                                                                |
-| `可签到时自动验证码弹窗：启用`  | Enabled    | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
-| `零点抢签到模式：启用`          | Enabled    | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
-| `抢签到提前加载验证码：5 秒`    | 5 seconds  | Set how long before server midnight to start preparing the CAPTCHA; from 1 to 60 seconds.                                      |
-| `抢签到提交延迟：500 毫秒`      | 500 ms     | Delay the first submission after server midnight; from 0 to 60000 ms.                                                          |
-| `抢签到提交重试次数：50 次`     | 50 retries | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                            |
-| `抢签到提交重试间隔：200 毫秒`  | 200 ms     | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                |
+| Menu item                               | Default    | What it controls                                                                                                               |
+| --------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `立即检查/签到`                         | —          | Check now. If you have not checked in, open the CAPTCHA and allow a manual check-in.                                           |
+| `BlogsClub 账号：...`                   | `未设置`   | Save or update the email address and password.                                                                                 |
+| `检查周期：10000 毫秒`                  | 10 seconds | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours. |
+| `仅在 BlogsClub 页面自动检查状态：启用` | Enabled    | Restrict background polling and Rush Check-in to BlogsClub pages; manual checks are unrestricted.                              |
+| `可签到时自动验证码弹窗：启用`          | Enabled    | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
+| `零点抢签到模式：启用`                  | Enabled    | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
+| `抢签到提前加载验证码：5 秒`            | 5 seconds  | Set how long before server midnight to start preparing the CAPTCHA; from 1 to 60 seconds.                                      |
+| `抢签到提交延迟：500 毫秒`              | 500 ms     | Delay the first submission after server midnight; from 0 to 60000 ms.                                                          |
+| `抢签到提交重试次数：50 次`             | 50 retries | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                            |
+| `抢签到提交重试间隔：200 毫秒`          | 200 ms     | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                |
 
 A high retry count combined with a short interval can send many concurrent requests in a short time. Set it according to the site's rate limits.
 
@@ -142,9 +142,9 @@ Requests are non-anonymous and use the BlogsClub session cookies. Before uninsta
 
 ## Impact and Known Limitations
 
-- By default, checks run only on BlogsClub pages. The script still matches other pages so its menu can be available there.
+- By default, automatic status checks run only on BlogsClub pages. The script still matches other pages for its menu and manual checks.
 - Each BlogsClub tab has its own polling and Rush Check-in timers. There is currently no cross-tab leader or lock, so multiple tabs may open multiple CAPTCHA windows and each run its configured submission retry sequence.
-- If “Only check on BlogsClub pages” is disabled, every matched page can run polling and Rush Check-in.
+- If “Automatic status checks only on BlogsClub pages” is disabled, every matched page can run polling and Rush Check-in.
 - Rush Check-in calibrates the clock from HTTP `Date`, but HTTP dates are usually only precise to the second. The submission-delay setting is approximate, not hard real-time scheduling guaranteed by the server.
 - Clock offset correction does not discover the site's business timezone from HTTP `Date`. The midnight calendar uses the local timezone of the environment running the script. A browser timezone different from BlogsClub's business timezone can shift the Rush Check-in target.
 - CAPTCHA completion is manual. If the challenge expires, fails, or the component cannot load, open it again and complete it.
@@ -159,7 +159,7 @@ Requests are non-anonymous and use the BlogsClub session cookies. Before uninsta
 
 ### No CAPTCHA appears
 
-Confirm that you are on a BlogsClub page and check the “Only check on BlogsClub pages” setting. In normal mode, either enable automatic CAPTCHA popups or click `立即检查/签到`. Rush Check-in waits for the configured preparation point before midnight.
+Automatic CAPTCHA popups and Rush Check-in are restricted by “Automatic status checks only on BlogsClub pages”; manual `Check now / check in` works on any matched page. Rush Check-in also waits for the configured preparation point before midnight.
 
 ### Multiple CAPTCHA windows appear
 
@@ -167,7 +167,7 @@ Usually, more than one BlogsClub tab is running. Close tabs you do not need, or 
 
 ### No request appears in Developer Tools
 
-With the default page restriction enabled, ordinary webpages do not send BlogsClub status requests. Open a BlogsClub page and inspect the Network panel, or disable “Only check on BlogsClub pages”.
+With the default restriction enabled, ordinary webpages do not send automatic BlogsClub status requests; manual `Check now / check in` still sends one. Inspect automatic requests on a BlogsClub page, or disable “Automatic status checks only on BlogsClub pages”.
 
 ## Privacy and Security
 

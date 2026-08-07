@@ -13,7 +13,7 @@ This document is for repository maintainers and code contributors. If you only w
 
 - `docs/`: the VitePress application, including documentation and online tools
 - `packages/compat-finder/`: the compatibility troubleshooting library and CLI published to npm
-- `packages/blogsclub-signin-helper/`: a BlogsClub check-in helper userscript for [Tampermonkey](https://www.tampermonkey.net), [Violentmonkey](https://violentmonkey.github.io), [Greasemonkey](https://www.greasespot.net), [ScriptCat](https://docs.scriptcat.org), and similar engines
+- `packages/blogsclub-signin-helper/`: a BlogsClub check-in helper userscript published as a GitHub Release `.user.js` asset and synchronized to Greasy Fork
 - `packages/graphwar-killer-wasm/`: the private AssemblyScript/WASM kernel used by Graphwar Killer
 - `packages/graphwar-agent/`: a Java agent that exposes a local HTTP API for the official Graphwar client
 
@@ -83,8 +83,8 @@ Run package scripts with `pnpm --filter PACKAGE SCRIPT`, for example `pnpm --fil
 ### Changesets
 
 - Create a release note entry: `pnpm changeset`
-- Add a changeset when a change affects any published workspace package; do not add one for docs-only changes, public content edits, or internal cleanup that does not affect published package behavior
-- Follow the prompt to select the affected published package and the appropriate semver bump: `patch`, `minor`, or `major`
+- Add a changeset when a change affects any workspace package managed by the release flow; do not add one for docs-only changes, public content edits, or internal cleanup that does not affect a release artifact
+- Follow the prompt to select the affected package and the appropriate semver bump: `patch`, `minor`, or `major`
 - Commit the generated `.changeset/*.md` file together with the code changes
 
 ## CI Checks

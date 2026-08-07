@@ -48,7 +48,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     accountStatus: "blogsclub-auto-signin-account-status",
     language: "blogsclub-auto-signin-language",
     interval: "blogsclub-auto-signin-interval-ms",
-    blogsClubOnly: "blogsclub-auto-signin-blogsclub-only",
+    blogsClubAutoCheckOnly: "blogsclub-auto-signin-blogsclub-only",
     autoPopup: "blogsclub-auto-signin-auto-popup",
     rushMode: "blogsclub-auto-signin-rush-mode",
     rushLeadSeconds: "blogsclub-auto-signin-rush-lead-seconds",
@@ -74,7 +74,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       checkNowMenu: "Check now / check in",
       intervalMenu: "Check interval: {value} ms",
       accountMenu: "BlogsClub account: {status}",
-      blogsClubOnlyMenu: "Check only on BlogsClub pages: {state}",
+      blogsClubAutoCheckOnlyMenu: "Automatic status checks only on BlogsClub pages: {state}",
       autoPopupMenu: "Auto CAPTCHA popup when check-in is available: {state}",
       rushModeMenu: "Rush Check-in mode: {state}",
       rushLeadMenu: "Rush Check-in CAPTCHA lead time: {value} seconds",
@@ -108,7 +108,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       invalidRushSubmitInterval: "Enter an integer number of milliseconds from {min} to {max}.",
       rushSubmitIntervalSaved: "Rush Check-in retry interval set to {value} ms.",
       autoPopupChanged: "Automatic CAPTCHA popup {state}.",
-      blogsClubOnlyChanged: "BlogsClub-only checks {state}.",
+      blogsClubAutoCheckOnlyChanged: "BlogsClub-only automatic status checks {state}.",
       rushModeChanged: "Rush Check-in mode {state}.",
       requestNoResponse: "Not logged in or the endpoint returned no response.",
       responseFormatError: "The endpoint returned an invalid response.",
@@ -133,7 +133,6 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       notSignedAuto: "You have not checked in today. The CAPTCHA will open{duration}.",
       notSignedManual:
         "You have not checked in today. Use the userscript menu to choose “Check now / check in”{duration}.",
-      switchBlogsClubPage: "Open a BlogsClub page before choosing “Check now / check in”.",
       checkingStatus: "Checking check-in status…",
       alreadySigned: "Already checked in today ({duration}).",
       elapsed: " ({duration})",
@@ -153,7 +152,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       checkNowMenu: "立即检查/签到",
       intervalMenu: "检查周期：{value} 毫秒",
       accountMenu: "BlogsClub 账号：{status}",
-      blogsClubOnlyMenu: "仅在 BlogsClub 页面检查：{state}",
+      blogsClubAutoCheckOnlyMenu: "仅在 BlogsClub 页面自动检查状态：{state}",
       autoPopupMenu: "可签到时自动验证码弹窗：{state}",
       rushModeMenu: "零点抢签到模式：{state}",
       rushLeadMenu: "抢签到提前加载验证码：{value} 秒",
@@ -187,7 +186,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       invalidRushSubmitInterval: "请输入 {min}～{max} 的整数毫秒数。",
       rushSubmitIntervalSaved: "抢签到提交重试间隔已设置为 {value} 毫秒。",
       autoPopupChanged: `自动验证码弹窗已{state}。`,
-      blogsClubOnlyChanged: `仅在 BlogsClub 页面检查已{state}。`,
+      blogsClubAutoCheckOnlyChanged: `仅在 BlogsClub 页面自动检查状态已{state}。`,
       rushModeChanged: `零点抢签到模式已{state}。`,
       requestNoResponse: "未登录或接口无响应",
       responseFormatError: "接口返回格式异常",
@@ -211,7 +210,6 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       captchaReady: "验证码已完成，将在服务端零点后提交（约 {delay}）。",
       notSignedAuto: "今天还未签到，验证码即将弹出{duration}。",
       notSignedManual: "今天还未签到，请从油猴菜单执行“立即检查/签到”{duration}。",
-      switchBlogsClubPage: "请在 BlogsClub 页面执行“立即检查/签到”。",
       checkingStatus: "检查签到状态中……",
       alreadySigned: "今天已签到（耗时 {duration}）。",
       elapsed: "（耗时 {duration}）",
@@ -231,7 +229,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       checkNowMenu: "立即檢查/簽到",
       intervalMenu: "檢查週期：{value} 毫秒",
       accountMenu: "BlogsClub 帳號：{status}",
-      blogsClubOnlyMenu: "僅在 BlogsClub 頁面檢查：{state}",
+      blogsClubAutoCheckOnlyMenu: "僅在 BlogsClub 頁面自動檢查狀態：{state}",
       autoPopupMenu: "可簽到時自動彈出驗證碼：{state}",
       rushModeMenu: "零點搶簽到模式：{state}",
       rushLeadMenu: "搶簽到提前載入驗證碼：{value} 秒",
@@ -265,7 +263,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       invalidRushSubmitInterval: "請輸入 {min}～{max} 的整數毫秒數。",
       rushSubmitIntervalSaved: "搶簽到提交重試間隔已設定為 {value} 毫秒。",
       autoPopupChanged: `自動彈出驗證碼已{state}。`,
-      blogsClubOnlyChanged: `僅在 BlogsClub 頁面檢查已{state}。`,
+      blogsClubAutoCheckOnlyChanged: `僅在 BlogsClub 頁面自動檢查狀態已{state}。`,
       rushModeChanged: `零點搶簽到模式已{state}。`,
       requestNoResponse: "未登入或介面無回應",
       responseFormatError: "介面回傳格式異常",
@@ -289,7 +287,6 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       captchaReady: "驗證碼已完成，將在伺服器零點後提交（約 {delay}）。",
       notSignedAuto: "今天尚未簽到，驗證碼即將彈出{duration}。",
       notSignedManual: "今天尚未簽到，請從油猴選單執行「立即檢查/簽到」{duration}。",
-      switchBlogsClubPage: "請在 BlogsClub 頁面執行「立即檢查/簽到」。",
       checkingStatus: "正在檢查簽到狀態……",
       alreadySigned: "今天已簽到（耗時 {duration}）。",
       elapsed: "（耗時 {duration}）",
@@ -367,7 +364,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   let intervalMenuId = null;
   let checkMenuId = null;
   let accountMenuId = null;
-  let blogsClubOnlyMenuId = null;
+  let blogsClubAutoCheckOnlyMenuId = null;
   let autoPopupMenuId = null;
   let rushModeMenuId = null;
   let rushLeadMenuId = null;
@@ -600,12 +597,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   /**
-   * 判断是否只在 BlogsClub 页面执行检查。
+   * 判断是否只在 BlogsClub 页面自动检查状态。
    *
-   * @returns {boolean} 是否限制在 BlogsClub 页面。
+   * @returns {boolean} 是否限制自动检查所在页面。
    */
-  function blogsClubOnlyEnabled() {
-    return GM_getValue(KEYS.blogsClubOnly, true) === true;
+  function isBlogsClubAutoCheckOnlyEnabled() {
+    return GM_getValue(KEYS.blogsClubAutoCheckOnly, true) === true;
   }
 
   /**
@@ -643,7 +640,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function registerCheckMenu() {
     checkMenuId = registerMenu(checkMenuId, t("checkNowMenu"), () => {
       notify(t("checkingStatus"));
-      return check(true);
+      return check({ isManual: true, shouldForceCaptcha: true });
     });
   }
 
@@ -657,15 +654,15 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   /**
-   * 注册仅在 BlogsClub 页面检查的开关菜单。
+   * 注册仅在 BlogsClub 页面自动检查状态的开关菜单。
    *
    * @returns {void}
    */
-  function registerBlogsClubOnlyMenu() {
-    blogsClubOnlyMenuId = registerMenu(
-      blogsClubOnlyMenuId,
-      t("blogsClubOnlyMenu", { state: t(blogsClubOnlyEnabled() ? "enabled" : "disabled") }),
-      toggleBlogsClubOnly,
+  function registerBlogsClubAutoCheckOnlyMenu() {
+    blogsClubAutoCheckOnlyMenuId = registerMenu(
+      blogsClubAutoCheckOnlyMenuId,
+      t("blogsClubAutoCheckOnlyMenu", { state: t(isBlogsClubAutoCheckOnlyEnabled() ? "enabled" : "disabled") }),
+      toggleBlogsClubAutoCheckOnly,
     );
   }
 
@@ -822,7 +819,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     registerCheckMenu();
     registerIntervalMenu();
     registerAccountMenu();
-    registerBlogsClubOnlyMenu();
+    registerBlogsClubAutoCheckOnlyMenu();
     registerAutoPopupMenu();
     registerRushModeMenu();
     registerRushLeadMenu();
@@ -883,26 +880,26 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function toggleAutoPopup() {
-    const enabled = !autoPopupEnabled();
-    GM_setValue(KEYS.autoPopup, enabled);
+    const isEnabled = !autoPopupEnabled();
+    GM_setValue(KEYS.autoPopup, isEnabled);
     registerMenus();
-    notify(t("autoPopupChanged", { state: enabled ? t("enabled") : t("disabled") }), t("configTitle"));
-    if (enabled) check(true);
+    notify(t("autoPopupChanged", { state: isEnabled ? t("enabled") : t("disabled") }), t("configTitle"));
+    if (isEnabled) check({ shouldForceCaptcha: true });
   }
 
   /**
-   * 切换是否仅在 BlogsClub 页面执行检查。
+   * 切换是否仅在 BlogsClub 页面自动检查状态。
    *
    * @returns {void}
    */
-  function toggleBlogsClubOnly() {
-    const enabled = !blogsClubOnlyEnabled();
-    GM_setValue(KEYS.blogsClubOnly, enabled);
+  function toggleBlogsClubAutoCheckOnly() {
+    const isEnabled = !isBlogsClubAutoCheckOnlyEnabled();
+    GM_setValue(KEYS.blogsClubAutoCheckOnly, isEnabled);
     registerMenus();
-    notify(t("blogsClubOnlyChanged", { state: enabled ? t("enabled") : t("disabled") }), t("configTitle"));
+    notify(t("blogsClubAutoCheckOnlyChanged", { state: isEnabled ? t("enabled") : t("disabled") }), t("configTitle"));
     if (rushModeEnabled()) {
       // 页面范围改变后，旧 rush 流程不能继续按过期的页面许可提交。
-      if (enabled && !isBlogsClubPage()) {
+      if (isEnabled && !isBlogsClubPage()) {
         cancelRushMode();
       } else {
         restartRushCheck();
@@ -1536,7 +1533,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       flowGeneration !== rushFlowGeneration ||
       !hasCredentials() ||
       !rushModeEnabled() ||
-      (blogsClubOnlyEnabled() && !isBlogsClubPage()) ||
+      (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage()) ||
       (rushTargetMidnight === targetMidnight &&
         (rushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null)) ||
       (rushPreparing && rushPreparingGeneration === flowGeneration && rushPreparingTargetMidnight === targetMidnight)
@@ -1571,7 +1568,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           rushSubmitAt !== submitAt ||
           rushTargetMidnight !== targetMidnight ||
           !rushModeEnabled() ||
-          (blogsClubOnlyEnabled() && !isBlogsClubPage())
+          (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
         ) {
           return;
         }
@@ -1596,7 +1593,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           rushSubmitAt !== submitAt ||
           rushTargetMidnight !== targetMidnight ||
           !rushModeEnabled() ||
-          (blogsClubOnlyEnabled() && !isBlogsClubPage())
+          (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
         ) {
           return;
         }
@@ -1611,7 +1608,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           rushSubmitAt !== submitAt ||
           rushTargetMidnight !== targetMidnight ||
           !rushModeEnabled() ||
-          (blogsClubOnlyEnabled() && !isBlogsClubPage())
+          (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
         )
           return;
         rushSubmitAt = 0;
@@ -1643,7 +1640,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     const flowGeneration = rushFlowGeneration;
     if (rushTimer !== null) clearTimeout(rushTimer);
     rushTimer = null;
-    if (!hasCredentials() || !rushModeEnabled() || (blogsClubOnlyEnabled() && !isBlogsClubPage())) {
+    if (!hasCredentials() || !rushModeEnabled() || (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())) {
       return;
     }
     await calibrateServerClock();
@@ -1652,7 +1649,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       flowGeneration !== rushFlowGeneration ||
       !hasCredentials() ||
       !rushModeEnabled() ||
-      (blogsClubOnlyEnabled() && !isBlogsClubPage())
+      (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
     ) {
       return;
     }
@@ -1666,7 +1663,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           flowGeneration !== rushFlowGeneration ||
           !hasCredentials() ||
           !rushModeEnabled() ||
-          (blogsClubOnlyEnabled() && !isBlogsClubPage())
+          (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
         )
           return;
         rushTimer = null;
@@ -1705,7 +1702,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       rushSubmitState !== null ||
       rushSubmitTimer !== null ||
       !rushModeEnabled() ||
-      (blogsClubOnlyEnabled() && !isBlogsClubPage())
+      (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
     )
       return;
     const submitAt = rushSubmitAt;
@@ -1726,7 +1723,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         rushCaptchaGeneration !== flowGeneration ||
         rushTargetMidnight !== targetMidnight ||
         !rushModeEnabled() ||
-        (blogsClubOnlyEnabled() && !isBlogsClubPage())
+        (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
       )
         return;
       rushSubmitAt = 0;
@@ -1739,37 +1736,36 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 后台轮询每个自然日最多通知一次未签到状态；手动检查每次通知。
    *
-   * @param {boolean} [force=false] 是否跳过每日通知限制。. Default is `false`
+   * @param {boolean} [shouldForce=false] 是否跳过每日通知限制。. Default is `false`
    * @param {number} elapsedMs 本次状态检查耗时。
    * @returns {void}
    */
-  function notifyNeedSign(force = false, elapsedMs) {
+  function notifyNeedSign(shouldForce = false, elapsedMs) {
     const date = new Date().toLocaleDateString("zh-CN");
-    if (!force && GM_getValue(KEYS.notifiedDate, "") === date) return;
+    if (!shouldForce && GM_getValue(KEYS.notifiedDate, "") === date) return;
     GM_setValue(KEYS.notifiedDate, date);
     const duration = t("elapsed", { duration: formatDuration(elapsedMs) });
-    notify(force || autoPopupEnabled() ? t("notSignedAuto", { duration }) : t("notSignedManual", { duration }));
+    notify(shouldForce || autoPopupEnabled() ? t("notSignedAuto", { duration }) : t("notSignedManual", { duration }));
   }
 
   /**
    * 检查登录和签到状态，按配置决定是否处理验证码。
    *
-   * @param {boolean} [forceCaptcha=false] 是否强制打开验证码流程。. Default is `false`
+   * @param {object} [options] 本轮检查选项。
+   * @param {boolean} [options.shouldForceCaptcha=false] 是否强制打开验证码流程。. Default is `false`
+   * @param {boolean} [options.isManual=false] 是否由用户手动触发。. Default is `false`
    * @returns {Promise<object | void>} 本轮检查完成及结果。
    */
-  function check(forceCaptcha = false) {
-    if (blogsClubOnlyEnabled() && !isBlogsClubPage()) {
-      if (forceCaptcha) {
-        notify(t("switchBlogsClubPage"));
-      }
+  function check({ shouldForceCaptcha = false, isManual = false } = {}) {
+    if (!isManual && isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage()) {
       return Promise.resolve();
     }
     if (checking) {
       return checking.then((state) => {
-        if (forceCaptcha && state?.error) {
+        if (shouldForceCaptcha && state?.error) {
           notify(state.error.message || t("checkFailed"));
-        } else if (forceCaptcha && state?.result && !state.stale) {
-          applyCheckResult(state.result, true, state.elapsedMs, state.statusStartedAt);
+        } else if (shouldForceCaptcha && state?.result && !state.stale) {
+          applyCheckResult(state.result, shouldForceCaptcha, state.elapsedMs, state.statusStartedAt);
         }
         return state;
       });
@@ -1793,11 +1789,11 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
             error: null,
           };
         }
-        applyCheckResult(result, forceCaptcha, elapsedMs, statusStartedAt);
+        applyCheckResult(result, shouldForceCaptcha, elapsedMs, statusStartedAt);
         return { result, elapsedMs, statusStartedAt, error: null };
       } catch (error) {
         setAccountStatus(hasCredentials() ? "登录失败" : "未设置");
-        if (forceCaptcha) notify(error.message || t("checkFailed"));
+        if (shouldForceCaptcha) notify(error.message || t("checkFailed"));
         return {
           result: null,
           elapsedMs: performance.now() - startedAt,
@@ -1818,22 +1814,22 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * 处理一次签到状态结果。
    *
    * @param {object} result 接口响应。
-   * @param {boolean} forceCaptcha 是否强制打开验证码流程。
+   * @param {boolean} shouldForceCaptcha 是否强制打开验证码流程。
    * @param {number} elapsedMs 检查耗时。
    * @param {number} statusStartedAt 状态请求开始时的服务端时间。
    * @returns {void}
    */
-  function applyCheckResult(result, forceCaptcha, elapsedMs, statusStartedAt = serverNow()) {
+  function applyCheckResult(result, shouldForceCaptcha, elapsedMs, statusStartedAt = serverNow()) {
     setAccountStatus("已登录");
     if (result.signin) {
       stopRushForKnownSignin(statusStartedAt);
-      if (forceCaptcha) {
+      if (shouldForceCaptcha) {
         notify(t("alreadySigned", { duration: formatDuration(elapsedMs) }));
       }
       return;
     }
-    notifyNeedSign(forceCaptcha, elapsedMs);
-    if (forceCaptcha || autoPopupEnabled()) {
+    notifyNeedSign(shouldForceCaptcha, elapsedMs);
+    if (shouldForceCaptcha || autoPopupEnabled()) {
       openCaptchaWindow();
     }
   }

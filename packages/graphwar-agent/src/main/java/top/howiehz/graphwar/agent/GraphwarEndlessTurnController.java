@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.UUID;
 
 /** Withholds the post-explosion ready message until one local human submits a shot. */
-final class GraphwarEndlessTurnController implements ClassFileTransformer {
+public final class GraphwarEndlessTurnController implements ClassFileTransformer {
     private static final String GAME_DATA_CLASS = "Graphwar/GameData";
     private static volatile GraphwarEndlessTurnController installedController;
     private final boolean isEnabled;
@@ -122,10 +122,9 @@ final class GraphwarEndlessTurnController implements ClassFileTransformer {
             clear();
             return null;
         }
-        if (endlessTurn.battleRevision == null) {
+        if (endlessTurn.phase == Phase.HELD) {
             endlessTurn.battleRevision = battleRevision;
-        }
-        if (!endlessTurn.battleRevision.equals(battleRevision)) {
+        } else if (!endlessTurn.battleRevision.equals(battleRevision)) {
             clear();
             return null;
         }

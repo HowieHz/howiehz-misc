@@ -83,7 +83,7 @@ public final class GraphwarAgentApiTest {
     }
 
     /** Redirects only the original post-explosion and inbound-turn call sites. */
-    private static void testEndlessTurnTransformation() throws IOException {
+    private static void testEndlessTurnTransformation() throws Exception {
         GraphwarEndlessTurnController controller =
                 new GraphwarEndlessTurnController(GraphwarAgentConfig.parse("endlessTurn=true"));
         byte[] original = readClassBytes("/Graphwar/GameData.class");
@@ -94,6 +94,15 @@ public final class GraphwarAgentApiTest {
         String symbols = new String(transformed, StandardCharsets.ISO_8859_1);
         assertContains(symbols, "onPostExplosionNextTurn", "post-explosion redirect");
         assertContains(symbols, "onNextTurnMessage", "inbound NEXT_TURN redirect");
+        Class<?> transformedGameData =
+                new TransformedClassLoader().define("Graphwar.GameData", transformed);
+        Object transformedGame = transformedGameData.getConstructor().newInstance();
+        transformedGameData.getMethod("setExploding", Boolean.TYPE).invoke(transformedGame, true);
+        transformedGameData.getMethod("getTimeExploding").invoke(transformedGame);
+        assertEquals(
+                Collections.singletonList("ready-next-turn"),
+                transformedGameData.getMethod("getNextTurnCalls").invoke(transformedGame),
+                "transformed post-explosion redirect remains linkable");
     }
 
     /** Covers virtual projection, exact ready release, and direct NEXT_TURN wake-up. */
@@ -114,7 +123,19 @@ public final class GraphwarAgentApiTest {
         assertContains(heldState, "\"remainingTurnMs\":60000", "endless virtual time");
         String turnToken = extractJsonString(heldState, "turnToken");
         String gameInstanceId = extractJsonString(heldState, "gameInstanceId");
-        String battleRevision = extractJsonString(heldState, "battleRevision");
+        String initialBattleRevision = extractJsonString(heldState, "battleRevision");
+        obstacle.setBlocked(10, 10, true);
+        obstacle.setExplosion(10, 10, 1);
+        String updatedHeldState = stateReader.readStateJson();
+        assertContains(updatedHeldState, "\"phase\":\"aiming\"", "endless updated virtual phase");
+        assertEquals(
+                turnToken,
+                extractJsonString(updatedHeldState, "turnToken"),
+                "endless virtual token survives explosion updates");
+        String battleRevision = extractJsonString(updatedHeldState, "battleRevision");
+        assertTrue(
+                !initialBattleRevision.equals(battleRevision),
+                "endless virtual state uses updated battle revision");
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {

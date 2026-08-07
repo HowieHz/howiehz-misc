@@ -146,6 +146,7 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxRequestBodyBytes`   | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
 | `maxFunctionBytes`      | Limit submitted function size in UTF-8 bytes | `65536`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
 | `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `4432`                                                     | `1`–`40960`                                                 |
+| `endlessTurn`           | Give local humans unlimited thinking time    | `false`                                                    | Exact lowercase `true`                                      |
 
 The 4432-token default passed all repeated runs in the reference 1 MiB-stack probe. Nearby higher candidates varied
 between fresh JVM runs, so values above 4432 are parser-unsafe opt-ins: deeply recursive formulas can exhaust

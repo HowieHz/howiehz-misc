@@ -26,6 +26,8 @@ public final class GraphwarAgent {
         }
 
         GraphwarAgentConfig config = GraphwarAgentConfig.parse(agentArgs);
+        GraphwarEndlessTurnController endlessTurnController =
+                new GraphwarEndlessTurnController(config);
         // Source: Graphwar's recursive formula parser and evaluator run on network/UI threads.
         instrumentation.addTransformer(new GraphwarFunctionGuard(config), false);
         // Source: Graphwar's countdown helpers cancel sleep with Thread.interrupt() and
@@ -43,9 +45,12 @@ public final class GraphwarAgent {
         // Source: GraphPlane derives fade opacity from non-monotonic wall-clock timers,
         // but AlphaComposite rejects the resulting value when it briefly leaves [0, 1].
         instrumentation.addTransformer(new GraphwarAlphaCompositeFixer(), false);
+        instrumentation.addTransformer(endlessTurnController, false);
 
         printBuildInfo();
-        GraphwarStateReader stateReader = new GraphwarStateReader(config);
+        GraphwarStateReader stateReader =
+                new GraphwarStateReader(
+                        config, GraphwarStateReader::findGraphwarWindow, endlessTurnController);
         GraphwarShotCommandStore shotCommands = new GraphwarShotCommandStore(stateReader);
         stateReader.setShotCommands(shotCommands);
         server = GraphwarHttpServer.start(config, stateReader, shotCommands);
@@ -67,6 +72,7 @@ public final class GraphwarAgent {
                         + " bytes, "
                         + config.maxFunctionTokens
                         + " tokens");
+        System.err.println("[graphwar-agent] endlessTurn " + config.isEndlessTurnEnabled);
         if (config.isAuthenticationRequired()) {
             System.err.println("[graphwar-agent] access token " + config.token);
         }

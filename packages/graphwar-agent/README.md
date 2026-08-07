@@ -1,5 +1,17 @@
 # Graphwar Agent
 
+## Endless local turns
+
+Start with `endlessTurn=true` to give a predicted connected local human successor unlimited
+thinking time: the Agent withholds the post-explosion `READY_NEXT_TURN` request. The option is off
+by default and only the exact lowercase value `true` enables it. The Agent exposes a virtual
+60-second aiming state; any authenticated `POST /shots` releases the held ready request, then
+waits indefinitely for the real server `NEXT_TURN` before submitting the function. Computer players
+are never held.
+
+Closing Graphwar or the Agent while a turn is held can leave the room waiting for READY; restart
+or leave the room to recover. API request/response shapes do not change.
+
 **English** | [简体中文](./README.zh.md)
 
 Graphwar Agent is a Java agent for the official Graphwar client and requires no additional runtime dependencies. It listens only on `127.0.0.1` and provides live match and room state, obstacle masks, room readiness controls, and shot commands whose results remain queryable after a request timeout.
@@ -36,6 +48,7 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxRequestBodyBytes`   | Limit the JSON data accepted per API request | `65536`                                                    | `1024`–`16777216`                                           |
 | `maxFunctionBytes`      | Limit submitted function size in UTF-8 bytes | `65536`                                                    | `1`–`1048576`, capped to the effective request-body limit   |
 | `maxFunctionTokens`     | Limit effective Graphwar evaluation tokens   | `4432`                                                     | `1`–`40960`                                                 |
+| `endlessTurn`           | Give local humans unlimited thinking time    | `false`                                                    | Exact lowercase `true`                                      |
 
 The 4432-token default passed all repeated runs in the reference 1 MiB-stack probe. Nearby higher candidates varied
 between fresh JVM runs, so values above 4432 are parser-unsafe opt-ins: deeply recursive formulas can exhaust

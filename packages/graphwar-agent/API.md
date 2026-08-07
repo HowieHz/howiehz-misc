@@ -415,6 +415,12 @@ Outside a pre-game room, or when no local player exists, the endpoint returns `4
 
 ## 6. Shot command resources
 
+When the Java Agent is started with `endlessTurn=true`, a connected local human successor receives
+unlimited thinking time through a virtual 60-second `aiming` state after an explosion. Any
+authenticated shot claims and releases that globally held READY request. Its command remains `claimed` until the real server
+`NEXT_TURN` arrives; there is no timeout fallback. This changes no request, response, or OpenAPI
+schema field.
+
 Each shot submission creates a command that clients can query later. The Agent stores at most 50 command records. Repeating the same retained request ID and content returns the existing command without calling Graphwar again. This tells clients only how the Agent handled the request; Graphwar itself does not confirm execution with the request ID.
 
 ### 6.1 Create or replay a command

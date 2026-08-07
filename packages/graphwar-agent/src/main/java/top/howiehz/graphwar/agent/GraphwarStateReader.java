@@ -28,6 +28,7 @@ final class GraphwarStateReader {
     private final String agentInstanceId = UUID.randomUUID().toString();
     private final Supplier<Object> graphwarFinder;
     private final GraphwarFunctionLimits functionLimits;
+    private final GraphwarEndlessTurnController endlessTurnController;
     private final Object identityLock = new Object();
     // Serializes GameData replacement with identity publication; old snapshots must never retire a
     // newer game.
@@ -65,9 +66,18 @@ final class GraphwarStateReader {
 
     /** Accepts both limits and a client locator for complete contract tests. */
     GraphwarStateReader(GraphwarAgentConfig config, Supplier<Object> graphwarFinder) {
+        this(config, graphwarFinder, new GraphwarEndlessTurnController(config));
+    }
+
+    /** Accepts the single turn controller installed beside this reader. */
+    GraphwarStateReader(
+            GraphwarAgentConfig config,
+            Supplier<Object> graphwarFinder,
+            GraphwarEndlessTurnController endlessTurnController) {
         this.functionLimits =
                 new GraphwarFunctionLimits(config.maxFunctionBytes, config.maxFunctionTokens);
         this.graphwarFinder = graphwarFinder;
+        this.endlessTurnController = endlessTurnController;
     }
 
     /** Connects the command ledger after construction without creating an ownership cycle. */
@@ -246,6 +256,8 @@ final class GraphwarStateReader {
 
         // Syntax does not depend on mutable match state and is cheaper to reject before locking it.
         validateFunctionSyntax(graphwarForValidation, request.function);
+        Object releasedGameData = null;
+        Object releasedObstacle = null;
         synchronized (snapshotLock) {
             Object graphwar = graphwarFinder.get();
             if (graphwar == null) {
@@ -323,18 +335,63 @@ final class GraphwarStateReader {
                 }
                 claimTurnToken(request.turnToken);
                 onClaimed.run();
-                if (request.angleRadians != null) {
-                    invoke(
-                            gameData,
-                            "setAngle",
-                            Double.TYPE,
-                            Double.valueOf(request.angleRadians.doubleValue()));
+                Object obstacle = invoke(gameData, "getObstacle");
+                if (endlessTurnController.claimAndRelease(gameData, obstacle, request.turnToken)) {
+                    releasedGameData = gameData;
+                    releasedObstacle = obstacle;
+                } else {
+                    sendShot(gameData, request);
                 }
-                // The local monitor prevents a Graphwar message from changing turns between
-                // validation, angle mutation, and queuing the original two wire messages.
-                invoke(gameData, "sendFunction", String.class, request.function);
             }
         }
+        if (releasedGameData == null) {
+            return;
+        }
+        if (!endlessTurnController.awaitRealTurn(
+                releasedGameData, releasedObstacle, request.turnToken)) {
+            throw new GraphwarStateUnavailableException(
+                    "Graphwar endless turn changed before NEXT_TURN");
+        }
+        synchronized (snapshotLock) {
+            Object graphwar = graphwarFinder.get();
+            if (graphwar == null
+                    || invoke(graphwar, "getGameData") != releasedGameData
+                    || invoke(releasedGameData, "getObstacle") != releasedObstacle) {
+                endlessTurnController.complete(
+                        releasedGameData, releasedObstacle, request.turnToken);
+                throw new GraphwarStateUnavailableException(
+                        "Graphwar endless turn changed before submission");
+            }
+            synchronized (releasedGameData) {
+                StateSnapshot snapshot = readStateSnapshotLocked(releasedGameData, true);
+                if (!request.turnToken.equals(snapshot.turnToken)
+                        || !request.battleRevision.equals(snapshot.battleRevision)
+                        || snapshot.currentTurn < 0
+                        || snapshot.currentTurn >= snapshot.players.size()) {
+                    throw new GraphwarStateUnavailableException(
+                            "Graphwar endless turn changed before submission");
+                }
+                try {
+                    sendShot(releasedGameData, request);
+                } finally {
+                    endlessTurnController.complete(
+                            releasedGameData, releasedObstacle, request.turnToken);
+                }
+            }
+        }
+    }
+
+    /** Performs the official mutable calls only after the caller owns the GameData monitor. */
+    private static void sendShot(Object gameData, GraphwarShotRequest request)
+            throws GraphwarStateException {
+        if (request.angleRadians != null) {
+            invoke(
+                    gameData,
+                    "setAngle",
+                    Double.TYPE,
+                    Double.valueOf(request.angleRadians.doubleValue()));
+        }
+        invoke(gameData, "sendFunction", String.class, request.function);
     }
 
     /** Sends one contiguous original-button-equivalent ready batch for all local players. */
@@ -420,6 +477,7 @@ final class GraphwarStateReader {
             throws GraphwarStateException {
         int gameState = readInt(gameData, "getGameState", -1);
         if (gameState != GRAPHWAR_GAME_STATE_GAME) {
+            endlessTurnController.clear();
             if (shouldRequireObstacle) {
                 throw new GraphwarStateUnavailableException("Graphwar is not in an active game");
             }
@@ -428,6 +486,7 @@ final class GraphwarStateReader {
 
         Object obstacle = invoke(gameData, "getObstacle");
         if (obstacle == null) {
+            endlessTurnController.clear();
             if (shouldRequireObstacle) {
                 throw new GraphwarStateUnavailableException(
                         "Graphwar game has not started; obstacle is unavailable");
@@ -493,16 +552,58 @@ final class GraphwarStateReader {
             currentTurnSoldierIndex = currentPlayer.currentTurnSoldierIndex;
         }
 
+        GraphwarEndlessTurnController.Projection projection =
+                endlessTurnController.project(
+                        gameData, obstacle, battleRevision, currentTurn, readPlayers(gameData));
+        if (projection != null) {
+            List<PlayerSnapshot> projectedPlayers = new ArrayList<PlayerSnapshot>(players);
+            PlayerSnapshot player = projectedPlayers.get(projection.playerIndex);
+            projectedPlayers.set(
+                    projection.playerIndex,
+                    new PlayerSnapshot(
+                            player.playerIndex,
+                            player.playerId,
+                            player.team,
+                            player.name,
+                            player.isLocal,
+                            player.isComputerControlled,
+                            player.isReady,
+                            player.isConnected,
+                            projection.soldierIndex,
+                            player.soldiers));
+            players = projectedPlayers;
+            currentTurn = projection.playerIndex;
+            currentTurnPlayerId = projection.playerId;
+            currentTurnSoldierIndex = projection.soldierIndex;
+            isDrawingFunction = false;
+            isExploding = false;
+            functionDraw = null;
+            remainingTurnMs = 60_000L;
+        }
+        long turnStartedAt =
+                currentTurnPlayerId >= 0
+                        ? readLongField(gameData, "timeTurnStarted")
+                        : Long.MIN_VALUE;
+        String retainedTurnToken =
+                projection == null
+                        ? endlessTurnController.retainedToken(
+                                gameData,
+                                obstacle,
+                                currentTurn,
+                                currentTurnPlayerId,
+                                currentTurnSoldierIndex,
+                                turnStartedAt)
+                        : projection.turnToken;
+
         IdentitySnapshot identity =
                 resolveIdentity(
                         gameData,
                         obstacle,
                         currentTurnPlayerId >= 0,
-                        currentTurnPlayerId >= 0
-                                ? readLongField(gameData, "timeTurnStarted")
-                                : Long.MIN_VALUE,
+                        turnStartedAt,
                         currentTurnPlayerId,
-                        currentTurnSoldierIndex);
+                        currentTurnSoldierIndex,
+                        retainedTurnToken);
 
         return new StateSnapshot(
                 true,
@@ -516,7 +617,9 @@ final class GraphwarStateReader {
                 functionDraw,
                 isDrawingFunction,
                 isExploding,
-                isExploding ? "exploding" : isDrawingFunction ? "drawing" : "aiming",
+                projection != null
+                        ? "aiming"
+                        : isExploding ? "exploding" : isDrawingFunction ? "drawing" : "aiming",
                 isTerrainReversed,
                 gameState,
                 gameMode,
@@ -527,7 +630,7 @@ final class GraphwarStateReader {
     }
 
     /** Finds the official JFrame on demand so a closed window is never retained. */
-    private static Object findGraphwarWindow() {
+    static Object findGraphwarWindow() {
         // The agent runs inside the official client JVM, so the JFrame is already live in AWT.
         for (Window window : Window.getWindows()) {
             if ("Graphwar.Graphwar".equals(window.getClass().getName())) {
@@ -590,7 +693,8 @@ final class GraphwarStateReader {
             boolean isActiveTurn,
             long turnStartedAt,
             int playerId,
-            int soldierIndex) {
+            int soldierIndex,
+            String retainedTurnToken) {
         synchronized (identityLock) {
             if (identityGameData != gameData || identityObstacle != obstacle) {
                 identityGameData = gameData;
@@ -603,7 +707,15 @@ final class GraphwarStateReader {
                 isTurnTokenClaimed = false;
             }
 
-            if (isActiveTurn
+            if (retainedTurnToken != null) {
+                if (!retainedTurnToken.equals(turnToken)) {
+                    isTurnTokenClaimed = false;
+                }
+                identityTurnStartedAt = turnStartedAt;
+                identityPlayerId = playerId;
+                identitySoldierIndex = soldierIndex;
+                turnToken = retainedTurnToken;
+            } else if (isActiveTurn
                     && (identityTurnStartedAt != turnStartedAt
                             || identityPlayerId != playerId
                             || identitySoldierIndex != soldierIndex)) {

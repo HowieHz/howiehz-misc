@@ -1,5 +1,13 @@
 # Graphwar Agent
 
+## 无限本地回合
+
+使用 `endlessTurn=true` 启动后，当预测的下一位玩家是已连接的本地人类玩家时，Agent 会给予该玩家无限思考时间：暂缓爆炸后的
+`READY_NEXT_TURN`。默认关闭，且只有精确的小写 `true` 才会启用。Agent 会提供虚拟的 60 秒瞄准状态；任意已认证的
+`POST /shots` 都会释放 READY，随后无限期等待真实服务器 `NEXT_TURN`，再提交函数。电脑玩家不会被暂缓。
+
+在回合被暂缓时关闭 Graphwar 或 Agent 可能使房间等待 READY；请重启或离开房间恢复。API 请求和响应形状不变。
+
 [English](./README.md) | **简体中文**
 
 Graphwar Agent 是面向 Graphwar 官方客户端的 Java Agent，无需额外运行时依赖。它只监听 `127.0.0.1`，通过 HTTP API 提供实时对局与房间状态、障碍 mask 和准备状态控制，也可以提交发射命令，并在请求超时后继续查询结果。
@@ -36,6 +44,7 @@ java -javaagent:graphwar-agent.jar=token=auto,maxRequestHeaderBytes=16384,maxReq
 | `maxRequestBodyBytes`   | 限制单次 API 提交的 JSON 数据大小     | `65536`                                                 | `1024`–`16777216`                             |
 | `maxFunctionBytes`      | 限制单次提交的函数大小（按 UTF-8 计） | `65536`                                                 | `1`–`1048576`，且不会超过实际请求体上限       |
 | `maxFunctionTokens`     | 限制 Graphwar 实际求值 token 数       | `4432`                                                  | `1`–`40960`                                   |
+| `endlessTurn`           | 给予本地人类玩家无限思考时间          | `false`                                                 | 精确的小写 `true`                             |
 
 4432 token 默认值通过了原版 parser 的 1 MiB 栈探针全部重复测试。邻近的更高候选值在全新 JVM 间结果不一致，因此高于 4432
 的值属于 parser 不安全的显式配置：深递归公式可能耗尽 Graphwar 线程栈，大公式也可能长期占用处理线程。发射 POST

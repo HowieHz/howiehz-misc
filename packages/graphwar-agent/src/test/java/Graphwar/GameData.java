@@ -19,6 +19,9 @@ public final class GameData {
     private Obstacle obstacle;
     private final List<Player> players = new ArrayList<Player>();
     private final List<String> readyCalls = new ArrayList<String>();
+    private final List<String> nextTurnCalls = new ArrayList<String>();
+    private boolean nextTurnSent;
+    private boolean gameFinished;
     private long remainingTime = 57_000L;
     private final List<String> shotCalls = new ArrayList<String>();
     private boolean isTerrainReversed;
@@ -120,6 +123,48 @@ public final class GameData {
     public boolean isTerrainReversed() {
         assertRequiredLock();
         return isTerrainReversed;
+    }
+
+    /** Mirrors the post-explosion private READY_NEXT_TURN request. */
+    private void nextTurn() {
+        nextTurnCalls.add("ready-next-turn");
+    }
+
+    /** Mirrors the official terminal-game guard used before READY_NEXT_TURN. */
+    private boolean checkGameFinished() {
+        return gameFinished;
+    }
+
+    /** Mirrors the inbound NEXT_TURN dispatch target used by the scoped transformer. */
+    private void nextTurnMessage(String[] info) {
+        currentTurn = (currentTurn + 1) % players.size();
+        players.get(currentTurn)
+                .setCurrentTurnSoldierIndex(
+                        (players.get(currentTurn).getCurrentTurnSoldierIndex() + 1)
+                                % players.get(currentTurn).getNumSoldiers());
+        timeTurnStarted += 1L;
+        isDrawingFunction = false;
+        isExploding = false;
+        nextTurnSent = false;
+    }
+
+    /** Exposes the original inbound route for transformed-fixture tests. */
+    public synchronized void handleMessage(String message) {
+        nextTurnMessage(message.split("&"));
+    }
+
+    /** Exposes the exact transformed call site used by the official client. */
+    public synchronized long getTimeExploding() {
+        if (isExploding && !nextTurnSent) {
+            nextTurn();
+            nextTurnSent = true;
+        }
+        return 0L;
+    }
+
+    /** Returns the recorded post-explosion ready requests. */
+    public List<String> getNextTurnCalls() {
+        return new ArrayList<String>(nextTurnCalls);
     }
 
     /** Records one original GameData.setAngle call and its local soldier mutation. */
@@ -273,6 +318,9 @@ public final class GameData {
     /** Sets whether the match is resolving an explosion. */
     public void setExploding(boolean isExploding) {
         this.isExploding = isExploding;
+        if (!isExploding) {
+            nextTurnSent = false;
+        }
     }
 
     /** Sets the reflected game mode. */
@@ -283,6 +331,11 @@ public final class GameData {
     /** Sets the reflected lifecycle phase. */
     public void setGameState(int gameState) {
         this.gameState = gameState;
+    }
+
+    /** Selects whether the fixture should use the official GAME_FINISHED branch. */
+    public void setGameFinished(boolean gameFinished) {
+        this.gameFinished = gameFinished;
     }
 
     /** Sets the reflected room-leader flag. */

@@ -4,7 +4,7 @@
 // @name:zh-CN         BlogsClub 签到助手
 // @name:zh-TW         BlogsClub 簽到助手
 // @namespace          https://howiehz.top
-// @version            0.3.0
+// @version            0.3.2
 // @author             HowieHz
 // @description        Checks BlogsClub check-in status in the background (BlogsClub pages by default) and supports manual CAPTCHA verification.
 // @description:zh     默认仅在 BlogsClub 页面后台检查签到状态，并支持手动完成验证码。

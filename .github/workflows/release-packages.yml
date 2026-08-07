@@ -264,3 +264,113 @@ jobs:
           USERSCRIPT_DIRECTORIES_JSON: ${{ needs.prepare-release.outputs.userscript-directories-json }}
           RELEASE_ASSET_ROOT: dist/userscript-assets
         run: node .github/scripts/create-github-releases.js
+
+  publish-userscript-branch:
+    name: Publish stable userscripts to dist branch
+    needs: [prepare-release, build-userscripts, create-github-releases]
+    if: |
+      needs.prepare-release.outputs.has-release-userscripts == 'true' &&
+      needs.build-userscripts.result == 'success' &&
+      needs.create-github-releases.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
+
+      - name: Download userscript release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # https://github.com/actions/download-artifact/releases/tag/v8.0.1
+        with:
+          name: userscript-release-assets
+          path: dist/userscript-assets
+
+      - name: Publish stable userscript assets
+        env:
+          USERSCRIPT_DIRECTORIES_JSON: ${{ needs.prepare-release.outputs.userscript-directories-json }}
+        run: |
+          worktree="$RUNNER_TEMP/dist-userscript"
+          trap 'git worktree remove --force "$worktree"' EXIT
+          git fetch origin refs/heads/dist-userscript:refs/remotes/origin/dist-userscript
+          git worktree add --detach "$worktree" origin/dist-userscript
+
+          publishedDirectoriesFile="$RUNNER_TEMP/userscript-published-directories"
+          WORKTREE="$worktree" PUBLISHED_DIRECTORIES_FILE="$publishedDirectoriesFile" node --input-type=module <<'EOF'
+          import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+          import path from "node:path";
+
+          const worktree = path.resolve(process.env.WORKTREE ?? "");
+          const packageDirectories = JSON.parse(process.env.USERSCRIPT_DIRECTORIES_JSON ?? "[]");
+
+          if (!Array.isArray(packageDirectories)) {
+            throw new Error("USERSCRIPT_DIRECTORIES_JSON must be an array.");
+          }
+
+          const publishedDirectories = new Set();
+          for (const directory of packageDirectories) {
+            if (typeof directory !== "string" || directory.length === 0) {
+              throw new Error(`Invalid userscript package directory: ${directory}`);
+            }
+
+            const packageDirectory = path.resolve(directory);
+            const packageJson = JSON.parse(await readFile(path.join(packageDirectory, "package.json"), "utf8"));
+            if (typeof packageJson.version !== "string" || packageJson.version.includes("-")) {
+              continue;
+            }
+            if (typeof packageJson.releaseAsset !== "string" || path.isAbsolute(packageJson.releaseAsset)) {
+              throw new Error(`releaseAsset must be a relative path: ${directory}`);
+            }
+
+            const assetPath = path.resolve(packageDirectory, packageJson.releaseAsset);
+            const relativeAssetPath = path.relative(packageDirectory, assetPath);
+            if (relativeAssetPath.length === 0 || relativeAssetPath.startsWith("..") || path.isAbsolute(relativeAssetPath)) {
+              throw new Error(`releaseAsset must stay inside its package: ${directory}`);
+            }
+
+            if (
+              typeof packageJson.name !== "string" ||
+              packageJson.name.length === 0 ||
+              packageJson.name !== path.basename(packageJson.name) ||
+              packageJson.name === "." ||
+              packageJson.name === ".."
+            ) {
+              throw new Error(`userscript package name must be a plain directory name: ${directory}`);
+            }
+
+            const publishedDirectory = packageJson.name;
+            if (publishedDirectories.has(publishedDirectory)) {
+              throw new Error(`Duplicate userscript publish directory: ${publishedDirectory}`);
+            }
+            publishedDirectories.add(publishedDirectory);
+
+            const destinationDirectory = path.join(worktree, publishedDirectory);
+            const artifactPath = path.resolve(
+              "dist/userscript-assets",
+              path.basename(directory),
+              path.basename(assetPath),
+            );
+            await rm(destinationDirectory, { force: true, recursive: true });
+            await mkdir(destinationDirectory, { recursive: true });
+            await copyFile(artifactPath, path.join(destinationDirectory, path.basename(assetPath)));
+          }
+
+          await writeFile(process.env.PUBLISHED_DIRECTORIES_FILE, [...publishedDirectories].join("\n"), "utf8");
+          EOF
+          mapfile -t packageDirectories < "$publishedDirectoriesFile"
+
+          if [ "${#packageDirectories[@]}" -eq 0 ]; then
+            echo "No stable userscript assets to publish."
+            exit 0
+          fi
+
+          git -C "$worktree" add --all -- "${packageDirectories[@]}"
+          if git -C "$worktree" diff --cached --quiet; then
+            echo "Userscript branch is already current."
+            exit 0
+          fi
+
+          git -C "$worktree" config user.name "github-actions[bot]"
+          git -C "$worktree" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$worktree" commit -m "release: publish userscripts"
+          git -C "$worktree" push origin HEAD:dist-userscript

@@ -10,7 +10,7 @@ outline: deep
 本仓库当前通过 Changesets 管理发布的 npm 包如下：
 
 - [compat-finder](https://www.npmjs.com/package/compat-finder)：[更新日志](https://github.com/HowieHz/howiehz-misc/blob/main/packages/compat-finder/CHANGELOG.md)
-- `blogsclub-signin-helper`：不发布到 npm；通过 GitHub Release 提供 `.user.js` 资产，并由 Greasy Fork webhook 同步。
+- `blogsclub-signin-helper`：不发布到 npm；通过 GitHub Release 提供 `.user.js` 资产，并由 Greasy Fork webhook 同步稳定版本。
 
 ## 版本规则
 
@@ -44,18 +44,20 @@ outline: deep
 
 ## Greasy Fork 同步
 
-`blogsclub-signin-helper` 不发布到 npm。Release workflow 会构建并上传以下 GitHub Release 资产：
+`blogsclub-signin-helper` 不发布到 npm。Release workflow 会保留并上传以下 GitHub Release 资产：
 
 ```text
 blogsclub-signin-helper.user.js
 ```
 
-在 Greasy Fork 的[用户 webhook 信息页面](https://greasyfork.org/zh-CN/users/webhook-info)生成 Secret，然后在 GitHub 仓库的 Settings → Webhooks 中添加 webhook：使用页面提供的 Payload URL，Content type 选择 `application/json`，只勾选 Releases 事件，并保持 Active。
+Release workflow 在所有 GitHub Release 成功后，将每个稳定版 userscript 的产物发布到 `dist-userscript` 分支的 `<包名>/<资产文件名>`。包名必须是普通目录名。版本号包含 `-` 的预发布版本仍保留 GitHub Release 资产，但不会更新该分支。发布时会整体替换本次包对应目录，不影响其他包目录；内容未变化时不会创建 commit。
+
+在 Greasy Fork 的[用户 webhook 信息页面](https://greasyfork.org/zh-CN/users/webhook-info)生成 Secret，然后在 GitHub 仓库的 Settings → Webhooks 中添加 webhook：使用页面提供的 Payload URL，Content type 选择 `application/json`，只勾选 Push 事件，并保持 Active。
 
 在 Greasy Fork 中将脚本同步地址设为：
 
 ```text
-https://github.com/HowieHz/howiehz-misc/releases/latest/download/blogsclub-signin-helper.user.js
+https://raw.githubusercontent.com/HowieHz/howiehz-misc/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js
 ```
 
-之后，合并 Changesets 生成的 release PR 后，GitHub Release 发布会触发 Greasy Fork 更新脚本。
+首次改为该地址后，请在 Greasy Fork 手动同步一次。之后，合并 Changesets 生成的 release PR 后，稳定版会在 GitHub Release 成功后更新分支，并由 Push webhook 触发 Greasy Fork 更新脚本。若分支发布失败，GitHub Release 不会回滚；使用 Actions 的 **Re-run failed jobs** 重试。

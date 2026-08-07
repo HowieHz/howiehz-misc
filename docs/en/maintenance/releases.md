@@ -10,7 +10,7 @@ outline: deep
 The npm packages currently released from this repository through Changesets are:
 
 - [`compat-finder`](https://www.npmjs.com/package/compat-finder): [changelog](https://github.com/HowieHz/howiehz-misc/blob/main/packages/compat-finder/CHANGELOG.md)
-- `blogsclub-signin-helper`: not published to npm; its `.user.js` asset is uploaded to GitHub Releases and synchronized by a Greasy Fork webhook.
+- `blogsclub-signin-helper`: not published to npm; its `.user.js` asset is uploaded to GitHub Releases and stable versions are synchronized by a Greasy Fork webhook.
 
 ## Versioning
 
@@ -44,18 +44,21 @@ Before npm publishing begins, the workflow runs `gh attestation verify` against 
 
 ## Greasy Fork Synchronization
 
-`blogsclub-signin-helper` is not published to npm. The release workflow builds and uploads this GitHub Release asset:
+`blogsclub-signin-helper` is not published to npm. The release workflow keeps and uploads this GitHub Release asset:
 
 ```text
 blogsclub-signin-helper.user.js
 ```
 
-Generate a secret on Greasy Fork's [webhook information page](https://greasyfork.org/zh-CN/users/webhook-info), then add a webhook in the GitHub repository under Settings → Webhooks. Use the Payload URL shown by Greasy Fork, select `application/json`, enable only Release events, and keep the webhook active.
+After every GitHub Release succeeds, the release workflow publishes each stable userscript asset to `dist-userscript` at `<package-name>/<asset-filename>`. A package name must be a plain directory name.
+Pre-releases with `-` in their version keep their GitHub Release asset but do not update that branch. Publishing fully replaces the released package directory without touching other package directories; unchanged content creates no commit.
+
+Generate a secret on Greasy Fork's [webhook information page](https://greasyfork.org/zh-CN/users/webhook-info), then add a webhook in the GitHub repository under Settings → Webhooks. Use the Payload URL shown by Greasy Fork, select `application/json`, enable only Push events, and keep the webhook active.
 
 Set the Greasy Fork sync URL to:
 
 ```text
-https://github.com/HowieHz/howiehz-misc/releases/latest/download/blogsclub-signin-helper.user.js
+https://raw.githubusercontent.com/HowieHz/howiehz-misc/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js
 ```
 
-After the Changesets release PR is merged, publishing the GitHub Release triggers Greasy Fork to update the script.
+After switching to this URL, manually synchronize once in Greasy Fork. Then, after the Changesets release PR is merged, a stable release updates the branch after its GitHub Release succeeds, and the Push webhook triggers Greasy Fork to update the script. If branch publication fails, the GitHub Release remains intact; use **Re-run failed jobs** in Actions to retry.

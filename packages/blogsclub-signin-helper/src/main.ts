@@ -32,7 +32,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
 
   const API = "https://www.blogsclub.org"; // BlogsClub 接口和页面请求的根地址。
   const CAPTCHA_ID = "f70029ad5e8b031ff90bd54bce240f14"; // BlogsClub 签到使用的 Geetest 验证码 ID。
-  const DEFAULT_INTERVAL_MS = 10 * 1000; // 后台状态检查的默认周期：10 秒。
+  const DEFAULT_INTERVAL_MS = 1000; // 后台状态检查的默认周期：1 秒。
   const MIN_INTERVAL_MS = 1; // 检查周期允许的最小值：1 毫秒。
   const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000; // 检查周期允许的最大值：24 小时。
   const DEFAULT_RUSH_LEAD_SECONDS = 5; // 默认在服务端零点前 5 秒打开验证码。

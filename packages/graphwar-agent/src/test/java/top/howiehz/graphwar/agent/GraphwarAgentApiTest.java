@@ -667,7 +667,8 @@ public final class GraphwarAgentApiTest {
             throws Exception {
         String health = request(port, "GET", "/health", null, null).bodyText();
         assertContains(health, "\"apiVersion\":3", "health API version");
-        assertContains(health, "\"version\":\"2.0.0\"", "Agent version");
+        assertContains(
+                health, "\"version\":\"" + GraphwarAgentBuildInfo.VERSION + "\"", "Agent version");
         assertContains(health, "\"isAuthenticationRequired\":false", "health auth flag");
         assertContains(health, "\"maxRequestHeaderBytes\":8192", "health header limit");
         assertContains(health, "\"maxFunctionBytes\":65536", "health function byte limit");

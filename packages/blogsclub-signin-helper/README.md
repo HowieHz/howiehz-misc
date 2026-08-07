@@ -1,6 +1,6 @@
 # BlogsClub Check-in Helper
 
-**English** | [简体中文](./README.zh.md) | [繁體中文](./README.zh-Hant.md)
+**English** | [简体中文](./README.zh-Hans.md) | [繁體中文](./README.zh-Hant.md)
 
 BlogsClub Check-in Helper is a userscript for checking your BlogsClub daily check-in status, reminding you when action is needed, and submitting the check-in after you complete the Geetest challenge.
 

@@ -1,6 +1,6 @@
 # BlogsClub 簽到助手
 
-[English](./README.md) | [简体中文](./README.zh.md) | **繁體中文**
+[English](./README.md) | [简体中文](./README.zh-Hans.md) | **繁體中文**
 
 BlogsClub 簽到助手是一個使用者腳本，用於在背景檢查 BlogsClub 每日簽到狀態，在需要時提醒你，並在你完成 Geetest 驗證碼後提交簽到。
 

@@ -103,6 +103,10 @@ public final class GraphwarAgentApiTest {
                 Collections.singletonList("ready-next-turn"),
                 transformedGameData.getMethod("getNextTurnCalls").invoke(transformedGame),
                 "transformed post-explosion redirect remains linkable");
+        addTransformedCurrentPlayer(transformedGameData, transformedGame, false);
+        transformedGameData
+                .getMethod("handleMessage", String.class)
+                .invoke(transformedGame, "NEXT_TURN");
     }
 
     /** Covers virtual projection, exact ready release, and direct NEXT_TURN wake-up. */

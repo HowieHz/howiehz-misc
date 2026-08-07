@@ -30,23 +30,24 @@ type SharedStatusPromise = Promise<ApiResponse> & { startedAt: number };
 if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   window.__BLOGSCLUB_AUTO_SIGNIN__ = true;
 
-  const API = "https://www.blogsclub.org";
-  const CAPTCHA_ID = "f70029ad5e8b031ff90bd54bce240f14";
-  const DEFAULT_INTERVAL_MS = 10 * 1000; // 默认 10 秒
-  const MIN_INTERVAL_MS = 1; // 最小 1 毫秒
-  const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000; // 最大 24 小时
-  const DEFAULT_RUSH_LEAD_SECONDS = 5; // 默认零点前 5 秒打开验证码
-  const MIN_RUSH_LEAD_SECONDS = 1; // 最小提前 1 秒
-  const MAX_RUSH_LEAD_SECONDS = 60; // 最大提前 60 秒
-  const DEFAULT_RUSH_SUBMIT_DELAY_MS = 500; // 默认服务端零点后 500 毫秒提交
-  const MIN_RUSH_SUBMIT_DELAY_MS = 0;
-  const MAX_RUSH_SUBMIT_DELAY_MS = 60 * 1000;
-  const DEFAULT_RUSH_SUBMIT_RETRIES = 50; // 不含首次提交
-  const MIN_RUSH_SUBMIT_RETRIES = 0;
-  const MAX_RUSH_SUBMIT_RETRIES = Number.MAX_SAFE_INTEGER;
-  const DEFAULT_RUSH_SUBMIT_INTERVAL_MS = 200;
-  const MIN_RUSH_SUBMIT_INTERVAL_MS = 1;
-  const MAX_RUSH_SUBMIT_INTERVAL_MS = 60 * 1000;
+  const API = "https://www.blogsclub.org"; // BlogsClub 接口和页面请求的根地址。
+  const CAPTCHA_ID = "f70029ad5e8b031ff90bd54bce240f14"; // BlogsClub 签到使用的 Geetest 验证码 ID。
+  const DEFAULT_INTERVAL_MS = 10 * 1000; // 后台状态检查的默认周期：10 秒。
+  const MIN_INTERVAL_MS = 1; // 检查周期允许的最小值：1 毫秒。
+  const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000; // 检查周期允许的最大值：24 小时。
+  const DEFAULT_RUSH_LEAD_SECONDS = 5; // 默认在服务端零点前 5 秒打开验证码。
+  const MIN_RUSH_LEAD_SECONDS = 1; // 验证码提前加载允许的最小值：1 秒。
+  const MAX_RUSH_LEAD_SECONDS = 60; // 验证码提前加载允许的最大值：60 秒。
+  const DEFAULT_RUSH_SUBMIT_DELAY_MS = 500; // 默认在服务端零点后 500 毫秒提交。
+  const MIN_RUSH_SUBMIT_DELAY_MS = 0; // 提交延迟允许为 0，表示零点立即提交。
+  const MAX_RUSH_SUBMIT_DELAY_MS = 60 * 1000; // 提交延迟允许的最大值：60 秒。
+  const DEFAULT_RUSH_SUBMIT_RETRIES = 50; // 默认重试 50 次，不含首次提交。
+  const MIN_RUSH_SUBMIT_RETRIES = 0; // 允许关闭重试，仅保留首次提交。
+  const MAX_RUSH_SUBMIT_RETRIES = Number.MAX_SAFE_INTEGER; // 受 JavaScript 安全整数范围限制的最大重试次数。
+  const DEFAULT_RUSH_SUBMIT_INTERVAL_MS = 200; // 默认两次抢签到提交之间间隔 200 毫秒。
+  const MIN_RUSH_SUBMIT_INTERVAL_MS = 1; // 重试间隔允许的最小值：1 毫秒。
+  const MAX_RUSH_SUBMIT_INTERVAL_MS = 60 * 1000; // 重试间隔允许的最大值：60 秒。
+  // 持久化键名保持现有前缀，兼容已安装的旧版本脚本。
   const KEYS = {
     credentials: "blogsclub-auto-signin-credentials",
     accountStatus: "blogsclub-auto-signin-account-status",
@@ -62,8 +63,10 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     notifiedDate: "blogsclub-auto-signin-notified",
   };
 
+  /** 脚本菜单和通知支持的界面语言。 */
   type Language = "en" | "zh-Hans" | "zh-Hant";
 
+  // 菜单和通知使用的多语言文案表。
   const MESSAGES: Record<Language, Record<string, string>> = {
     en: {
       notificationTitle: "BlogsClub Check-in",
@@ -356,6 +359,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   // 本地配置与油猴菜单。
+  // 保存已注册菜单 ID，配置刷新时由 registerMenu 负责注销旧菜单。
   const menuIds = new Map<string, ReturnType<typeof GM_registerMenuCommand>>();
 
   /**

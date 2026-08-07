@@ -1,6 +1,6 @@
 {
   "name": "blogsclub-signin-helper",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "private": true,
   "description": "BlogsClub check-in helper userscript.",
   "type": "module",

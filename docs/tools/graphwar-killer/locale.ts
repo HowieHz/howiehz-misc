@@ -933,6 +933,15 @@ export const graphwarKillerLocale = {
         workerCountAriaLabel: "几何寻路并行工作线程数量",
         workerCountTitle: "设置寻路使用的工作线程数；默认 4，范围 1 到 128",
       },
+      runtime: {
+        heading: "运行设置",
+        wasmAcceleration: "WASM 加速（实验性）",
+        wasmAccelerationTitle:
+          "开启后优先使用 WASM 执行截图识别、公式计算、轨迹、路线查询、智能寻路、一键清图和邪道模式；不可用时自动回退 TypeScript，刷新后重置。目前不支持 SIMD 指令集优化",
+        loading: "正在加载…",
+        ready: "WASM 已就绪",
+        degraded: "已降级",
+      },
       recognition: {
         candidateTopRatio: "候选保留比例",
         candidateTopRatioAriaLabel: "士兵模板候选保留比例",

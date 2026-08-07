@@ -1,3 +1,4 @@
+import { createGraphwarBackendExecution, type GraphwarBackendExecution } from "../../core/algorithm-backend";
 import {
   createGraphwarTrajectoryDebugMetrics,
   type GraphwarTrajectoryDebugCounters,
@@ -31,6 +32,8 @@ export interface GraphwarStepGlitchDebugCounters {
 
 /** Optional Worker diagnostics; cached business results deliberately omit this object. */
 export interface GraphwarPathfindingDiagnostics {
+  /** Requested/effective backend is retained as one atomic execution record. */
+  backendExecution: GraphwarBackendExecution;
   counters: GraphwarPathfindingDebugCounters;
   timings: GraphwarPathfindingDebugTimings;
   stepGlitch?: GraphwarStepGlitchDebugCounters;
@@ -75,9 +78,11 @@ export const graphwarStepGlitchDebugCounterKeys = [
 /** Creates request-local diagnostics without adding any normal-mode allocation. */
 export function createGraphwarPathfindingDebugMetrics(
   shouldCollectStepGlitchCounters: boolean,
+  backendExecution: GraphwarBackendExecution = createGraphwarBackendExecution("typescript"),
 ): GraphwarPathfindingDebugMetrics {
   const trajectory = createGraphwarTrajectoryDebugMetrics();
   return {
+    backendExecution,
     counters: {
       ...trajectory.counters,
       incumbentReportCount: 0,

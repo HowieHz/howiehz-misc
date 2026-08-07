@@ -71,6 +71,14 @@ export interface GraphwarAdvancedSettingsActionBar {
   liveClickPreviewWorkerCountMaximum: number;
 }
 
+/** 页面级实验性 backend 设置；状态由唯一 runtime controller 提供。 */
+export interface GraphwarAdvancedSettingsRuntime {
+  isEnabled: boolean;
+  canToggle: boolean;
+  state: "off" | "loading" | "ready" | "degraded";
+  statusTitle?: string;
+}
+
 /** 高级设置面板跨工作流共享的完整展示模型。 */
 export interface GraphwarAdvancedSettingsPanelModel {
   /** 托管期间锁定所有会改变识别、公式或寻路输入的高级设置。 */
@@ -89,4 +97,6 @@ export interface GraphwarAdvancedSettingsPanelModel {
   pathfinding: GraphwarAdvancedSettingsPathfinding;
   /** 操作栏设置展示模型。 */
   actionBar: GraphwarAdvancedSettingsActionBar;
+  /** 运行设置展示模型。 */
+  runtime: GraphwarAdvancedSettingsRuntime;
 }

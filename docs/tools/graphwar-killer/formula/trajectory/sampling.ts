@@ -54,6 +54,7 @@ import {
   getGraphwarLaunchAngle,
   isGraphwarFormulaConvergenceError,
   sampleGraphwarExpressionTrajectory,
+  sampleGraphwarExpressionTrajectoryWithEvaluator,
   sampleGraphwarTrajectory,
 } from "../simulation/simulator";
 import type {
@@ -61,6 +62,7 @@ import type {
   GraphwarTrajectorySample,
   GraphwarTrajectorySamplingState,
 } from "../simulation/simulator";
+import { graphwarByteArraysEqual } from "./final-replay-snapshot";
 import { graphwarTrajectoryFormulaSettingsAreEquivalent } from "./settings-identity";
 
 /** 轨迹采样主动提前停止的原因；只记录与目标/障碍判定有关的短路。 */
@@ -694,7 +696,10 @@ export function graphwarStepGlitchFormulaEvidenceMatchesSource(
     prefix.bounds.minX !== options.bounds.minX ||
     prefix.bounds.minY !== options.bounds.minY ||
     !graphwarTrajectoryFormulaSettingsAreEquivalent(prefix.settings, settings) ||
-    prefix.settings.stepGlitchObstacleMask !== settings.stepGlitchObstacleMask ||
+    (prefix.settings.stepGlitchObstacleMask === undefined) !== (settings.stepGlitchObstacleMask === undefined) ||
+    (prefix.settings.stepGlitchObstacleMask !== undefined &&
+      settings.stepGlitchObstacleMask !== undefined &&
+      !graphwarByteArraysEqual(prefix.settings.stepGlitchObstacleMask, settings.stepGlitchObstacleMask)) ||
     prefix.soldierCenter?.x !== options.soldierCenter?.x ||
     prefix.soldierCenter?.y !== options.soldierCenter?.y ||
     prefix.points.length > options.points.length
@@ -3776,6 +3781,37 @@ export function sampleGraphwarExpressionTrajectoryWithStops(options: {
   return stopTracker.createResult(sample);
 }
 
+/** Same stop policy as the public expression sampler, with VM evaluation supplied by a backend adapter. */
+export function sampleGraphwarExpressionTrajectoryWithStopsAndEvaluator(
+  options: {
+    bounds: GraphBounds;
+    boundsRect: BoundsRect;
+    collision?: GraphwarTrajectoryCollisionSettings;
+    collectVisiblePixels?: boolean;
+    equation: EquationMode;
+    expression: string;
+    launchAngleRadians?: number;
+    parser?: GraphwarExpressionParserOptions;
+    soldierCenter: GraphPoint;
+  },
+  evaluateExpression: (x: number, y: number, dy: number) => number,
+): GraphwarTrajectorySampleResult {
+  const stopTracker = createGraphwarTrajectoryStopTracker(options);
+  const sample = sampleGraphwarExpressionTrajectoryWithEvaluator(
+    {
+      bounds: options.bounds,
+      equation: options.equation,
+      expression: options.expression,
+      launchAngleRadians: options.launchAngleRadians,
+      parser: options.parser,
+      shouldStop: stopTracker.shouldStop,
+      soldierCenter: options.soldierCenter,
+    },
+    evaluateExpression,
+  );
+  return stopTracker.createResult(sample);
+}
+
 /** 有序目标采样的几何、碰撞和命中输入；内部调用链只携带原子公式模式。 */
 interface GraphwarPathTargetSequenceOptions {
   boundaryExpansion?: number;
@@ -4046,8 +4082,8 @@ function createGraphwarTrajectoryStopTracker(options: {
       }
 
       if (collisionMask) {
-        const planeX = Math.floor((pixel.x - boundsRect.x) * collisionPlaneScaleX);
-        const planeY = Math.floor((pixel.y - boundsRect.y) * collisionPlaneScaleY);
+        const planeX = graphwarJavaPixelCoordinate((pixel.x - boundsRect.x) * collisionPlaneScaleX);
+        const planeY = graphwarJavaPixelCoordinate((pixel.y - boundsRect.y) * collisionPlaneScaleY);
         // 障碍 mask 的边界收缩在像素转平面格点后判断；展开热路径，避免每个采样点创建临时对象。
         if (
           !planePointIsInsideBoundaryExpansion(planeX, planeY, collisionBoundaryExpansion) ||
@@ -4085,6 +4121,20 @@ function createGraphwarTrajectoryStopTracker(options: {
       };
     },
   };
+}
+
+/** Match Java's `(int)` conversion used before Obstacle.collidePoint(). */
+function graphwarJavaPixelCoordinate(value: number) {
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+  if (value >= 2_147_483_647) {
+    return 2_147_483_647;
+  }
+  if (value <= -2_147_483_648) {
+    return -2_147_483_648;
+  }
+  return Math.trunc(value);
 }
 
 /** Measures one trajectory diagnostic phase without adding timers to normal previews. */

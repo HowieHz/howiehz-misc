@@ -1,4 +1,9 @@
 import {
+  createGraphwarSoldierTemplateCanonicalData,
+  type GraphwarSoldierTemplateCanonicalData,
+} from "../../detection/objects";
+import {
+  createGraphwarSoldierTemplateProfileData,
   defaultGraphwarMaximumSoldierCount,
   defaultGraphwarSoldierTemplateCandidateTopRatio,
   defaultGraphwarTemplateMatchingWorkerCount,
@@ -7,8 +12,15 @@ import type { GraphwarDetectionWorkerTask } from "../../detection/runtime/protoc
 import type { GraphwarExpressionProgram } from "../../formula/expression/program";
 import { isGraphwarExpressionProgram } from "../../formula/expression/program";
 import type { GraphwarTrajectoryFormulaSettings } from "../../formula/trajectory/sampling";
+import {
+  createGraphwarRoutePolicyData,
+  createGraphwarThetaStarLookaheadColumnOffsetData,
+} from "../../pathfinding/routing/canonical-data";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
 import type { AlgorithmMode, EquationMode, GraphBounds } from "../types";
+
+/** Route context record size shared by route and composition adapters. */
+export const graphwarWasmRouteContextByteLength = 264;
 import {
   GraphwarWasmAdapterError,
   copyGraphwarWasmFloat64Values,
@@ -20,6 +32,7 @@ import {
   validateGraphwarWasmU32,
   writeGraphwarWasmBytes,
   writeGraphwarWasmFloat64Values,
+  writeGraphwarWasmUint32Values,
   type GraphwarWasmArenaMemorySource,
   type GraphwarWasmMemorySlice,
   type GraphwarWasmMemorySource,
@@ -37,6 +50,18 @@ export interface GraphwarWasmPackedRgbaImage {
   height: number;
   rgba: GraphwarWasmMemorySlice;
   width: number;
+}
+
+/** One immutable upload of the canonical soldier-template tables used by a detection instance/task. */
+export interface GraphwarWasmPackedSoldierTemplates {
+  baseFlags: GraphwarWasmMemorySlice;
+  baseGeometry: GraphwarWasmMemorySlice;
+  basePixelRanges: GraphwarWasmMemorySlice;
+  pixelCoordinates: GraphwarWasmMemorySlice;
+  profile: GraphwarWasmMemorySlice;
+  signatureColors: GraphwarWasmMemorySlice;
+  templateNames: readonly string[];
+  templateRecords: GraphwarWasmMemorySlice;
 }
 
 /** Flat point array 使用 SoA，避免 WASM 热循环中的 JS 对象传输。 */
@@ -83,11 +108,14 @@ export type GraphwarWasmCollisionPolicy =
 export type GraphwarWasmStopPolicy =
   | { type: "natural" }
   | {
+      boundsRect: { height: number; width: number; x: number; y: number };
       collision: GraphwarWasmCollisionPolicy;
       continueAfterTargetsUntilGraphX: { type: "none" } | { graphX: number; type: "value" };
       orderedTargets: readonly GraphwarWasmStopTarget[];
+      qualityPoints: readonly GraphwarWasmPoint[];
       requiredTargets: readonly GraphwarWasmStopTarget[];
       shouldCollectVisiblePixels: boolean;
+      shouldStopOnTargetsComplete: boolean;
       trackedTargets: readonly GraphwarWasmStopTarget[];
       type: "targets";
     }
@@ -101,11 +129,14 @@ export type GraphwarWasmStopPolicy =
 export type GraphwarWasmPackedStopPolicy =
   | { type: "natural" }
   | {
+      boundsRect: { height: number; width: number; x: number; y: number };
       collision: { type: "none" } | { boundaryExpansion: number; mask: GraphwarWasmMemorySlice; type: "mask" };
       continueAfterTargetsUntilGraphX: { type: "none" } | { graphX: number; type: "value" };
       orderedTargetCount: number;
+      qualityPoints: GraphwarWasmPackedPointSoA;
       requiredTargetCount: number;
       shouldCollectVisiblePixels: boolean;
+      shouldStopOnTargetsComplete: boolean;
       targetRecords: GraphwarWasmMemorySlice;
       trackedTargetCount: number;
       type: "targets";
@@ -122,30 +153,66 @@ export type GraphwarWasmPackedDetectionInput =
   | {
       image: GraphwarWasmPackedRgbaImage;
       settings: GraphwarWasmMemorySlice;
+      templates: GraphwarWasmPackedSoldierTemplates;
       type: "detect-auto";
     }
   | {
       edgeRect: GraphwarWasmMemorySlice;
       image: GraphwarWasmPackedRgbaImage;
       settings: GraphwarWasmMemorySlice;
+      templates: GraphwarWasmPackedSoldierTemplates;
       type: "detect-bounds";
     };
 
-/** 几何 route session 的原子静态输入；mask 与全部身份数值在同一次 begin command 写入。 */
-export interface GraphwarWasmRouteSessionInput {
+/** WASM route context 的共享静态输入；source mask、预处理身份与路由参数在同一次命令写入。 */
+interface GraphwarWasmRouteContextInputBase {
   boundaryExpansion: number;
   bounds: { maxX: number; maxY: number; minX: number; minY: number };
   boundsRect: { height: number; width: number; x: number; y: number };
-  routeMask: Uint8Array;
-  routeMode: "theta-star" | "visibility-graph";
   routeOriginPoint: GraphwarWasmPoint;
   routeTolerancePlanePixels: number;
+  sourceMask: Uint8Array;
+  /** Step state and numerical settings are one optional capability of the retained route context. */
+  stepRouteModel?: GraphwarWasmStepRouteModelInput;
 }
 
-/** Packed route session 只暴露固定 context record 与唯一 mask slice。 */
-export interface GraphwarWasmPackedRouteSessionInput {
+/** 基础 mask 与它的全部 morphology 输入必须原子同行。 */
+interface GraphwarWasmBaseMaskRouteContextInput extends GraphwarWasmRouteContextInputBase {
+  friendlySoldierCenters: readonly GraphwarWasmPoint[];
+  simulationTolerancePlanePixels: number;
+  soldierHitRadiusPixels: number;
+  sourceMaskType: "base";
+}
+
+/** 已处理 route mask 不再携带任何会重复修改 mask 的输入；真实 route tolerance 仅保留 contour 身份。 */
+interface GraphwarWasmPreprocessedRouteContextInput extends GraphwarWasmRouteContextInputBase {
+  friendlySoldierCenters?: never;
+  simulationTolerancePlanePixels?: never;
+  soldierHitRadiusPixels?: never;
+  sourceMaskType: "route";
+}
+
+export type GraphwarWasmRouteContextInput =
+  | GraphwarWasmBaseMaskRouteContextInput
+  | GraphwarWasmPreprocessedRouteContextInput;
+
+/** Canonical Step route model consumed directly by the WASM edge evaluator. */
+export interface GraphwarWasmStepRouteModelInput {
+  decimalPlaces: number;
+  equation: "ddy" | "dy" | "y";
+  formulaSteepness: number;
+  originY: number;
+  qualityTargetPlanePixels: number;
+}
+
+/** Packed route context 原子携带全部长期数据，不允许 policy/mask 半状态。 */
+export interface GraphwarWasmPackedRouteContextInput {
   context: GraphwarWasmMemorySlice;
-  routeMask: GraphwarWasmMemorySlice;
+  friendlySoldierCenters: GraphwarWasmPackedPointSoA;
+  routePolicy: GraphwarWasmMemorySlice;
+  sourceMask: GraphwarWasmMemorySlice;
+  stepRouteModel?: GraphwarWasmMemorySlice;
+  thetaStarLookaheadColumnOffsets: GraphwarWasmMemorySlice;
 }
 
 /** 可并行派发的无状态几何 edge job；Step 状态证据由后续公式 descriptor Adapter 原子附加。 */
@@ -203,11 +270,15 @@ export function packGraphwarWasmExpressionProgram(
   minimumPointer = 0,
 ): GraphwarWasmPackedExpressionProgram {
   if (!isGraphwarExpressionProgram(program)) {
-    throw new GraphwarWasmAdapterError("invalid-expression-program", "Graphwar expression program is malformed");
+    throw new GraphwarWasmAdapterError(
+      "invalid-expression-program",
+      "Graphwar expression program is malformed",
+      "input",
+    );
   }
   return {
     constants: writeGraphwarWasmFloat64Values(arena, program.constants, minimumPointer),
-    maximumStackSize: validateGraphwarWasmU32(program.maximumStackSize, "maximumStackSize"),
+    maximumStackSize: validateGraphwarWasmU32(program.maximumStackSize, "maximumStackSize", "input"),
     opcodes: writeGraphwarWasmBytes(arena, program.opcodes, minimumPointer),
   };
 }
@@ -222,11 +293,19 @@ export function packGraphwarWasmRgbaImage(
   const height = validatePositiveU32(image.height, "image.height");
   const pixelCount = width * height;
   if (!Number.isSafeInteger(pixelCount) || pixelCount > Math.floor(0xffff_ffff / 4)) {
-    throw new GraphwarWasmAdapterError("invalid-image-data", "Graphwar image dimensions overflow RGBA memory32");
+    throw new GraphwarWasmAdapterError(
+      "invalid-image-data",
+      "Graphwar image dimensions overflow RGBA memory32",
+      "input",
+    );
   }
   const expectedByteLength = pixelCount * 4;
   if (!(image.data instanceof Uint8ClampedArray) || image.data.length !== expectedByteLength) {
-    throw new GraphwarWasmAdapterError("invalid-image-data", "Graphwar image RGBA length does not match dimensions");
+    throw new GraphwarWasmAdapterError(
+      "invalid-image-data",
+      "Graphwar image RGBA length does not match dimensions",
+      "input",
+    );
   }
   const bytes = new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
   return { height, rgba: writeGraphwarWasmBytes(arena, bytes, minimumPointer), width };
@@ -239,20 +318,20 @@ export function packGraphwarWasmPointSoA(
   minimumPointer = 0,
 ): GraphwarWasmPackedPointSoA {
   if (!Array.isArray(points)) {
-    throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar points must be an array");
+    throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar points must be an array", "input");
   }
   const x = new Float64Array(points.length);
   const y = new Float64Array(points.length);
   for (let index = 0; index < points.length; index += 1) {
     const point = points[index];
     if (typeof point !== "object" || point === null) {
-      throw new GraphwarWasmAdapterError("invalid-point-data", `points[${index}] must be an object`);
+      throw new GraphwarWasmAdapterError("invalid-point-data", `points[${index}] must be an object`, "input");
     }
-    x[index] = validateGraphwarWasmFiniteNumber(point.x, `points[${index}].x`);
-    y[index] = validateGraphwarWasmFiniteNumber(point.y, `points[${index}].y`);
+    x[index] = validateGraphwarWasmFiniteNumber(point.x, `points[${index}].x`, "input");
+    y[index] = validateGraphwarWasmFiniteNumber(point.y, `points[${index}].y`, "input");
   }
   return {
-    length: validateGraphwarWasmU32(points.length, "points.length"),
+    length: validateGraphwarWasmU32(points.length, "points.length", "input"),
     x: writeGraphwarWasmFloat64Values(arena, x, minimumPointer),
     y: writeGraphwarWasmFloat64Values(arena, y, minimumPointer),
   };
@@ -264,17 +343,17 @@ export function copyGraphwarWasmPointSoA(
   points: GraphwarWasmPackedPointSoA,
   minimumPointer = 0,
 ): GraphwarWasmPoint[] {
-  const length = validateGraphwarWasmU32(points.length, "points.length");
+  const length = validateGraphwarWasmU32(points.length, "points.length", "output");
   if (points.x.length !== length || points.y.length !== length) {
-    throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar point SoA lengths do not match");
+    throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar point SoA lengths do not match", "output");
   }
   const x = copyGraphwarWasmFloat64Values(memory, points.x, minimumPointer);
   const y = copyGraphwarWasmFloat64Values(memory, points.y, minimumPointer);
   const result: GraphwarWasmPoint[] = [];
   for (let index = 0; index < length; index += 1) {
     result.push({
-      x: validateGraphwarWasmFiniteNumber(x[index], `points[${index}].x`),
-      y: validateGraphwarWasmFiniteNumber(y[index], `points[${index}].y`),
+      x: validateGraphwarWasmFiniteNumber(x[index], `points[${index}].x`, "output"),
+      y: validateGraphwarWasmFiniteNumber(y[index], `points[${index}].y`, "output"),
     });
   }
   return result;
@@ -302,20 +381,23 @@ export function validateGraphwarWasmSecondOrderLaunchAngle(
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Only second-order formulas can carry launch-angle evidence",
+      "input",
     );
   }
-  const degrees = validateGraphwarWasmFiniteNumber(value.degrees, "secondOrderLaunchAngle.degrees");
-  const radians = validateGraphwarWasmFiniteNumber(value.radians, "secondOrderLaunchAngle.radians");
+  const degrees = validateGraphwarWasmFiniteNumber(value.degrees, "secondOrderLaunchAngle.degrees", "input");
+  const radians = validateGraphwarWasmFiniteNumber(value.radians, "secondOrderLaunchAngle.radians", "input");
   if (radians < -Math.PI / 2 || radians > Math.PI / 2) {
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Second-order launch angle must stay within Graphwar's firing range",
+      "input",
     );
   }
   if (!Object.is(degrees, (radians * 180) / Math.PI)) {
     throw new GraphwarWasmAdapterError(
       "invalid-formula-input",
       "Second-order launch angle degrees and radians do not describe the same value",
+      "input",
     );
   }
   return { degrees, radians };
@@ -331,32 +413,50 @@ export function packGraphwarWasmStopPolicy(
     return { type: "natural" };
   }
   if (policy.type === "stop-x-observations") {
+    const observationXs = Float64Array.from(policy.observationXs, (value, index) =>
+      validateGraphwarWasmFiniteNumber(value, `observationXs[${index}]`, "input"),
+    );
+    for (let index = 1; index < observationXs.length; index += 1) {
+      if (observationXs[index] < observationXs[index - 1]) {
+        throw new GraphwarWasmAdapterError(
+          "invalid-formula-input",
+          "Trajectory observation x values must be non-decreasing",
+          "input",
+        );
+      }
+    }
     return {
-      observationXs: writeGraphwarWasmFloat64Values(
-        arena,
-        Float64Array.from(policy.observationXs, (value, index) =>
-          validateGraphwarWasmFiniteNumber(value, `observationXs[${index}]`),
-        ),
-        minimumPointer,
-      ),
-      stopX: validateGraphwarWasmFiniteNumber(policy.stopX, "stopX"),
+      observationXs: writeGraphwarWasmFloat64Values(arena, observationXs, minimumPointer),
+      stopX: validateGraphwarWasmFiniteNumber(policy.stopX, "stopX", "input"),
       type: "stop-x-observations",
     };
   }
-  if (typeof policy.shouldCollectVisiblePixels !== "boolean") {
-    throw new GraphwarWasmAdapterError("invalid-enum", "shouldCollectVisiblePixels must be boolean");
+  if (
+    typeof policy.shouldCollectVisiblePixels !== "boolean" ||
+    typeof policy.shouldStopOnTargetsComplete !== "boolean"
+  ) {
+    throw new GraphwarWasmAdapterError(
+      "invalid-enum",
+      "Trajectory target stop-policy booleans must be explicit",
+      "input",
+    );
   }
-  const targetRecords = new Float64Array(
-    (policy.orderedTargets.length + policy.requiredTargets.length + policy.trackedTargets.length) * 3,
-  );
+  const orderedTargetCount = validateGraphwarWasmU32(policy.orderedTargets.length, "orderedTargets.length", "input");
+  const requiredTargetCount = validateGraphwarWasmU32(policy.requiredTargets.length, "requiredTargets.length", "input");
+  const trackedTargetCount = validateGraphwarWasmU32(policy.trackedTargets.length, "trackedTargets.length", "input");
+  const targetCount = orderedTargetCount + requiredTargetCount + trackedTargetCount;
+  if (!Number.isSafeInteger(targetCount) || targetCount > Math.floor(0xffff_ffff / 24)) {
+    throw new GraphwarWasmAdapterError("invalid-memory-buffer", "Trajectory targets overflow memory32", "input");
+  }
+  const targetRecords = new Float64Array(targetCount * 3);
   let targetIndex = 0;
   for (const targets of [policy.orderedTargets, policy.requiredTargets, policy.trackedTargets]) {
     for (const target of targets) {
-      targetRecords[targetIndex] = validateGraphwarWasmFiniteNumber(target.center.x, "target.center.x");
-      targetRecords[targetIndex + 1] = validateGraphwarWasmFiniteNumber(target.center.y, "target.center.y");
-      const radius = validateGraphwarWasmFiniteNumber(target.radius, "target.radius");
+      targetRecords[targetIndex] = validateGraphwarWasmFiniteNumber(target.center.x, "target.center.x", "input");
+      targetRecords[targetIndex + 1] = validateGraphwarWasmFiniteNumber(target.center.y, "target.center.y", "input");
+      const radius = validateGraphwarWasmFiniteNumber(target.radius, "target.radius", "input");
       if (radius < 0) {
-        throw new GraphwarWasmAdapterError("invalid-finite-number", "target.radius must be non-negative");
+        throw new GraphwarWasmAdapterError("invalid-finite-number", "target.radius must be non-negative", "input");
       }
       targetRecords[targetIndex + 2] = radius;
       targetIndex += 3;
@@ -380,17 +480,26 @@ export function packGraphwarWasmStopPolicy(
           graphX: validateGraphwarWasmFiniteNumber(
             policy.continueAfterTargetsUntilGraphX.graphX,
             "continueAfterTargetsUntilGraphX.graphX",
+            "input",
           ),
           type: "value" as const,
         };
   return {
+    boundsRect: {
+      height: validatePositiveFiniteNumber(policy.boundsRect.height, "boundsRect.height"),
+      width: validatePositiveFiniteNumber(policy.boundsRect.width, "boundsRect.width"),
+      x: validateGraphwarWasmFiniteNumber(policy.boundsRect.x, "boundsRect.x", "input"),
+      y: validateGraphwarWasmFiniteNumber(policy.boundsRect.y, "boundsRect.y", "input"),
+    },
     collision,
     continueAfterTargetsUntilGraphX,
-    orderedTargetCount: validateGraphwarWasmU32(policy.orderedTargets.length, "orderedTargets.length"),
-    requiredTargetCount: validateGraphwarWasmU32(policy.requiredTargets.length, "requiredTargets.length"),
+    orderedTargetCount,
+    qualityPoints: packGraphwarWasmPointSoA(arena, policy.qualityPoints, minimumPointer),
+    requiredTargetCount,
     shouldCollectVisiblePixels: policy.shouldCollectVisiblePixels,
+    shouldStopOnTargetsComplete: policy.shouldStopOnTargetsComplete,
     targetRecords: writeGraphwarWasmFloat64Values(arena, targetRecords, minimumPointer),
-    trackedTargetCount: validateGraphwarWasmU32(policy.trackedTargets.length, "trackedTargets.length"),
+    trackedTargetCount,
     type: "targets",
   };
 }
@@ -405,6 +514,11 @@ export function packGraphwarWasmDetectionInput(
   if (task.type === "detect-bounds-only") {
     return { image, type: "detect-bounds-only" };
   }
+  const templates = packGraphwarWasmSoldierTemplates(
+    arena,
+    createGraphwarSoldierTemplateCanonicalData(),
+    minimumPointer,
+  );
   const settings = writeGraphwarWasmFloat64Values(
     arena,
     new Float64Array([
@@ -424,14 +538,14 @@ export function packGraphwarWasmDetectionInput(
     minimumPointer,
   );
   if (task.type === "detect-auto") {
-    return { image, settings, type: "detect-auto" };
+    return { image, settings, templates, type: "detect-auto" };
   }
   return {
     edgeRect: writeGraphwarWasmFloat64Values(
       arena,
       new Float64Array([
-        validateGraphwarWasmFiniteNumber(task.edgeRect.x, "edgeRect.x"),
-        validateGraphwarWasmFiniteNumber(task.edgeRect.y, "edgeRect.y"),
+        validateGraphwarWasmFiniteNumber(task.edgeRect.x, "edgeRect.x", "input"),
+        validateGraphwarWasmFiniteNumber(task.edgeRect.y, "edgeRect.y", "input"),
         validatePositiveFiniteNumber(task.edgeRect.width, "edgeRect.width"),
         validatePositiveFiniteNumber(task.edgeRect.height, "edgeRect.height"),
       ]),
@@ -439,45 +553,128 @@ export function packGraphwarWasmDetectionInput(
     ),
     image,
     settings,
+    templates,
     type: "detect-bounds",
   };
 }
 
-/** 一次写入 route session 的固定 context 与 mask，后续同 session 不重复上传。 */
-export function packGraphwarWasmRouteSessionInput(
+/** Packs the canonical template/profile tables without allowing a partial table set. */
+export function packGraphwarWasmSoldierTemplates(
   arena: GraphwarWasmArenaMemorySource,
-  input: GraphwarWasmRouteSessionInput,
+  data: GraphwarSoldierTemplateCanonicalData,
   minimumPointer = 0,
-): GraphwarWasmPackedRouteSessionInput {
-  const minX = validateGraphwarWasmFiniteNumber(input.bounds.minX, "bounds.minX");
-  const minY = validateGraphwarWasmFiniteNumber(input.bounds.minY, "bounds.minY");
-  const maxX = validateGraphwarWasmFiniteNumber(input.bounds.maxX, "bounds.maxX");
-  const maxY = validateGraphwarWasmFiniteNumber(input.bounds.maxY, "bounds.maxY");
-  if (minX >= maxX || minY >= maxY) {
-    throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar route bounds must span both axes");
+): GraphwarWasmPackedSoldierTemplates {
+  return {
+    baseFlags: writeGraphwarWasmBytes(arena, data.baseFlags, minimumPointer),
+    baseGeometry: writeGraphwarWasmFloat64Values(arena, data.baseGeometry, minimumPointer),
+    basePixelRanges: writeGraphwarWasmUint32Values(arena, data.basePixelRanges, minimumPointer),
+    pixelCoordinates: writeGraphwarWasmBytes(arena, data.pixelCoordinates, minimumPointer),
+    profile: writeGraphwarWasmFloat64Values(arena, createGraphwarSoldierTemplateProfileData(), minimumPointer),
+    signatureColors: writeGraphwarWasmUint32Values(arena, data.signatureColors, minimumPointer),
+    templateNames: data.templateNames,
+    templateRecords: writeGraphwarWasmUint32Values(arena, data.templateRecords, minimumPointer),
+  };
+}
+
+/** 一次写入 route context 的固定输入，后续碰撞与搜索命令只引用 context pointer。 */
+export function packGraphwarWasmRouteContextInput(
+  arena: GraphwarWasmArenaMemorySource,
+  input: GraphwarWasmRouteContextInput,
+  minimumPointer = 0,
+): GraphwarWasmPackedRouteContextInput {
+  const minX = validateGraphwarWasmFiniteNumber(input.bounds.minX, "bounds.minX", "input");
+  const minY = validateGraphwarWasmFiniteNumber(input.bounds.minY, "bounds.minY", "input");
+  const maxX = validateGraphwarWasmFiniteNumber(input.bounds.maxX, "bounds.maxX", "input");
+  const maxY = validateGraphwarWasmFiniteNumber(input.bounds.maxY, "bounds.maxY", "input");
+  if (minX === maxX || minY === maxY) {
+    throw new GraphwarWasmAdapterError("invalid-point-data", "Graphwar route bounds must span both axes", "input");
   }
-  const routeModeTag = input.routeMode === "theta-star" ? 1 : input.routeMode === "visibility-graph" ? 2 : 0;
-  if (routeModeTag === 0) {
-    throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar route mode is unsupported");
+  if (input.sourceMaskType !== "base" && input.sourceMaskType !== "route") {
+    throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar route source mask type is invalid", "input");
   }
+  const isBaseMask = input.sourceMaskType === "base";
   const context = new Float64Array([
     minX,
-    minY,
     maxX,
+    minY,
     maxY,
-    validateGraphwarWasmFiniteNumber(input.boundsRect.x, "boundsRect.x"),
-    validateGraphwarWasmFiniteNumber(input.boundsRect.y, "boundsRect.y"),
+    validateGraphwarWasmFiniteNumber(input.boundsRect.x, "boundsRect.x", "input"),
+    validateGraphwarWasmFiniteNumber(input.boundsRect.y, "boundsRect.y", "input"),
     validatePositiveFiniteNumber(input.boundsRect.width, "boundsRect.width"),
     validatePositiveFiniteNumber(input.boundsRect.height, "boundsRect.height"),
     validateNonNegativeFiniteNumber(input.boundaryExpansion, "boundaryExpansion"),
-    validateNonNegativeFiniteNumber(input.routeTolerancePlanePixels, "routeTolerancePlanePixels"),
-    validateGraphwarWasmFiniteNumber(input.routeOriginPoint.x, "routeOriginPoint.x"),
-    validateGraphwarWasmFiniteNumber(input.routeOriginPoint.y, "routeOriginPoint.y"),
-    routeModeTag,
+    validateGraphwarWasmFiniteNumber(input.routeTolerancePlanePixels, "routeTolerancePlanePixels", "input"),
+    isBaseMask
+      ? validateGraphwarWasmFiniteNumber(
+          input.simulationTolerancePlanePixels,
+          "simulationTolerancePlanePixels",
+          "input",
+        )
+      : 0,
+    validateGraphwarWasmFiniteNumber(input.routeOriginPoint.x, "routeOriginPoint.x", "input"),
+    validateGraphwarWasmFiniteNumber(input.routeOriginPoint.y, "routeOriginPoint.y", "input"),
+    isBaseMask ? validateNonNegativeFiniteNumber(input.soldierHitRadiusPixels, "soldierHitRadiusPixels") : 0,
   ]);
+  const stepRouteModel = input.stepRouteModel;
+  let packedStepRouteModel: GraphwarWasmMemorySlice | undefined;
+  if (stepRouteModel) {
+    const decimalPlaces = validateGraphwarWasmU32(
+      stepRouteModel.decimalPlaces,
+      "stepRouteModel.decimalPlaces",
+      "input",
+    );
+    if (decimalPlaces > 15) {
+      throw new GraphwarWasmAdapterError(
+        "invalid-formula-input",
+        "stepRouteModel.decimalPlaces must be between 0 and 15",
+        "input",
+      );
+    }
+    const formulaSteepness = validatePositiveFiniteNumber(
+      stepRouteModel.formulaSteepness,
+      "stepRouteModel.formulaSteepness",
+    );
+    const equation =
+      stepRouteModel.equation === "y"
+        ? 1
+        : stepRouteModel.equation === "dy"
+          ? 2
+          : stepRouteModel.equation === "ddy"
+            ? 3
+            : 0;
+    if (equation === 0) {
+      throw new GraphwarWasmAdapterError("invalid-formula-input", "stepRouteModel.equation is invalid", "input");
+    }
+    packedStepRouteModel = writeGraphwarWasmFloat64Values(
+      arena,
+      new Float64Array([
+        validateGraphwarWasmFiniteNumber(stepRouteModel.originY, "stepRouteModel.originY", "input"),
+        formulaSteepness,
+        validateNonNegativeFiniteNumber(
+          stepRouteModel.qualityTargetPlanePixels,
+          "stepRouteModel.qualityTargetPlanePixels",
+        ),
+        decimalPlaces,
+        equation,
+      ]),
+      minimumPointer,
+    );
+  }
   return {
     context: writeGraphwarWasmFloat64Values(arena, context, minimumPointer),
-    routeMask: packGraphwarPlaneMask(arena, input.routeMask, minimumPointer),
+    friendlySoldierCenters: packGraphwarWasmPointSoA(
+      arena,
+      isBaseMask ? input.friendlySoldierCenters : [],
+      minimumPointer,
+    ),
+    routePolicy: writeGraphwarWasmFloat64Values(arena, createGraphwarRoutePolicyData(), minimumPointer),
+    sourceMask: packGraphwarPlaneMask(arena, input.sourceMask, minimumPointer),
+    ...(packedStepRouteModel === undefined ? {} : { stepRouteModel: packedStepRouteModel }),
+    thetaStarLookaheadColumnOffsets: writeGraphwarWasmBytes(
+      arena,
+      createGraphwarThetaStarLookaheadColumnOffsetData(),
+      minimumPointer,
+    ),
   };
 }
 
@@ -488,22 +685,22 @@ export function packGraphwarWasmPathfindingGeometryJobs(
   minimumPointer = 0,
 ): GraphwarWasmPackedPathfindingGeometryJobs {
   if (!Array.isArray(jobs)) {
-    throw new GraphwarWasmAdapterError("invalid-work-batch", "Graphwar pathfinding jobs must be an array");
+    throw new GraphwarWasmAdapterError("invalid-work-batch", "Graphwar pathfinding jobs must be an array", "input");
   }
-  const jobCount = validateGraphwarWasmU32(jobs.length, "jobs.length");
+  const jobCount = validateGraphwarWasmU32(jobs.length, "jobs.length", "input");
   if (jobCount > Math.floor(0x1_0000_0000 / (7 * Float64Array.BYTES_PER_ELEMENT))) {
-    throw new GraphwarWasmAdapterError("range-overflow", "Graphwar pathfinding job records exceed memory32");
+    throw new GraphwarWasmAdapterError("range-overflow", "Graphwar pathfinding job records exceed memory32", "input");
   }
   const jobIds = new Set<number>();
   const records = new Float64Array(jobCount * 7);
   for (let index = 0; index < jobs.length; index += 1) {
     const job = jobs[index];
     if (!job || typeof job !== "object") {
-      throw new GraphwarWasmAdapterError("invalid-work-batch", `jobs[${index}] must be an object`);
+      throw new GraphwarWasmAdapterError("invalid-work-batch", `jobs[${index}] must be an object`, "input");
     }
-    const jobId = validateGraphwarWasmU32(job.jobId, `jobs[${index}].jobId`);
+    const jobId = validateGraphwarWasmU32(job.jobId, `jobs[${index}].jobId`, "input");
     if (jobIds.has(jobId)) {
-      throw new GraphwarWasmAdapterError("duplicate-work-id", `jobs contains duplicate id ${jobId}`);
+      throw new GraphwarWasmAdapterError("duplicate-work-id", `jobs contains duplicate id ${jobId}`, "input");
     }
     jobIds.add(jobId);
     const fromNodeId = validateGraphwarPathfindingNodeId(job.fromNodeId, `jobs[${index}].fromNodeId`, true);
@@ -514,10 +711,10 @@ export function packGraphwarWasmPathfindingGeometryJobs(
         jobId,
         fromNodeId,
         toNodeId,
-        validateGraphwarWasmFiniteNumber(job.startPoint.x, `jobs[${index}].startPoint.x`),
-        validateGraphwarWasmFiniteNumber(job.startPoint.y, `jobs[${index}].startPoint.y`),
-        validateGraphwarWasmFiniteNumber(job.targetPoint.x, `jobs[${index}].targetPoint.x`),
-        validateGraphwarWasmFiniteNumber(job.targetPoint.y, `jobs[${index}].targetPoint.y`),
+        validateGraphwarWasmFiniteNumber(job.startPoint.x, `jobs[${index}].startPoint.x`, "input"),
+        validateGraphwarWasmFiniteNumber(job.startPoint.y, `jobs[${index}].startPoint.y`, "input"),
+        validateGraphwarWasmFiniteNumber(job.targetPoint.x, `jobs[${index}].targetPoint.x`, "input"),
+        validateGraphwarWasmFiniteNumber(job.targetPoint.y, `jobs[${index}].targetPoint.y`, "input"),
       ],
       offset,
     );
@@ -541,11 +738,11 @@ export function copyGraphwarWasmPathfindingPreviewEvent(
     minimumPointer,
   );
   if (acceptedEdgePointIndexes.length % 2 !== 0) {
-    throw new GraphwarWasmAdapterError("invalid-index", "accepted edge index count must be even");
+    throw new GraphwarWasmAdapterError("invalid-index", "accepted edge index count must be even", "output");
   }
   const bestPathPointIndexes = copyGraphwarWasmUint32Values(memory, layout.bestPathPointIndexes, minimumPointer);
   const candidatePointIndexes = copyGraphwarWasmUint32Values(memory, layout.candidatePointIndexes, minimumPointer);
-  const currentPointIndex = validateGraphwarWasmU32(layout.currentPointIndex, "currentPointIndex");
+  const currentPointIndex = validateGraphwarWasmU32(layout.currentPointIndex, "currentPointIndex", "output");
   const isMirrored = validateGraphwarWasmEnumValue(layout.isMirrored, [0, 1] as const, "isMirrored") === 1;
   const acceptedEdges: [GraphwarWasmPoint, GraphwarWasmPoint][] = [];
   for (let index = 0; index < acceptedEdgePointIndexes.length; index += 2) {
@@ -589,7 +786,7 @@ export function copyGraphwarWasmPathfindingResult(
 /** Trajectory 与 pathfinding command 的 plane mask 共用唯一规范固定长度。 */
 export function packGraphwarPlaneMask(arena: GraphwarWasmArenaMemorySource, mask: Uint8Array, minimumPointer = 0) {
   if (!(mask instanceof Uint8Array) || mask.length !== GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT) {
-    throw new GraphwarWasmAdapterError("invalid-image-data", "Graphwar plane mask has an invalid byte length");
+    throw new GraphwarWasmAdapterError("invalid-image-data", "Graphwar plane mask has an invalid byte length", "input");
   }
   return writeGraphwarWasmBytes(arena, mask, minimumPointer);
 }
@@ -605,7 +802,7 @@ export function getGraphwarWasmFormulaAlgorithmTag(algorithm: AlgorithmMode) {
     case "akima":
       return 4;
     default:
-      throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar formula algorithm is unsupported");
+      throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar formula algorithm is unsupported", "input");
   }
 }
 
@@ -618,40 +815,41 @@ export function getGraphwarWasmFormulaEquationTag(equation: EquationMode) {
     case "ddy":
       return 3;
     default:
-      throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar equation mode is unsupported");
+      throw new GraphwarWasmAdapterError("invalid-enum", "Graphwar equation mode is unsupported", "input");
   }
 }
 
 function validatePositiveU32(value: unknown, fieldName: string) {
-  const result = validateGraphwarWasmU32(value, fieldName);
+  const result = validateGraphwarWasmU32(value, fieldName, "input");
   if (result === 0) {
-    throw new GraphwarWasmAdapterError("invalid-u32", `${fieldName} must be positive`);
+    throw new GraphwarWasmAdapterError("invalid-u32", `${fieldName} must be positive`, "input");
   }
   return result;
 }
 
 function validatePositiveFiniteNumber(value: unknown, fieldName: string) {
-  const result = validateGraphwarWasmFiniteNumber(value, fieldName);
+  const result = validateGraphwarWasmFiniteNumber(value, fieldName, "input");
   if (result <= 0) {
-    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} must be positive`);
+    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} must be positive`, "input");
   }
   return result;
 }
 
 function validateNonNegativeFiniteNumber(value: unknown, fieldName: string) {
-  const result = validateGraphwarWasmFiniteNumber(value, fieldName);
+  const result = validateGraphwarWasmFiniteNumber(value, fieldName, "input");
   if (result < 0) {
-    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} must be non-negative`);
+    throw new GraphwarWasmAdapterError("invalid-finite-number", `${fieldName} must be non-negative`, "input");
   }
   return result;
 }
 
 function validateGraphwarCandidateTopRatio(value: unknown) {
-  const result = validateGraphwarWasmFiniteNumber(value, "soldierSettings.candidateTopRatio");
+  const result = validateGraphwarWasmFiniteNumber(value, "soldierSettings.candidateTopRatio", "input");
   if (result <= 0 || result > 1) {
     throw new GraphwarWasmAdapterError(
       "invalid-finite-number",
       "soldierSettings.candidateTopRatio must be greater than zero and at most one",
+      "input",
     );
   }
   return result;
@@ -661,13 +859,17 @@ function validateGraphwarPathfindingNodeId(value: unknown, fieldName: string, ca
   if (canUseStartSentinel && value === -1) {
     return -1;
   }
-  return validateGraphwarWasmU32(value, fieldName);
+  return validateGraphwarWasmU32(value, fieldName, "input");
 }
 
 function getGraphwarWasmPathfindingPoint(points: readonly GraphwarWasmPoint[], index: number, fieldName: string) {
   const point = points[index];
   if (!point) {
-    throw new GraphwarWasmAdapterError("invalid-index", `${fieldName} contains out-of-range point index ${index}`);
+    throw new GraphwarWasmAdapterError(
+      "invalid-index",
+      `${fieldName} contains out-of-range point index ${index}`,
+      "output",
+    );
   }
   return point;
 }

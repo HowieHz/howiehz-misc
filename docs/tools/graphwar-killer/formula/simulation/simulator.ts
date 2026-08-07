@@ -85,6 +85,8 @@ export function isGraphwarFormulaConvergenceError(error: unknown): error is Grap
 export interface SampleGraphwarExpressionTrajectoryOptions {
   /** 当前 Graphwar 坐标边界，用于出界判断。 */
   bounds: GraphBounds;
+  /** Optional mutable diagnostics for the final expression integration replay. */
+  debugMetrics?: GraphwarTrajectoryDebugMetrics;
   /** Graphwar 对表达式的解释模式。 */
   equation: EquationMode;
   /** 用户输入的 Graphwar 表达式文本。 */
@@ -353,18 +355,32 @@ export function sampleGraphwarExpressionTrajectory(options: SampleGraphwarExpres
   if (!program) {
     return createTrajectorySample([], "invalid");
   }
-  const evaluateExpression = createGraphwarExpressionProgramEvaluator(program);
+  return sampleGraphwarExpressionTrajectoryWithEvaluator(options, createGraphwarExpressionProgramEvaluator(program));
+}
 
-  if (options.equation === "y") {
-    return sampleNormalExpression(options, (x) => evaluateExpression(x, 0, 0));
+/** Samples an already parsed expression with a caller-owned evaluator (for example the WASM VM). */
+export function sampleGraphwarExpressionTrajectoryWithEvaluator(
+  options: SampleGraphwarExpressionTrajectoryOptions,
+  evaluateExpression: (x: number, y: number, dy: number) => number,
+) {
+  const debugMetrics = options.debugMetrics;
+  const startedAt = debugMetrics ? nowMs() : 0;
+  if (debugMetrics) {
+    debugMetrics.counters.trajectoryReplayCount += 1;
   }
-  if (options.equation === "dy") {
-    return sampleFirstOrderExpression(options, (x, y) => evaluateExpression(x, y, 0));
+  const sample =
+    options.equation === "y"
+      ? sampleNormalExpression(options, (x) => evaluateExpression(x, 0, 0))
+      : options.equation === "dy"
+        ? sampleFirstOrderExpression(options, (x, y) => evaluateExpression(x, y, 0))
+        : options.launchAngleRadians === undefined || !Number.isFinite(options.launchAngleRadians)
+          ? createTrajectorySample([], "invalid")
+          : sampleSecondOrderExpression(options, (x, y, dy) => evaluateExpression(x, y, dy));
+  if (debugMetrics) {
+    debugMetrics.counters.acceptedSamplePointCount += sample.points.length;
+    debugMetrics.timings.trajectoryReplayElapsedMs += nowMs() - startedAt;
   }
-  if (options.launchAngleRadians === undefined || !Number.isFinite(options.launchAngleRadians)) {
-    return createTrajectorySample([], "invalid");
-  }
-  return sampleSecondOrderExpression(options, (x, y, dy) => evaluateExpression(x, y, dy));
+  return sample;
 }
 
 /** 计算 Graphwar 实际使用或需要手调的发射角。 */
@@ -381,7 +397,7 @@ function createNormalFunctionStepper(options: SampleGraphwarTrajectoryOptions) {
     ? moveFromSoldierCenter(options.soldierCenter, angle)
     : options.soldierCenter;
   const offset = launchPoint.y - evaluateY(launchPoint.x);
-  if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
+  if (!isFinitePoint(launchPoint)) {
     return { ok: false as const, stopReason: "invalid" as const };
   }
 
@@ -458,7 +474,7 @@ function sampleNormalExpression(options: SampleGraphwarExpressionTrajectoryOptio
     ? moveFromSoldierCenter(options.soldierCenter, angle)
     : options.soldierCenter;
   const offset = launchPoint.y - evaluateY(launchPoint.x);
-  if (!isFinitePoint(launchPoint) || !Number.isFinite(offset)) {
+  if (!isFinitePoint(launchPoint)) {
     return createTrajectorySample([], "invalid");
   }
 
@@ -470,6 +486,7 @@ function sampleNormalExpression(options: SampleGraphwarExpressionTrajectoryOptio
       return createGraphPoint(x, evaluateY(x) + offset);
     },
     {
+      debugMetrics: options.debugMetrics,
       initialState: options.initialState,
       shouldStop: options.shouldStop,
       skipInitialStop: options.skipInitialStop,
@@ -484,22 +501,27 @@ function sampleFirstOrderExpression(
   evaluateDY: FirstOrderEvaluator,
 ) {
   const angle = getFirstOrderStartAngle(options.soldierCenter, evaluateDY);
-  const launchPoint = moveFromSoldierCenter(options.soldierCenter, angle);
-  if (!isFinitePoint(launchPoint)) {
-    return createTrajectorySample([], "invalid");
-  }
+  // Java keeps the initial angle-zero launch point when the fixed-point
+  // iteration produces NaN, then lets the first RK4 trial determine the
+  // normal obstacle/non-finite ordering. Preserve that finite evidence here
+  // instead of rejecting the launch before the trajectory boundary.
+  const launchPoint = moveFromSoldierCenter(options.soldierCenter, Number.isNaN(angle) ? 0 : angle);
 
-  return sampleByBisection(
-    launchPoint,
-    options.bounds,
-    (previous, step) => rk4FirstOrderStep(previous, step, evaluateDY),
-    {
-      initialState: options.initialState,
-      shouldStop: options.shouldStop,
-      skipInitialStop: options.skipInitialStop,
-      stopAtMinStep: false,
-    },
-  );
+  const debugCounters = options.debugMetrics?.counters;
+  const calculateNext = debugCounters
+    ? (previous: GraphPoint, step: number) => {
+        debugCounters.rk4StepCount += 1;
+        return rk4FirstOrderStep(previous, step, evaluateDY);
+      }
+    : (previous: GraphPoint, step: number) => rk4FirstOrderStep(previous, step, evaluateDY);
+
+  return sampleByBisection(launchPoint, options.bounds, calculateNext, {
+    debugMetrics: options.debugMetrics,
+    initialState: options.initialState,
+    shouldStop: options.shouldStop,
+    skipInitialStop: options.skipInitialStop,
+    stopAtMinStep: false,
+  });
 }
 
 /** 采样用户表达式的 y''= 模式，发射角来自用户输入或工具建议。 */
@@ -514,17 +536,21 @@ function sampleSecondOrderExpression(
     return createTrajectorySample([], "invalid");
   }
 
-  return sampleByBisection(
-    launchState,
-    options.bounds,
-    (previous, step) => rk4SecondOrderStep(previous, step, evaluateDDY),
-    {
-      initialState: options.initialState,
-      shouldStop: options.shouldStop,
-      skipInitialStop: options.skipInitialStop,
-      stopAtMinStep: false,
-    },
-  );
+  const debugCounters = options.debugMetrics?.counters;
+  const calculateNext = debugCounters
+    ? (previous: SecondOrderState, step: number) => {
+        debugCounters.rk4StepCount += 1;
+        return rk4SecondOrderStep(previous, step, evaluateDDY);
+      }
+    : (previous: SecondOrderState, step: number) => rk4SecondOrderStep(previous, step, evaluateDDY);
+
+  return sampleByBisection(launchState, options.bounds, calculateNext, {
+    debugMetrics: options.debugMetrics,
+    initialState: options.initialState,
+    shouldStop: options.shouldStop,
+    skipInitialStop: options.skipInitialStop,
+    stopAtMinStep: false,
+  });
 }
 
 /** 按 Graphwar 当前模式计算发射角。 */
@@ -853,7 +879,10 @@ function findNextSample<TPoint extends GraphPoint>(
   let step = GRAPHWAR_STEP_SIZE;
   let next = calculateNext(previous, step);
 
-  while (isFinitePoint(next) && distanceSquared(previous, next) > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
+  // Graphwar evaluates the distance loop before checking the candidate's y
+  // classification. Infinity can therefore reach the minimum-step branch,
+  // while NaN makes the distance comparison false and reaches numeric stop.
+  while (distanceSquared(previous, next) > GRAPHWAR_FUNC_MAX_STEP_DISTANCE_SQUARED) {
     if (next.x - previous.x <= GRAPHWAR_FUNC_MIN_X_STEP_DISTANCE) {
       // y= 会在这里爆炸；ODE 官方源码的 for 条件会直接退出并继续用当前过长点。
       return options.stopAtMinStep

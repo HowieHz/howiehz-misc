@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { parseGraphwarExpressionProgram } from "../../formula/expression/evaluator";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../game/constants";
@@ -8,6 +8,7 @@ import {
   GraphwarWasmAdapterError,
   writeGraphwarWasmUint32Values,
   type GraphwarWasmAdapterErrorCode,
+  type GraphwarWasmAdapterFaultDomain,
 } from "./abi";
 import {
   copyGraphwarWasmPointSoA,
@@ -19,8 +20,9 @@ import {
   packGraphwarWasmPointSoA,
   packGraphwarWasmPathfindingGeometryJobs,
   packGraphwarWasmRgbaImage,
-  packGraphwarWasmRouteSessionInput,
+  packGraphwarWasmRouteContextInput,
   packGraphwarWasmStopPolicy,
+  type GraphwarWasmRouteContextInput,
 } from "./task-adapter";
 
 class TestGraphwarWasmArena {
@@ -48,6 +50,21 @@ class TestGraphwarWasmArena {
 }
 
 describe("Graphwar WASM task Adapter", () => {
+  it("keeps base-mask preprocessing out of the preprocessed route-mask state", () => {
+    type BaseMaskInput = Extract<GraphwarWasmRouteContextInput, { sourceMaskType: "base" }>;
+    type PreprocessedRouteMaskInput = Extract<GraphwarWasmRouteContextInput, { sourceMaskType: "route" }>;
+
+    expectTypeOf<BaseMaskInput>().toHaveProperty("friendlySoldierCenters");
+    expectTypeOf<BaseMaskInput>().toHaveProperty("simulationTolerancePlanePixels");
+    expectTypeOf<BaseMaskInput>().toHaveProperty("soldierHitRadiusPixels");
+    expectTypeOf<PreprocessedRouteMaskInput["friendlySoldierCenters"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<PreprocessedRouteMaskInput["simulationTolerancePlanePixels"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<PreprocessedRouteMaskInput["soldierHitRadiusPixels"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<
+      Omit<BaseMaskInput, "sourceMaskType"> & { sourceMaskType: "route" }
+    >().not.toMatchTypeOf<GraphwarWasmRouteContextInput>();
+  });
+
   it("packs the canonical expression program without reparsing", () => {
     const arena = new TestGraphwarWasmArena();
     const program = parseGraphwarExpressionProgram("x / y^2");
@@ -110,16 +127,23 @@ describe("Graphwar WASM task Adapter", () => {
     if (observations.type === "stop-x-observations") {
       expect([...copyGraphwarWasmFloat64Values(arena, observations.observationXs, 8)]).toEqual([2, 4]);
     }
+    expectAdapterError(
+      () => packGraphwarWasmStopPolicy(arena, { observationXs: [4, 2], stopX: 5, type: "stop-x-observations" }, 8),
+      "invalid-formula-input",
+    );
 
     const mask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
     const targets = packGraphwarWasmStopPolicy(
       arena,
       {
+        boundsRect: { height: 450, width: 770, x: 10, y: 20 },
         collision: { boundaryExpansion: 2, mask, type: "mask" },
         continueAfterTargetsUntilGraphX: { graphX: 8, type: "value" },
         orderedTargets: [{ center: { x: 1, y: 2 }, radius: 3 }],
+        qualityPoints: [{ x: 2.5, y: -1 }],
         requiredTargets: [{ center: { x: 4, y: 5 }, radius: 6 }],
         shouldCollectVisiblePixels: true,
+        shouldStopOnTargetsComplete: true,
         trackedTargets: [{ center: { x: 7, y: 8 }, radius: 9 }],
         type: "targets",
       },
@@ -128,6 +152,8 @@ describe("Graphwar WASM task Adapter", () => {
     expect(targets).toMatchObject({ orderedTargetCount: 1, requiredTargetCount: 1, trackedTargetCount: 1 });
     if (targets.type === "targets") {
       expect([...copyGraphwarWasmFloat64Values(arena, targets.targetRecords, 8)]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect([...copyGraphwarWasmFloat64Values(arena, targets.qualityPoints.x, 8)]).toEqual([2.5]);
+      expect([...copyGraphwarWasmFloat64Values(arena, targets.qualityPoints.y, 8)]).toEqual([-1]);
     }
 
     expectAdapterError(
@@ -135,11 +161,14 @@ describe("Graphwar WASM task Adapter", () => {
         packGraphwarWasmStopPolicy(
           arena,
           {
+            boundsRect: { height: 450, width: 770, x: 0, y: 0 },
             collision: { boundaryExpansion: 0, mask: new Uint8Array(1), type: "mask" },
             continueAfterTargetsUntilGraphX: { type: "none" },
             orderedTargets: [],
+            qualityPoints: [],
             requiredTargets: [],
             shouldCollectVisiblePixels: false,
+            shouldStopOnTargetsComplete: true,
             trackedTargets: [],
             type: "targets",
           },
@@ -168,44 +197,69 @@ describe("Graphwar WASM task Adapter", () => {
       { x: -1, y: 2 },
       { x: 3, y: -4 },
     ]);
-    expectAdapterError(() => copyGraphwarWasmPointSoA(arena, { ...points, length: 1 }, 8), "invalid-point-data");
-    expectAdapterError(() => packGraphwarWasmPointSoA(arena, [{ x: Number.NaN, y: 0 }], 8), "invalid-finite-number");
+    expectAdapterError(
+      () => copyGraphwarWasmPointSoA(arena, { ...points, length: 1 }, 8),
+      "invalid-point-data",
+      "output",
+    );
+    expectAdapterError(
+      () => packGraphwarWasmPointSoA(arena, [{ x: Number.NaN, y: 0 }], 8),
+      "invalid-finite-number",
+      "input",
+    );
     expect(GRAPHWAR_PLANE_HEIGHT).toBe(450);
   });
 
-  it("packs one atomic route session and stable geometry job batch", () => {
+  it("packs one atomic mirrored route context and stable geometry job batch", () => {
     const arena = new TestGraphwarWasmArena();
     const routeMask = new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT);
-    const session = packGraphwarWasmRouteSessionInput(
+    const session = packGraphwarWasmRouteContextInput(
       arena,
       {
         boundaryExpansion: 1,
         bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
         boundsRect: { height: 450, width: 770, x: 10, y: 20 },
-        routeMask,
-        routeMode: "visibility-graph",
+        friendlySoldierCenters: [{ x: 325, y: 341 }],
         routeOriginPoint: { x: 100, y: 225 },
-        routeTolerancePlanePixels: 2,
+        routeTolerancePlanePixels: -2,
+        simulationTolerancePlanePixels: 1.5,
+        soldierHitRadiusPixels: 7,
+        sourceMask: routeMask,
+        sourceMaskType: "base",
       },
       8,
     );
     expect([...copyGraphwarWasmFloat64Values(arena, session.context, 8)]).toEqual([
-      -25, -15, 25, 15, 10, 20, 770, 450, 1, 2, 100, 225, 2,
+      -25, 25, -15, 15, 10, 20, 770, 450, 1, -2, 1.5, 100, 225, 7,
     ]);
-    expect(copyGraphwarWasmBytes(arena, session.routeMask, 8)).toEqual(routeMask);
-    expectAdapterError(
-      () =>
-        packGraphwarWasmRouteSessionInput(arena, {
-          boundaryExpansion: 1,
-          bounds: { maxX: -25, maxY: 15, minX: 25, minY: -15 },
-          boundsRect: { height: 450, width: 770, x: 10, y: 20 },
-          routeMask,
-          routeMode: "visibility-graph",
-          routeOriginPoint: { x: 100, y: 225 },
-          routeTolerancePlanePixels: 2,
-        }),
-      "invalid-point-data",
-    );
+    expect(copyGraphwarWasmBytes(arena, session.sourceMask, 8)).toEqual(routeMask);
+    expect(copyGraphwarWasmPointSoA(arena, session.friendlySoldierCenters, 8)).toEqual([{ x: 325, y: 341 }]);
+    const mirrored = packGraphwarWasmRouteContextInput(arena, {
+      boundaryExpansion: 1,
+      bounds: { maxX: -25, maxY: 15, minX: 25, minY: -15 },
+      boundsRect: { height: 450, width: 770, x: 10, y: 20 },
+      friendlySoldierCenters: [],
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 2,
+      simulationTolerancePlanePixels: -1,
+      soldierHitRadiusPixels: 7,
+      sourceMask: routeMask,
+      sourceMaskType: "base",
+    });
+    expect(copyGraphwarWasmFloat64Values(arena, mirrored.context, 8)[0]).toBe(25);
+    const preprocessed = packGraphwarWasmRouteContextInput(arena, {
+      boundaryExpansion: 1,
+      bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+      boundsRect: { height: 450, width: 770, x: 10, y: 20 },
+      routeOriginPoint: { x: 100, y: 225 },
+      routeTolerancePlanePixels: 4,
+      sourceMask: routeMask,
+      sourceMaskType: "route",
+    });
+    expect([...copyGraphwarWasmFloat64Values(arena, preprocessed.context, 8)]).toEqual([
+      -25, 25, -15, 15, 10, 20, 770, 450, 1, 4, 0, 100, 225, 0,
+    ]);
+    expect(preprocessed.friendlySoldierCenters.length).toBe(0);
 
     const jobs = packGraphwarWasmPathfindingGeometryJobs(
       arena,
@@ -308,7 +362,11 @@ describe("Graphwar WASM task Adapter", () => {
 });
 
 /** 断言 Adapter 分类，不让测试耦合人类可读文案。 */
-function expectAdapterError(task: () => unknown, code: GraphwarWasmAdapterErrorCode) {
+function expectAdapterError(
+  task: () => unknown,
+  code: GraphwarWasmAdapterErrorCode,
+  faultDomain?: GraphwarWasmAdapterFaultDomain,
+) {
   let error: unknown;
   try {
     task();
@@ -316,5 +374,5 @@ function expectAdapterError(task: () => unknown, code: GraphwarWasmAdapterErrorC
     error = caught;
   }
   expect(error).toBeInstanceOf(GraphwarWasmAdapterError);
-  expect(error).toMatchObject({ code });
+  expect(error).toMatchObject({ code, ...(faultDomain === undefined ? {} : { faultDomain }) });
 }

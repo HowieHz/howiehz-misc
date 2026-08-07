@@ -1,4 +1,4 @@
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarWasmSessionIdentity } from "../../core/algorithm-backend";
 import type { PlaneGridPoint } from "../../core/plane-grid";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
 import type {
@@ -9,12 +9,12 @@ import type {
   GraphwarOneClickClearDagEdgeBuildRequest,
   GraphwarOneClickClearDagEdgeBuildJob,
   GraphwarOneClickClearDagEdgeBuildResult,
+  GraphwarOneClickClearDagEdgeRoute,
   GraphwarOneClickClearDebugTiming,
   GraphwarOneClickClearIncumbent,
   GraphwarOneClickClearResult,
   GraphwarOneClickClearSearchInput,
 } from "../one-click-clear/search";
-import type { GraphwarOneClickClearStepRouteState } from "../one-click-clear/step-route-state";
 import type { GraphwarPathfindingRouteMode } from "../routing/mode";
 import type { GraphwarStepRouteRuntime } from "../routing/step-route";
 import type { GraphwarPathfindingPreview, GraphwarVisibilityGraphObstacleData } from "../routing/visibility-graph";
@@ -126,7 +126,14 @@ export interface GraphwarOneClickClearPathWorkerResult {
 export interface GraphwarOneClickClearProgress {
   /** 调试模式下与 incumbent 同一检查点的累计诊断。 */
   diagnostics?: GraphwarPathfindingDiagnostics;
+  /** Worker-generated snapshots carry a request-local identity; locally synthesized UI snapshots may omit it. */
+  sequence?: number;
   incumbent: GraphwarOneClickClearIncumbent;
+}
+
+/** Worker response progress always carries the request-local event identity. */
+export interface GraphwarOneClickClearWorkerProgress extends GraphwarOneClickClearProgress {
+  sequence: number;
 }
 
 export type GraphwarPathfindingWorkerTask =
@@ -199,7 +206,7 @@ export type GraphwarPathfindingWorkerResponse =
       attempt: GraphwarBackendAttemptIdentity;
       id: number;
       /** 同一检查点的方案和诊断证据原子传递。 */
-      progress: GraphwarOneClickClearProgress;
+      progress: GraphwarOneClickClearWorkerProgress;
       type: "one-click-clear-incumbent";
     };
 
@@ -208,6 +215,8 @@ interface GraphwarOneClickClearEdgeWorkerInitBase {
   bounds: GraphBounds;
   boundsRect: BoundsRect;
   boundaryExpansion: number;
+  /** 与 Step model 身份一起保留的原始路线起点。 */
+  routeOriginPoint: PixelPoint;
   routeMask: Uint8Array;
   routeTolerancePlanePixels: number;
 }
@@ -216,11 +225,13 @@ interface GraphwarOneClickClearEdgeWorkerInitBase {
 export type GraphwarOneClickClearEdgeWorkerRouteInit =
   | {
       routeMode: "visibility-graph";
-      visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData;
+      routePreprocessing:
+        | { type: "wasm" }
+        | { type: "typescript"; visibilityGraphObstacleData: GraphwarVisibilityGraphObstacleData };
     }
   | {
       routeMode: Exclude<GraphwarPathfindingRouteMode, "visibility-graph">;
-      visibilityGraphObstacleData?: never;
+      routePreprocessing?: never;
     };
 
 type GraphwarOneClickClearEdgeWorkerFormulaInit =
@@ -241,28 +252,26 @@ export type GraphwarOneClickClearEdgeWorkerRequest =
   | {
       attempt: GraphwarBackendAttemptIdentity;
       context: GraphwarOneClickClearEdgeWorkerInit;
+      /** Master one-click session；typed init fault 必须带回同一份来源身份。 */
+      session: GraphwarWasmSessionIdentity;
       type: "init";
     }
   | {
       attempt: GraphwarBackendAttemptIdentity;
       job: GraphwarOneClickClearDagEdgeBuildJob;
       requestId: number;
+      /** 与 init 相同的请求级 session 身份。 */
+      session: GraphwarWasmSessionIdentity;
       type: "job";
     };
 
-/** Edge Worker 完成一个 DAG 边 job 后返回的原子结果。 */
-export interface GraphwarOneClickClearEdgeWorkerJobResult {
-  /** 已完成的 DAG job id。 */
-  jobId: number;
+/** Edge Worker 的路径证据与计时来自同一次 DAG 边 job。 */
+export type GraphwarOneClickClearEdgeWorkerJobResult = GraphwarOneClickClearDagEdgeRoute & {
   /** 几何寻路耗时，单位毫秒。 */
   routePathfindingElapsedMs: number;
   /** 平面路径映射到截图像素的耗时，单位毫秒。 */
   routeMapPixelsElapsedMs: number;
-  /** 已映射为截图像素并替换精确首尾点的路线。 */
-  route?: PixelPoint[];
-  /** Step 路线的原子终点状态；ABS 结果省略。 */
-  stepRouteEndState?: GraphwarOneClickClearStepRouteState;
-}
+};
 
 export type GraphwarOneClickClearEdgeWorkerResponse =
   | { attempt: GraphwarBackendAttemptIdentity; type: "ready"; workerIndex: number }

@@ -1,12 +1,21 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { GraphwarBackendAttemptIdentity } from "../../core/algorithm-backend";
+import {
+  GraphwarValidatedWasmRuntime,
+  type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+} from "../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../core/game/constants";
+import { imageToGraphPoint } from "../../core/geometry";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
+import { GraphwarWasmAdapterError } from "../../core/wasm/abi";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import { createGraphwarWorkerBackendRuntime, executeGraphwarWorkerTask } from "../../core/worker-backend";
 import type {
   GraphwarStepGlitchFormulaBoundaryState,
   GraphwarStepGlitchFormulaPrefix,
 } from "../../formula/trajectory/sampling";
+import { createGraphwarTrajectoryFormulaMode } from "../../formula/trajectory/sampling";
 import type {
   GraphwarOneClickClearBuildOptions,
   GraphwarOneClickClearIncumbent,
@@ -24,6 +33,11 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   buildOneClickClearPath: vi.fn(),
+  runSmartPathfinding: vi.fn(),
+  createStepGlitchContext: vi.fn(),
+  createStepGlitchContextInput: vi.fn((input: unknown) => input),
+  createStepGlitchScanCommandInput: vi.fn((input: unknown) => ({ ...(input as object), type: "scan" })),
+  composeStepGlitchSmartPath: vi.fn(),
   scanStepGlitchPath: vi.fn(),
   validateTrajectory: vi.fn(),
 }));
@@ -38,14 +52,17 @@ vi.mock("../../pathfinding/routing/step-glitch-scan", () => ({
       acceptedPoint: ReturnType<typeof createGraphPoint>;
       formulaEvidence: GraphwarStepGlitchPrefixEvidence["formulaEvidence"];
       prefixTarget: GraphwarStepGlitchPrefixEvidence["replayIdentity"]["prefixTarget"];
+      requiredTargets: GraphwarStepGlitchPrefixEvidence["replayIdentity"]["requiredTargets"];
       simulationBoundaryExpansion?: number;
       simulationMask: Uint8Array;
     }) => ({
       acceptedPoint: createGraphPoint(options.acceptedPoint.x, options.acceptedPoint.y),
+      evidenceIdentity: { canonical: "mock-prefix-evidence", simulationMask: options.simulationMask.slice() },
       formulaEvidence: options.formulaEvidence,
       replayIdentity: {
         boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
         prefixTarget: options.prefixTarget,
+        requiredTargets: options.requiredTargets,
         simulationMask: options.simulationMask.slice(),
       },
     }),
@@ -57,14 +74,40 @@ vi.mock("../../pathfinding/smart/trajectory", () => ({
   createGraphwarSmartPathfindingTrajectoryResult: mocks.validateTrajectory,
 }));
 
+vi.mock("../../core/wasm/step-glitch-adapter", () => ({
+  createGraphwarWasmStepGlitchContext: mocks.createStepGlitchContext,
+  createGraphwarWasmStepGlitchContextInput: mocks.createStepGlitchContextInput,
+  createGraphwarWasmStepGlitchScanCommandInput: mocks.createStepGlitchScanCommandInput,
+  composeGraphwarWasmStepGlitchSmartPath: mocks.composeStepGlitchSmartPath,
+}));
+
+vi.mock("../../core/wasm/composition-adapter", () => ({
+  runGraphwarWasmSmartPathfinding: mocks.runSmartPathfinding,
+}));
+
 const originalSelfDescriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
 const attempt = {
   attemptId: 1,
   backendGeneration: 0,
   outerTaskId: 1,
 } satisfies GraphwarBackendAttemptIdentity;
-const postMessage = vi.fn<(message: GraphwarPathfindingWorkerResponse) => void>();
-let handleMessage: ((event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void) | undefined;
+
+class TestValidatedRuntime extends GraphwarValidatedWasmRuntime {
+  readonly role: "pathfinding-master";
+
+  constructor() {
+    super();
+    this.role = "pathfinding-master";
+  }
+}
+
+const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse) => void>();
+let handleMessage:
+  | ((event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest>) => void)
+  | undefined;
+let findOrdinarySmartPathWithWasm: typeof import("./main.worker").findOrdinarySmartPathWithWasm | undefined;
+let findStepGlitchSmartPathWithWasm: typeof import("./main.worker").findStepGlitchSmartPathWithWasm | undefined;
+let mapWasmSmartFailureReason: typeof import("./main.worker").mapWasmSmartFailureReason | undefined;
 
 beforeAll(async () => {
   Object.defineProperty(globalThis, "self", {
@@ -72,7 +115,7 @@ beforeAll(async () => {
     value: {
       addEventListener: (
         type: "message",
-        listener: (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void,
+        listener: (event: MessageEvent<GraphwarBackendControlMessage | GraphwarPathfindingWorkerRequest>) => void,
       ) => {
         if (type === "message") {
           handleMessage = listener;
@@ -81,7 +124,19 @@ beforeAll(async () => {
       postMessage,
     },
   });
-  await import("./main.worker");
+  ({ findOrdinarySmartPathWithWasm, findStepGlitchSmartPathWithWasm, mapWasmSmartFailureReason } =
+    await import("./main.worker"));
+  handleMessage?.({
+    data: {
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 0,
+      role: "pathfinding-master",
+      type: "backend-init",
+    },
+  } as MessageEvent<GraphwarBackendControlMessage>);
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledOnce());
+  postMessage.mockClear();
 });
 
 afterAll(() => {
@@ -95,9 +150,221 @@ afterAll(() => {
 beforeEach(() => {
   postMessage.mockClear();
   mocks.buildOneClickClearPath.mockReset();
+  mocks.createStepGlitchContext.mockReset();
+  mocks.createStepGlitchContextInput.mockClear();
+  mocks.createStepGlitchScanCommandInput.mockClear();
+  mocks.composeStepGlitchSmartPath.mockReset();
+  mocks.runSmartPathfinding.mockReset();
   mocks.scanStepGlitchPath.mockReset();
   mocks.validateTrajectory.mockReset();
   mocks.validateTrajectory.mockReturnValue({ reachesTargetBeforeObstacle: true, visiblePixels: [] });
+  mocks.composeStepGlitchSmartPath.mockImplementation(
+    (input: { initialEvidence: unknown; initialPath: readonly unknown[] }) => ({
+      evidence: input.initialEvidence,
+      path: input.initialPath,
+      replayCount: 0,
+      status: "success",
+    }),
+  );
+});
+
+describe("WASM smart failure classification", () => {
+  it("keeps target misses as trajectory failures and route obstacles as route failures", () => {
+    if (!mapWasmSmartFailureReason) {
+      throw new Error("WASM smart failure mapper was not exported");
+    }
+
+    expect(mapWasmSmartFailureReason("graph-rule")).toBe("graph-rule");
+    expect(mapWasmSmartFailureReason("target")).toBe("trajectory");
+    expect(mapWasmSmartFailureReason("trajectory")).toBe("trajectory");
+    expect(mapWasmSmartFailureReason("route-obstacle")).toBe("route");
+    expect(mapWasmSmartFailureReason(undefined)).toBe("route");
+  });
+});
+
+describe("Ordinary WASM smart-path composition", () => {
+  it("packs the trajectory identity and publishes the WASM result without a TypeScript trajectory replay", () => {
+    const input = createOrdinarySmartPathInput();
+    const normalizedPath = [
+      input.sourcePath[0],
+      createPixelPoint(150, 210),
+      createPixelPoint(180, 220),
+      input.targetPoint,
+    ];
+    const wasmPath = [normalizedPath[0], normalizedPath[2], normalizedPath[3]];
+    const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
+    const graphPoints = normalizedPath.map((point) => imageToGraphPoint(point, input.bounds, input.boundsRect));
+    mocks.runSmartPathfinding.mockReturnValue({
+      points: wasmPath,
+      removedPointCount: 1,
+      status: "success",
+      validation: {
+        target: { center: input.hitTarget.center, radius: input.hitTarget.radius },
+        type: "trajectory",
+      },
+    });
+    const run = findOrdinarySmartPathWithWasm;
+    if (!run) {
+      throw new Error("Ordinary WASM smart-path runner was not exported");
+    }
+
+    const result = run(input, normalizedPath, formulaMode, { runSmartPathfinding: mocks.runSmartPathfinding }, []);
+
+    expect(result.path).toEqual(wasmPath);
+    expect(result.timings).toEqual([expect.objectContaining({ stage: "optimize-path" })]);
+    expect(mocks.runSmartPathfinding).toHaveBeenCalledWith({
+      isDeleteOptimizationEnabled: true,
+      points: normalizedPath,
+      sourcePointCount: input.sourcePath.length,
+      target: input.hitTarget.center,
+      targetRadius: input.hitTarget.radius,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: input.bounds,
+          points: graphPoints,
+          settings: formulaMode.settings,
+          soldierCenter: graphPoints[0],
+        },
+        stop: {
+          boundsRect: input.boundsRect,
+          collision: {
+            boundaryExpansion: input.simulationBoundaryExpansion,
+            mask: input.simulationMask,
+            type: "mask",
+          },
+          continueAfterTargetsUntilGraphX: { type: "none" },
+          orderedTargets: [input.hitTarget],
+          qualityPoints: graphPoints.slice(1, -1),
+          requiredTargets: [],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets",
+        },
+        type: "trajectory",
+      },
+    });
+    expect(mocks.validateTrajectory).not.toHaveBeenCalled();
+  });
+
+  it("keeps short candidates out of deletion and packs an explicit no-collision stop", () => {
+    const input = createOrdinarySmartPathInput();
+    delete input.simulationMask;
+    const normalizedPath = [input.sourcePath[0], createPixelPoint(150, 210), input.targetPoint];
+    mocks.runSmartPathfinding.mockReturnValue({
+      points: normalizedPath,
+      removedPointCount: 0,
+      status: "success",
+      validation: {
+        target: { center: input.hitTarget.center, radius: input.hitTarget.radius },
+        type: "trajectory",
+      },
+    });
+    const run = findOrdinarySmartPathWithWasm;
+    if (!run) {
+      throw new Error("Ordinary WASM smart-path runner was not exported");
+    }
+
+    const result = run(
+      input,
+      normalizedPath,
+      createGraphwarTrajectoryFormulaMode(input.settings),
+      { runSmartPathfinding: mocks.runSmartPathfinding },
+      [],
+    );
+
+    expect(mocks.runSmartPathfinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isDeleteOptimizationEnabled: false,
+        trajectoryValidation: expect.objectContaining({
+          stop: expect.objectContaining({ collision: { type: "none" } }),
+          type: "trajectory",
+        }),
+      }),
+    );
+    expect(result.timings).toEqual([expect.objectContaining({ stage: "validate-trajectory" })]);
+    expect(mocks.validateTrajectory).not.toHaveBeenCalled();
+  });
+
+  it("forwards the WASM trajectory blocked point without a TypeScript replay", () => {
+    const input = createOrdinarySmartPathInput();
+    const normalizedPath = [input.sourcePath[0], createPixelPoint(150, 210), input.targetPoint];
+    const blockedPoint = { x: 175.25, y: 224.5 };
+    mocks.runSmartPathfinding.mockReturnValue({
+      blockedPoint,
+      failureReason: "trajectory",
+      points: [],
+      removedPointCount: 0,
+      status: "failure",
+    });
+    const run = findOrdinarySmartPathWithWasm;
+    if (!run) {
+      throw new Error("Ordinary WASM smart-path runner was not exported");
+    }
+
+    const result = run(
+      input,
+      normalizedPath,
+      createGraphwarTrajectoryFormulaMode(input.settings),
+      { runSmartPathfinding: mocks.runSmartPathfinding },
+      [],
+    );
+
+    expect(result).toMatchObject({
+      blockedPoint: createPixelPoint(blockedPoint.x, blockedPoint.y),
+      failureReason: "trajectory",
+    });
+    expect(mocks.validateTrajectory).not.toHaveBeenCalled();
+  });
+
+  it("turns malformed smart output into a pathfinding typed WASM fault", async () => {
+    const input = createOrdinarySmartPathInput();
+    const normalizedPath = [input.sourcePath[0], input.targetPoint];
+    const run = findOrdinarySmartPathWithWasm;
+    if (!run) {
+      throw new Error("Ordinary WASM smart-path runner was not exported");
+    }
+    const outbound: GraphwarBackendControlMessage[] = [];
+    const module = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    const backendRuntime = createGraphwarWorkerBackendRuntime({
+      instantiateRuntime: async () => new TestValidatedRuntime(),
+      postControlMessage: (message) => outbound.push(message),
+      role: "pathfinding-master",
+    });
+    backendRuntime.handleMessage({
+      backend: { module, type: "wasm" },
+      backendExecution: { effective: "wasm", requested: "wasm" },
+      generation: attempt.backendGeneration,
+      role: "pathfinding-master",
+      type: "backend-init",
+    });
+
+    await expect(
+      executeGraphwarWorkerTask(backendRuntime, attempt, { attempt, type: "task" }, () =>
+        run(
+          input,
+          normalizedPath,
+          createGraphwarTrajectoryFormulaMode(input.settings),
+          {
+            runSmartPathfinding: () => {
+              throw new GraphwarWasmAdapterError("invalid-session-state", "malformed smart result", "output");
+            },
+          },
+          [],
+        ),
+      ),
+    ).resolves.toEqual({ type: "wasm-fault" });
+    expect(outbound).toEqual([
+      { backend: "wasm", generation: attempt.backendGeneration, role: "pathfinding-master", type: "backend-ready" },
+      {
+        context: { attempt, type: "task" },
+        fault: { code: "output", message: "malformed smart result" },
+        generation: attempt.backendGeneration,
+        role: "pathfinding-master",
+        type: "wasm-fault",
+      },
+    ]);
+  });
 });
 
 describe("Anytime one-click-clear progress", () => {
@@ -150,6 +417,7 @@ describe("Anytime one-click-clear progress", () => {
           },
         },
         incumbent,
+        sequence: 1,
       },
       type: "one-click-clear-incumbent",
     });
@@ -261,10 +529,15 @@ describe("Anytime one-click-clear progress", () => {
           path: adoptedPath,
           prefixEvidence: {
             acceptedPoint: createGraphPoint(-5, 1),
+            evidenceIdentity: {
+              canonical: "mock-prefix-evidence",
+              simulationMask: input.simulationMask?.slice() ?? new Uint8Array(),
+            },
             formulaEvidence: { prefix: createMockStepGlitchFormulaPrefix() },
             replayIdentity: {
               boundaryExpansion: input.simulationBoundaryExpansion,
               prefixTarget,
+              requiredTargets: [{ center: input.pathPoints[0] ?? targetPoint, radius: 7 }],
               simulationMask: input.simulationMask?.slice() ?? new Uint8Array(),
             },
           },
@@ -274,6 +547,7 @@ describe("Anytime one-click-clear progress", () => {
       })
       .mockImplementationOnce(async (options: GraphwarOneClickClearBuildOptions) => {
         expect(options.stepGlitchPrefixEvidence).toMatchObject({ acceptedPoint: createGraphPoint(-5, 1) });
+        expect(options.stepGlitchPrefixEvidence?.replayIdentity.requiredTargets).toEqual([]);
         return { elapsedMs: 1, expandedStates: 0, reason: "no-candidate", type: "failure" as const };
       });
 
@@ -314,6 +588,216 @@ describe("Anytime one-click-clear progress", () => {
 });
 
 describe("Step glitch smart-path validation", () => {
+  it("uses the retained WASM scan/replay context without TS scanner or trajectory calls", () => {
+    const mask = createPlaneMask();
+    const input = createStepGlitchInput(mask, mask);
+    input.isDeleteOptimizationEnabled = true;
+    const wasmPath = [input.sourcePath[0], createPixelPoint(130, 225), createPixelPoint(160, 225), input.targetPoint];
+    const scanner = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn().mockReturnValue({ status: "hit" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: wasmPath, requiredTargets: [] } },
+        status: "hit",
+      }),
+    };
+    mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    mocks.composeStepGlitchSmartPath.mockReturnValue({
+      evidence: { owned: { path: wasmPath } },
+      path: [input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint],
+      replayCount: 1,
+      status: "success",
+    });
+    const run = findStepGlitchSmartPathWithWasm;
+    if (!run) {
+      throw new Error("WASM smart-path runner was not exported");
+    }
+
+    const result = run(
+      input,
+      createGraphwarTrajectoryFormulaMode(input.settings),
+      [],
+      { runtime: { simulationMask: mask }, type: "step-glitch" },
+      {} as GraphwarWasmKernelRuntime,
+    );
+
+    expect(result.path).toEqual([input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint]);
+    expect(scanner.scanRaw).toHaveBeenCalledOnce();
+    expect(scanner.replayRaw).not.toHaveBeenCalled();
+    expect(mocks.composeStepGlitchSmartPath).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialPath: wasmPath,
+        isDeleteOptimizationEnabled: true,
+        sourcePointCount: input.sourcePath.length,
+      }),
+    );
+    expect(scanner.dispose).toHaveBeenCalledOnce();
+    expect(mocks.scanStepGlitchPath).not.toHaveBeenCalled();
+    expect(mocks.validateTrajectory).not.toHaveBeenCalled();
+  });
+
+  it("revalidates a WASM candidate with the requested Formula Mode when masks differ", () => {
+    const simulationMask = createPlaneMask();
+    const formulaMask = createPlaneMask();
+    formulaMask[0] = 1;
+    const input = createStepGlitchInput(simulationMask, formulaMask);
+    input.isDeleteOptimizationEnabled = true;
+    const scannedPath = [input.sourcePath[0], input.targetPoint];
+    const scanner = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn(),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
+    };
+    mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    mocks.validateTrajectory.mockReturnValue({ reachesTargetBeforeObstacle: false, visiblePixels: [] });
+
+    const scannerFormulaMode = createGraphwarTrajectoryFormulaMode({
+      ...input.settings,
+      stepGlitchObstacleMask: simulationMask,
+    });
+    const requestedFormulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
+    const run = findStepGlitchSmartPathWithWasm;
+    if (!run) {
+      throw new Error("WASM smart-path runner was not exported");
+    }
+
+    const result = run(
+      input,
+      scannerFormulaMode,
+      [],
+      { runtime: { simulationMask }, type: "step-glitch" },
+      {} as GraphwarWasmKernelRuntime,
+      requestedFormulaMode,
+    );
+
+    expect(result).toMatchObject({ failureReason: "trajectory" });
+    expect(mocks.composeStepGlitchSmartPath).toHaveBeenCalledWith(
+      expect.objectContaining({ isDeleteOptimizationEnabled: false }),
+    );
+    expect(mocks.validateTrajectory).toHaveBeenCalledWith(
+      expect.objectContaining({ formulaMode: requestedFormulaMode }),
+    );
+    expect(scanner.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish a malformed composition result", () => {
+    const mask = createPlaneMask();
+    const input = createStepGlitchInput(mask, mask);
+    input.isDeleteOptimizationEnabled = true;
+    const scannedPath = [input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint];
+    const scanner = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn(),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
+    };
+    mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    mocks.composeStepGlitchSmartPath.mockImplementation(() => {
+      throw new GraphwarWasmAdapterError("invalid-session-state", "malformed composition result", "output");
+    });
+    const run = findStepGlitchSmartPathWithWasm;
+    if (!run) {
+      throw new Error("WASM smart-path runner was not exported");
+    }
+
+    expect(() =>
+      run(
+        input,
+        createGraphwarTrajectoryFormulaMode(input.settings),
+        [],
+        { runtime: { simulationMask: mask }, type: "step-glitch" },
+        {} as GraphwarWasmKernelRuntime,
+      ),
+    ).toThrow("malformed composition result");
+    expect(scanner.replayRaw).not.toHaveBeenCalled();
+    expect(scanner.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("maps a normal command-20 composition miss without publishing a path", () => {
+    const mask = createPlaneMask();
+    const input = createStepGlitchInput(mask, mask);
+    input.isDeleteOptimizationEnabled = true;
+    const scannedPath = [input.sourcePath[0], createPixelPoint(160, 225), input.targetPoint];
+    const scanner = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn(),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
+    };
+    mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    mocks.composeStepGlitchSmartPath.mockReturnValue({
+      failureReason: "trajectory",
+      replayCount: 1,
+      status: "failure",
+    });
+
+    const run = findStepGlitchSmartPathWithWasm;
+    if (!run) {
+      throw new Error("WASM smart-path runner was not exported");
+    }
+    const result = run(
+      input,
+      createGraphwarTrajectoryFormulaMode(input.settings),
+      [],
+      { runtime: { simulationMask: mask }, type: "step-glitch" },
+      {} as GraphwarWasmKernelRuntime,
+    );
+
+    expect(result).toMatchObject({ failureReason: "trajectory" });
+    expect(result.path).toBeUndefined();
+    expect(scanner.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the scanner path when composition accepts no deletion", () => {
+    const mask = createPlaneMask();
+    const input = createStepGlitchInput(mask, mask);
+    input.isDeleteOptimizationEnabled = true;
+    const scannedPath = [
+      input.sourcePath[0],
+      createPixelPoint(130, 225),
+      createPixelPoint(160, 225),
+      input.targetPoint,
+    ];
+    const scanner = {
+      dispose: vi.fn(),
+      replayRaw: vi.fn().mockReturnValue({ status: "miss" }),
+      scanRaw: vi.fn().mockReturnValue({
+        evidence: { owned: { path: scannedPath, requiredTargets: [] } },
+        status: "hit",
+      }),
+    };
+    mocks.createStepGlitchContext.mockReturnValue({ context: scanner, status: "ready" });
+    mocks.composeStepGlitchSmartPath.mockReturnValue({
+      evidence: { owned: { path: scannedPath } },
+      path: scannedPath,
+      replayCount: 1,
+      status: "success",
+    });
+    const run = findStepGlitchSmartPathWithWasm;
+    if (!run) {
+      throw new Error("WASM smart-path runner was not exported");
+    }
+
+    const result = run(
+      input,
+      createGraphwarTrajectoryFormulaMode(input.settings),
+      [],
+      { runtime: { simulationMask: mask }, type: "step-glitch" },
+      {} as GraphwarWasmKernelRuntime,
+    );
+
+    expect(result.path).toEqual(scannedPath);
+    expect(mocks.composeStepGlitchSmartPath).toHaveBeenCalledOnce();
+    expect(scanner.dispose).toHaveBeenCalledOnce();
+  });
+
   it("reuses the scanner replay when both validations share the same mask", async () => {
     const mask = createPlaneMask();
     const input = createStepGlitchInput(mask, mask);
@@ -500,6 +984,36 @@ function createStepGlitchInput(simulationMask: Uint8Array, formulaMask: Uint8Arr
     simulationBoundaryExpansion: 0,
     simulationMask,
     simulationMaskCacheId: 1,
+    sourcePath: [sourcePoint],
+    targetPoint: createPixelPoint(200, 225),
+  };
+}
+
+/** 构造普通 WASM smart composition 的完整 trajectory identity。 */
+function createOrdinarySmartPathInput(): GraphwarSmartPathfindingPathInput {
+  const sourcePoint = createPixelPoint(100, 225);
+  return {
+    boundaryExpansion: 1,
+    bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+    boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+    isDeleteOptimizationEnabled: true,
+    hitTarget: { center: createPixelPoint(205, 225), radius: 10 },
+    isPreviewEnabled: false,
+    routeMaskCacheId: 1,
+    routeMode: "visibility-graph",
+    routeObstacleMask: createPlaneMask(),
+    routeTolerancePlanePixels: 2,
+    settings: {
+      algorithm: "pchip",
+      decimalPlaces: 4,
+      equation: "y",
+      steepness: 67,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
+    },
+    simulationBoundaryExpansion: 2,
+    simulationMask: createPlaneMask(),
+    simulationMaskCacheId: 2,
     sourcePath: [sourcePoint],
     targetPoint: createPixelPoint(200, 225),
   };

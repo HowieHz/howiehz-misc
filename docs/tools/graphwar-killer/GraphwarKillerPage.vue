@@ -115,6 +115,7 @@ import {
   useGraphwarLiveClickPreview,
 } from "./controllers/stage/live-click-preview";
 import { useGraphwarObstacleEditor } from "./controllers/stage/obstacle-editor";
+import type { GraphwarBackendControlMessage } from "./core/algorithm-backend";
 import {
   GRAPHWAR_DEFAULT_X_LIMIT,
   GRAPHWAR_PLANE_GAME_LENGTH,
@@ -149,7 +150,9 @@ import {
   type ToolWorkflowMode,
   type TransferStatus,
 } from "./core/types";
+import { createGraphwarWasmRuntimeController } from "./core/wasm/runtime-controller";
 import type { GraphwarDetectionBox } from "./detection/objects";
+import { createGraphwarDetectionRunner } from "./detection/runtime/runner";
 import { convertGraphwarExpressionDecimalsToFractions } from "./formula/expression/fraction-output";
 import { resolveFormulaModeContract } from "./formula/mode-contract";
 import type { GraphwarKillerLocale } from "./locale-types";
@@ -264,6 +267,65 @@ interface GraphwarActivePathfindingDebugCapture {
 const { locale } = defineProps<{
   locale: GraphwarKillerLocale;
 }>();
+
+// 一个页面只持有一个 WASM module selection；所有 authoritative workflow 从这里读取 generation。
+const graphwarWasmRuntimeController = createGraphwarWasmRuntimeController();
+const graphwarWasmRuntimeState = shallowRef(graphwarWasmRuntimeController.getState());
+const isWasmAccelerationEnabled = computed(() => graphwarWasmRuntimeState.value.type !== "off");
+const stopWasmRuntimeSubscription = graphwarWasmRuntimeController.subscribe((state) => {
+  graphwarWasmRuntimeState.value = state;
+});
+const wasmBackendSelection = () => graphwarWasmRuntimeController.createWorkerBackendSelection();
+const canToggleWasmAcceleration = computed(
+  () =>
+    graphwarWasmRuntimeState.value.type === "loading" ||
+    (!isGraphwarManagedModeEnabled.value &&
+      !isDetectionInProgress.value &&
+      !isSmartPathfindingInProgress.value &&
+      trajectoryCalculationStatus.value.type !== "in-progress" &&
+      !activePathfindingTask),
+);
+function toggleWasmAcceleration() {
+  if (!canToggleWasmAcceleration.value) {
+    return;
+  }
+  // Backend identity changes invalidate both complete results and the master Worker's derived route context.
+  invalidatePathfindingResultCache();
+  invalidatePathfindingWorkerCache();
+  if (isWasmAccelerationEnabled.value) {
+    resetLiveClickPreviewBackend();
+    graphwarWasmRuntimeController.disable();
+    return;
+  }
+  resetLiveClickPreviewBackend();
+  void graphwarWasmRuntimeController.enable();
+}
+function reportWasmFault(message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) {
+  const fallbackReason = `${message.fault.code}: ${message.fault.message}`;
+  if (!graphwarWasmRuntimeController.degrade(message.generation, fallbackReason)) {
+    return undefined;
+  }
+  const replacementGeneration = graphwarWasmRuntimeController.getState().generation;
+  // A fused generation cannot publish or reuse any result produced by the failed backend.
+  // Do not cancel the active outer task here: its runner owns the typed-fault TS replay.
+  if (message.role !== "detection-main" && message.role !== "detection-template") {
+    detectionWorkflow.replayGenerationAsTypescript(message.generation, replacementGeneration, fallbackReason);
+  }
+  if (message.role !== "trajectory") {
+    replayTrajectoryGenerationAsTypescript(message.generation, replacementGeneration, fallbackReason);
+  }
+  if (message.role !== "pathfinding-master" && message.role !== "one-click-clear-edge") {
+    graphwarPathfindingRunner.replayGenerationAsTypescript(message.generation, replacementGeneration, fallbackReason);
+  }
+  invalidatePathfindingResultCache();
+  invalidatePathfindingWorkerCache();
+  clearIncumbentPreview();
+  clearSmartPathfindingPreview();
+  if (message.role !== "live-click-preview") {
+    resetLiveClickPreviewBackend();
+  }
+  return replacementGeneration;
+}
 
 const graphwarDefaultXLimitText = formatDoublePrecisionDecimal(GRAPHWAR_DEFAULT_X_LIMIT);
 const graphwarVisibleYLimitText = formatDoublePrecisionDecimal(GRAPHWAR_VISIBLE_Y_LIMIT);
@@ -560,7 +622,10 @@ const {
   onImageApplied: clearSceneDependentState,
   onImageLoaded: handleLoadedScreenshot,
 });
-const graphwarPathfindingRunner = createGraphwarPathfindingRunner();
+const graphwarPathfindingRunner = createGraphwarPathfindingRunner({
+  createBackendSelection: wasmBackendSelection,
+  onWasmFault: reportWasmFault,
+});
 const pathfindingCache = createGraphwarPathfindingCacheController();
 // 识别结果应由页面持有，供舞台投影、目标过滤、友方障碍和一键清图共享。
 const detectedSoldiers = ref<DetectionBox[]>([]);
@@ -755,6 +820,10 @@ const isActiveObjectDetectionReady = computed(() => {
   }
 });
 // 检测 workflow 应持有异步运行、状态绘制、debounce 和 worker 生命周期；跨 workflow 副作用由页面注入。
+const graphwarDetectionRunner = createGraphwarDetectionRunner({
+  createBackendSelection: wasmBackendSelection,
+  onWasmFault: reportWasmFault,
+});
 const detectionWorkflow = useGraphwarDetectionWorkflow({
   boundsRect,
   debug: {
@@ -793,10 +862,11 @@ const detectionWorkflow = useGraphwarDetectionWorkflow({
     getImageData: getImageDataFromCurrentImage,
     isReady: () => Boolean(imageRef.value && imageUrl.value),
   },
+  runner: graphwarDetectionRunner,
 });
 const {
-  autoDetectionEnabled: isAutoDetectionEnabled,
-  inProgress: isDetectionInProgress,
+  isAutoDetectionEnabled,
+  isInProgress: isDetectionInProgress,
   status: detectionStatus,
   statusKind: detectionStatusKind,
   statusWarning: detectionStatusWarning,
@@ -1204,12 +1274,15 @@ const {
   plottedCurvePoints,
   plottedTrajectory,
   publishIncumbentPreview: publishTrajectoryIncumbentPreview,
+  replayGenerationAsTypescript: replayTrajectoryGenerationAsTypescript,
   secondOrderLaunchAngleDegrees,
   secondOrderLaunchAngleRadians,
   simulatorLaunchAngleRadians,
   hasTargetMissWarning: hasFormulaTargetMissWarning,
   trajectoryWarningReason,
 } = useGraphwarTrajectoryResult({
+  createBackendSelection: wasmBackendSelection,
+  onWasmFault: reportWasmFault,
   isCollisionSettingsValid: isTrajectoryCollisionSettingsValid,
   geometry: {
     boundsRect,
@@ -1574,10 +1647,13 @@ const {
   lineSegments: liveClickPreviewLineSegments,
   points: liveClickPreviewPoints,
   renderedElapsedMs: liveClickPreviewRenderedElapsedMs,
+  resetBackend: resetLiveClickPreviewBackend,
   refreshPointerPathPointIndex: refreshLiveClickPreviewPointerPathPointIndex,
   schedulePointerPoint: scheduleLiveClickPreviewPointerPoint,
   setPointerPoint: setLiveClickPreviewPointerPoint,
 } = useGraphwarLiveClickPreview({
+  createBackendSelection: wasmBackendSelection,
+  onWasmFault: reportWasmFault,
   geometry: {
     boundsRect,
     getBounds: () => (parsedBounds.value.ok ? parsedBounds.value.bounds : undefined),
@@ -2095,6 +2171,19 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
     obstacleMinAreaText: obstacleMinAreaText.value,
     templateMatchingWorkerCountText: templateMatchingWorkerCountText.value,
   },
+  runtime: {
+    canToggle: canToggleWasmAcceleration.value,
+    isEnabled: isWasmAccelerationEnabled.value,
+    state: graphwarWasmRuntimeState.value.type,
+    statusTitle:
+      graphwarWasmRuntimeState.value.type === "loading"
+        ? locale.ui.settings.runtime.loading
+        : graphwarWasmRuntimeState.value.type === "ready"
+          ? locale.ui.settings.runtime.ready
+          : graphwarWasmRuntimeState.value.type === "degraded"
+            ? `${locale.ui.settings.runtime.degraded}: ${graphwarWasmRuntimeState.value.reason}`
+            : undefined,
+  },
   simulator: {
     shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY.value,
     shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters.value,
@@ -2529,6 +2618,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopWasmRuntimeSubscription();
+  graphwarWasmRuntimeController.disable();
   window.removeEventListener("paste", handleWindowPaste);
   document.removeEventListener("visibilitychange", handleGraphwarManagedVisibilityChange);
   graphwarAgentConnectionGeneration += 1;
@@ -5231,6 +5322,7 @@ function undoLastPoint() {
       v-if="isAdvancedSettingsVisible"
       :locale="locale"
       :panel="advancedSettingsPanel"
+      @toggle-wasm-acceleration="toggleWasmAcceleration"
       @toggle-simulator-parse-derivative-as-y="
         !isGraphwarManagedModeEnabled && (shouldSimulatorParseDerivativeAsY = !shouldSimulatorParseDerivativeAsY)
       "

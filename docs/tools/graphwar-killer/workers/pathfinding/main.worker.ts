@@ -1,16 +1,42 @@
 import {
+  createGraphwarWasmSessionIdentity,
+  createGraphwarWasmRequestNonce,
   graphwarBackendAttemptIdentitiesAreEqual,
+  graphwarWasmSessionIdentitiesAreEqual,
   type GraphwarBackendAttemptIdentity,
+  type GraphwarBackendControlMessage,
+  type GraphwarBackendInitializationMessage,
+  type GraphwarAlgorithmBackendContext,
+  GraphwarWasmFault,
 } from "../../core/algorithm-backend";
 import {
   normalizeAutomaticPathPointForMinimumForwardStep,
   normalizePathPointForStrictForward,
   pathFollowsGraphRule,
 } from "../../core/game/forward-rule";
-import { graphToImagePoint, imageToGraphPoint } from "../../core/geometry";
-import { planeGridCellCenterToImagePoint } from "../../core/plane-grid";
+import { graphToImagePoint, imageToGraphPoint, xPlusGoesRight } from "../../core/geometry";
+import {
+  imagePointToPlaneGridPoint,
+  mirrorPlaneGridPoint,
+  planeGridCellCenterToImagePoint,
+} from "../../core/plane-grid";
 import { measureSyncStage, nowMs } from "../../core/time";
-import { createGraphPoint, type GraphBounds, type PixelPoint } from "../../core/types";
+import { graphwarToolDefaults } from "../../core/tool/defaults";
+import { createPixelPoint } from "../../core/types";
+import type { GraphBounds, PixelPoint } from "../../core/types";
+import { createGraphwarWasmRouteContext, type GraphwarWasmRouteContext } from "../../core/wasm/route-adapter";
+import { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import {
+  composeGraphwarWasmStepGlitchSmartPath,
+  createGraphwarWasmStepGlitchContext,
+  createGraphwarWasmStepGlitchContextInput,
+  createGraphwarWasmStepGlitchScanCommandInput,
+} from "../../core/wasm/step-glitch-adapter";
+import {
+  createGraphwarWorkerBackendRuntime,
+  createGraphwarWorkerBackendSlot,
+  executeGraphwarWorkerTask,
+} from "../../core/worker-backend";
 /** Graphwar 几何寻路 master worker：普通寻路直接跑，一键清图 DAG 边交给子 worker pool。 */
 import { dilateObstacleMask } from "../../detection/objects";
 import { resolveFormulaModeContract } from "../../formula/mode-contract";
@@ -91,13 +117,28 @@ interface GraphwarPathfindingWorkerScope {
   /** 接收主线程几何寻路请求。 */
   addEventListener: (
     type: "message",
-    listener: (event: MessageEvent<GraphwarPathfindingWorkerRequest>) => void,
+    listener: (event: MessageEvent<GraphwarBackendInitializationMessage | GraphwarPathfindingWorkerRequest>) => void,
   ) => void;
   /** 返回预览、成功或错误响应。 */
-  postMessage: (message: GraphwarPathfindingWorkerResponse) => void;
+  postMessage: (message: GraphwarBackendControlMessage | GraphwarPathfindingWorkerResponse) => void;
 }
 
 const workerScope = self as unknown as GraphwarPathfindingWorkerScope;
+const backendRuntime = createGraphwarWorkerBackendRuntime({
+  postControlMessage: (message) => workerScope.postMessage(message),
+  role: "pathfinding-master",
+});
+
+/** WASM-selected tasks must never silently execute the TypeScript core when their runtime is malformed. */
+function getWasmRuntime(backend: GraphwarAlgorithmBackendContext) {
+  if (backend.type !== "wasm") {
+    return undefined;
+  }
+  if (!(backend.runtime instanceof GraphwarWasmKernelRuntime)) {
+    throw new GraphwarWasmFault("abi", "Pathfinding Worker received an incompatible WASM runtime");
+  }
+  return backend.runtime;
+}
 
 /** Master Worker 缓存的一份可视图障碍数据。 */
 interface MasterVisibilityGraphCacheEntry {
@@ -125,10 +166,21 @@ interface MasterRouteMaskCacheEntry {
   summedArea?: GraphwarPlaneMaskSummedArea;
 }
 
-type RouteRuntimeOptions = Pick<
-  GraphwarPathfindingOptions,
-  "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
->;
+/** 一份原子 Step 路由能力同时携带两个等价 backend 的完整输入。 */
+interface RouteRuntimeOptions {
+  typescript?: Pick<
+    GraphwarPathfindingOptions,
+    "estimateRemainingSecondaryCost" | "evaluateEdge" | "initialRouteState" | "initialRouteStateKey"
+  >;
+  wasm: {
+    exactStartPoint: PixelPoint;
+    exactTargetPoint: PixelPoint;
+    model: GraphwarStepRouteModel;
+    routeOriginPoint: PixelPoint;
+    resolvedStartStateKey: string;
+    resolvedStartY: number;
+  };
+}
 
 /** Step 路线复用的包络模型和同 mask 前缀和。 */
 interface StepRouteValidationContext {
@@ -141,7 +193,7 @@ interface SmartStepRouteContext extends StepRouteValidationContext {
   /** 已验证 prefix 末端的累计平台高度。 */
   resolvedStartY: number;
   /** 已验证 prefix 末端的 canonical 平台身份。 */
-  resolvedStartStateKey?: string;
+  resolvedStartStateKey: string;
 }
 
 /** Step-glitch job 必须把扫描与最终回放共用的碰撞 mask 绑定到策略生命周期。 */
@@ -169,18 +221,14 @@ interface MasterRouteMaskSourceInput {
 
 /** 一个边 Worker 的就绪、任务与完成状态。 */
 interface EdgeWorkerHandle {
-  /** 子 worker 当前正在处理的 job；失败 fallback 时会补跑所有未完成 job。 */
-  activeJob?: GraphwarOneClickClearDagEdgeBuildJob;
-  /** 当前 job 的 session 内请求号；复用 worker 后用于拒绝迟到结果。 */
-  activeRequestId?: number;
+  /** 当前 job 与 session 内请求号是同一份在途身份；失败 fallback 会整体丢弃。 */
+  activeRequest?: { job: GraphwarOneClickClearDagEdgeBuildJob; requestId: number };
+  /** Nested edge Worker 的 backend control slot。 */
+  backendSlot: ReturnType<typeof createGraphwarWorkerBackendSlot>;
   /** 清理事件监听器。 */
   cleanup: () => void;
-  /** 是否已结束并记录耗时。 */
-  isFinished: boolean;
-  /** 是否已发送与当前 session 绑定的完整初始化上下文。 */
-  isInitialized: boolean;
-  /** 是否已完成初始化，可接收 DAG 边 job。 */
-  isReady: boolean;
+  /** 完整初始化从发送到 ready，再到终止只沿单向状态机推进。 */
+  state: "created" | "finished" | "initializing" | "ready";
   /** 子 worker 创建时间。 */
   startedAt: number;
   /** 实际子 worker。 */
@@ -197,7 +245,7 @@ interface EdgeRouteTimingTotals {
   routeMapPixelsElapsedMs: number;
 }
 
-type OneClickClearDagEdgeSessionState = "disposed" | "fallback" | "idle" | "running";
+type OneClickClearDagEdgeSessionState = "disposed" | "failed" | "fallback" | "idle" | "running";
 
 /** 普通 DAG 建边只支持几何路线；Step-glitch 由独立的 x+ scanner 处理。 */
 type OneClickClearDagEdgePolicy = Exclude<GraphwarPathSearchPolicy, { type: "step-glitch" }>;
@@ -246,6 +294,9 @@ interface MasterStepGlitchEvidence extends GraphwarStepGlitchPrefixEvidence {
 
 /** 接收页面请求，并将异步搜索交给统一的 master 分派入口。 */
 workerScope.addEventListener("message", (event) => {
+  if (backendRuntime.handleMessage(event.data)) {
+    return;
+  }
   const request = event.data;
   void handleRequest(request);
 });
@@ -253,63 +304,79 @@ workerScope.addEventListener("message", (event) => {
 /** 将单个 master 请求分派到对应搜索流程，并统一序列化异常。 */
 async function handleRequest(request: GraphwarPathfindingWorkerRequest) {
   try {
-    if (request.task.type === "find-route") {
-      const input = request.task.input;
-      postResponse({
-        attempt: request.attempt,
-        id: request.id,
-        result: await findRouteForMask(
-          request.id,
-          request.attempt,
-          input,
-          masterVisibilityGraphCache.get(createMasterVisibilityGraphCacheKey(input))?.routeMask ?? input.routeMask,
-        ),
-        taskType: "find-route",
-        type: "success",
-      });
-      return;
-    }
+    await executeGraphwarWorkerTask(
+      backendRuntime,
+      request.attempt,
+      { attempt: request.attempt, type: "task" },
+      async (backend) => {
+        if (request.task.type === "find-route") {
+          const input = request.task.input;
+          postResponse({
+            attempt: request.attempt,
+            id: request.id,
+            result: await findRouteForMask(
+              request.id,
+              request.attempt,
+              input,
+              masterVisibilityGraphCache.get(createMasterVisibilityGraphCacheKey(input))?.routeMask ?? input.routeMask,
+              undefined,
+              getWasmRuntime(backend),
+            ),
+            taskType: "find-route",
+            type: "success",
+          });
+          return;
+        }
 
-    if (request.task.type === "find-smart-path") {
-      postResponse({
-        attempt: request.attempt,
-        id: request.id,
-        result: await findSmartPath(
-          request.id,
-          request.attempt,
-          request.task.input,
-          request.task.shouldCollectDiagnostics === true,
-        ),
-        taskType: "find-smart-path",
-        type: "success",
-      });
-      return;
-    }
+        if (request.task.type === "find-smart-path") {
+          postResponse({
+            attempt: request.attempt,
+            id: request.id,
+            result: await findSmartPath(
+              request.id,
+              request.attempt,
+              request.task.input,
+              request.task.shouldCollectDiagnostics === true,
+              getWasmRuntime(backend),
+            ),
+            taskType: "find-smart-path",
+            type: "success",
+          });
+          return;
+        }
 
-    if (request.task.type === "build-one-click-clear-dag-edges") {
-      postResponse({
-        attempt: request.attempt,
-        id: request.id,
-        result: await buildOneClickClearDagEdges(request.attempt, request.task.input),
-        taskType: "build-one-click-clear-dag-edges",
-        type: "success",
-      });
-      return;
-    }
+        if (request.task.type === "build-one-click-clear-dag-edges") {
+          postResponse({
+            attempt: request.attempt,
+            id: request.id,
+            result: await buildOneClickClearDagEdges(
+              request.id,
+              request.attempt,
+              request.task.input,
+              getWasmRuntime(backend),
+            ),
+            taskType: "build-one-click-clear-dag-edges",
+            type: "success",
+          });
+          return;
+        }
 
-    postResponse({
-      attempt: request.attempt,
-      id: request.id,
-      result: await buildOneClickClearPath(
-        request.id,
-        request.attempt,
-        request.task.input,
-        request.task.shouldReportIncumbents,
-        request.task.shouldCollectDiagnostics === true,
-      ),
-      taskType: "build-one-click-clear-path",
-      type: "success",
-    });
+        postResponse({
+          attempt: request.attempt,
+          id: request.id,
+          result: await buildOneClickClearPath(
+            request.id,
+            request.attempt,
+            request.task.input,
+            request.task.shouldReportIncumbents,
+            request.task.shouldCollectDiagnostics === true,
+            getWasmRuntime(backend),
+          ),
+          taskType: "build-one-click-clear-path",
+          type: "success",
+        });
+      },
+    );
   } catch (error) {
     postResponse({
       attempt: request.attempt,
@@ -327,6 +394,7 @@ async function findRouteForMask(
   input: GraphwarPathfindingRouteInput,
   routeMask: Uint8Array,
   runtimeOptions?: RouteRuntimeOptions,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): Promise<GraphwarPathfindingRouteResult> {
   let visibilityCache: GraphwarPathfindingRouteResult["visibilityCache"] = "skipped";
   let visibilityCacheElapsedMs = 0;
@@ -340,13 +408,103 @@ async function findRouteForMask(
           type: "preview",
         })
     : undefined;
+  // A Step WASM command is selected only with its complete model and exact initial state; other custom edge evaluators
+  // remain TypeScript-only rather than being silently weakened to stateless geometry.
+  if (wasmRuntime) {
+    const wasmContext = createGraphwarWasmRouteContext(wasmRuntime, {
+      boundaryExpansion: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      routeOriginPoint: imageToGraphPoint(
+        runtimeOptions?.wasm.routeOriginPoint ?? input.startPoint,
+        input.bounds,
+        input.boundsRect,
+      ),
+      // `routeMask` 已完成 morphology；真实 tolerance 仍决定 visibility contour 的 RDP epsilon。
+      routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+      sourceMask: routeMask,
+      sourceMaskType: "route",
+      ...(runtimeOptions
+        ? {
+            stepRouteModel: {
+              ...runtimeOptions.wasm.model,
+              qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+            },
+          }
+        : {}),
+    });
+    try {
+      const isMirrored = !xPlusGoesRight(input.bounds);
+      const start = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(input.startPoint, input.boundsRect), isMirrored);
+      const target = mirrorPlaneGridPoint(imagePointToPlaneGridPoint(input.targetPoint, input.boundsRect), isMirrored);
+      const wasmStepRoute = runtimeOptions?.wasm;
+      const retainedStepRoute = wasmContext.stepRoute;
+      let result;
+      if (wasmStepRoute) {
+        if (!retainedStepRoute) {
+          throw new GraphwarWasmFault("abi", "Pathfinding WASM route context did not retain its Step model");
+        }
+        result =
+          input.routeMode === "theta-star"
+            ? retainedStepRoute.findThetaStarPath({
+                exactStart: imageToGraphPoint(wasmStepRoute.exactStartPoint, input.bounds, input.boundsRect),
+                exactTarget: imageToGraphPoint(wasmStepRoute.exactTargetPoint, input.bounds, input.boundsRect),
+                initialState: {
+                  resolvedY: wasmStepRoute.resolvedStartY,
+                  routeStateKey: wasmStepRoute.resolvedStartStateKey,
+                },
+                shouldCollectPreviews: input.isPreviewEnabled,
+                start,
+                target,
+              })
+            : retainedStepRoute.findVisibilityGraphPath({
+                exactStart: imageToGraphPoint(wasmStepRoute.exactStartPoint, input.bounds, input.boundsRect),
+                exactTarget: imageToGraphPoint(wasmStepRoute.exactTargetPoint, input.bounds, input.boundsRect),
+                initialState: {
+                  resolvedY: wasmStepRoute.resolvedStartY,
+                  routeStateKey: wasmStepRoute.resolvedStartStateKey,
+                },
+                shouldCollectPreviews: input.isPreviewEnabled,
+                start,
+                target,
+              });
+      } else {
+        result =
+          input.routeMode === "theta-star"
+            ? wasmContext.findThetaStarPath(start, target, input.isPreviewEnabled)
+            : wasmContext.findVisibilityGraphPath(start, target, input.isPreviewEnabled);
+      }
+      for (const preview of result.previews) {
+        postPreview?.({
+          acceptedEdges: preview.acceptedEdges.map(([from, to]) => [
+            { x: from.x, y: from.y },
+            { x: to.x, y: to.y },
+          ]),
+          bestPath: preview.bestPath.map((point) => ({ x: point.x, y: point.y })),
+          candidates: preview.candidates.map((point) => ({ x: point.x, y: point.y })),
+          ...(preview.current ? { current: { x: preview.current.x, y: preview.current.y } } : {}),
+          isMirrored: preview.isMirrored,
+        });
+      }
+      return {
+        ...(result.type === "success"
+          ? { path: result.path.map((point) => mirrorPlaneGridPoint(point, isMirrored)) }
+          : {}),
+        searchElapsedMs: Math.max(0, nowMs() - searchStartedAt),
+        visibilityCache: "skipped",
+        visibilityCacheElapsedMs: 0,
+      };
+    } finally {
+      wasmContext.dispose();
+    }
+  }
   const path =
     input.routeMode === "theta-star"
       ? await buildGraphwarThetaStarPathForMask({
           bounds: input.bounds,
           boundsRect: input.boundsRect,
           boundaryExpansion: input.boundaryExpansion,
-          ...runtimeOptions,
+          ...runtimeOptions?.typescript,
           onPreview: postPreview,
           routeMask,
           routeTolerancePlanePixels: input.routeTolerancePlanePixels,
@@ -358,7 +516,7 @@ async function findRouteForMask(
           bounds: input.bounds,
           boundsRect: input.boundsRect,
           boundaryExpansion: input.boundaryExpansion,
-          ...runtimeOptions,
+          ...runtimeOptions?.typescript,
           getVisibilityGraphObstacleData: () => {
             const startedAt = nowMs();
             const lookup = getMasterVisibilityGraphObstacleData(input, routeMask);
@@ -387,13 +545,25 @@ async function findSmartPath(
   attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarSmartPathfindingPathInput,
   shouldCollectDiagnostics: boolean,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): Promise<GraphwarSmartPathfindingPathResult> {
   const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
   const pathSearchPolicy = resolveGraphwarPathSearchPolicy(formulaMode.contract, input.routeMode);
   const debugMetrics = shouldCollectDiagnostics
-    ? createGraphwarPathfindingDebugMetrics(pathSearchPolicy.type === "step-glitch")
+    ? createGraphwarPathfindingDebugMetrics(
+        pathSearchPolicy.type === "step-glitch",
+        wasmRuntime ? { effective: "wasm", requested: "wasm" } : { effective: "typescript", requested: "typescript" },
+      )
     : undefined;
-  const result = await findSmartPathResult(id, attempt, input, formulaMode, debugMetrics, pathSearchPolicy);
+  const result = await findSmartPathResult(
+    id,
+    attempt,
+    input,
+    formulaMode,
+    debugMetrics,
+    pathSearchPolicy,
+    wasmRuntime,
+  );
   return debugMetrics ? { ...result, diagnostics: debugMetrics } : result;
 }
 
@@ -405,6 +575,7 @@ async function findSmartPathResult(
   formulaMode: GraphwarTrajectoryFormulaMode,
   debugMetrics: GraphwarPathfindingDebugMetrics | undefined,
   pathSearchPolicy: GraphwarPathSearchPolicy,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): Promise<GraphwarSmartPathfindingPathResult> {
   const timings: GraphwarSmartPathfindingWorkerTiming[] = [];
   const startPoint = input.sourcePath.at(-1);
@@ -421,6 +592,7 @@ async function findSmartPathResult(
           timings,
           { ...pathSearchPolicy, runtime: { simulationMask: input.simulationMask } },
           debugMetrics,
+          wasmRuntime,
         )
       : { failureReason: "route", timings };
   }
@@ -458,14 +630,15 @@ async function findSmartPathResult(
         timings,
       };
     }
+    if (prefixValidation.routeStateKey === undefined) {
+      return { failureReason: "route", timings };
+    }
     runtimePolicy = {
       ...pathSearchPolicy,
       runtime: {
         model,
         resolvedStartY: prefixValidation.resolvedEndY,
-        ...(prefixValidation.routeStateKey === undefined
-          ? {}
-          : { resolvedStartStateKey: prefixValidation.routeStateKey }),
+        resolvedStartStateKey: prefixValidation.routeStateKey,
         summedArea: routeMaskLookup.summedArea,
       },
     };
@@ -475,19 +648,31 @@ async function findSmartPathResult(
 
   const routeRuntimeOptions: RouteRuntimeOptions | undefined =
     runtimePolicy.type === "step-stateful"
-      ? createGraphwarStepPathfindingEdgeEvaluator({
-          boundaryInset: input.boundaryExpansion,
-          bounds: input.bounds,
-          boundsRect: input.boundsRect,
-          exactStartPoint: startPoint,
-          exactTargetPoint: input.targetPoint,
-          model: runtimePolicy.runtime.model,
-          resolvedStartY: runtimePolicy.runtime.resolvedStartY,
-          ...(runtimePolicy.runtime.resolvedStartStateKey === undefined
+      ? {
+          ...(wasmRuntime
             ? {}
-            : { resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey }),
-          summedArea: runtimePolicy.runtime.summedArea,
-        })
+            : {
+                typescript: createGraphwarStepPathfindingEdgeEvaluator({
+                  boundaryInset: input.boundaryExpansion,
+                  bounds: input.bounds,
+                  boundsRect: input.boundsRect,
+                  exactStartPoint: startPoint,
+                  exactTargetPoint: input.targetPoint,
+                  model: runtimePolicy.runtime.model,
+                  resolvedStartY: runtimePolicy.runtime.resolvedStartY,
+                  resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey,
+                  summedArea: runtimePolicy.runtime.summedArea,
+                }),
+              }),
+          wasm: {
+            exactStartPoint: startPoint,
+            exactTargetPoint: input.targetPoint,
+            model: runtimePolicy.runtime.model,
+            routeOriginPoint,
+            resolvedStartStateKey: runtimePolicy.runtime.resolvedStartStateKey,
+            resolvedStartY: runtimePolicy.runtime.resolvedStartY,
+          },
+        }
       : undefined;
 
   const routeResult = await findRouteForMask(
@@ -507,6 +692,7 @@ async function findSmartPathResult(
     },
     routeMaskLookup.mask,
     routeRuntimeOptions,
+    wasmRuntime,
   );
   timings.push(
     {
@@ -528,6 +714,31 @@ async function findSmartPathResult(
   }
 
   const normalizedPath = normalizeSmartPathfindingPathFromPlanePath(routeResult.path, input.targetPoint, input);
+  if (wasmRuntime) {
+    const wasmRouteContext = createGraphwarWasmRouteContext(wasmRuntime, {
+      boundaryExpansion: input.boundaryExpansion,
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      routeOriginPoint: imageToGraphPoint(routeOriginPoint, input.bounds, input.boundsRect),
+      routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+      sourceMask: routeMaskLookup.mask,
+      sourceMaskType: "route",
+      ...(runtimePolicy.type === "step-stateful"
+        ? {
+            stepRouteModel: {
+              ...runtimePolicy.runtime.model,
+              qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+            },
+          }
+        : {}),
+    });
+    try {
+      return findOrdinarySmartPathWithWasm(input, normalizedPath, formulaMode, wasmRouteContext, timings);
+    } finally {
+      wasmRouteContext.dispose();
+    }
+  }
+
   const validation = measureSyncStage(timings, "validate-trajectory", () =>
     validateSmartPathfindingTrajectory(input, normalizedPath, formulaMode, runtimePolicy, debugMetrics),
   );
@@ -551,6 +762,87 @@ async function findSmartPathResult(
   return { path, timings };
 }
 
+/**
+ * 打包普通智能寻路候选，并由单个 WASM 命令负责路线检查、轨迹回放和删点。
+ *
+ * 该导出测试缝无需伪造真实 retained route-context 指针，也能证明 effective WASM 分支成功后不再运行 TypeScript 轨迹和优化核心。
+ */
+export function findOrdinarySmartPathWithWasm(
+  input: GraphwarSmartPathfindingPathInput,
+  normalizedPath: readonly PixelPoint[],
+  formulaMode: GraphwarTrajectoryFormulaMode,
+  wasmRouteContext: Pick<GraphwarWasmRouteContext, "runSmartPathfinding">,
+  timings: GraphwarSmartPathfindingWorkerTiming[],
+): GraphwarSmartPathfindingPathResult {
+  const graphPoints = normalizedPath.map((point) => imageToGraphPoint(point, input.bounds, input.boundsRect));
+  const soldierCenter = graphPoints[0];
+  if (!soldierCenter) {
+    return { failureReason: "route", timings };
+  }
+
+  // 单个原子命令绑定候选公式、命中圈、模拟碰撞策略和质量点，避免 WASM 成功后再由 TS 重放。
+  const shouldOptimizePath = input.isDeleteOptimizationEnabled && normalizedPath.length > 3;
+  const composed = measureSyncStage(timings, shouldOptimizePath ? "optimize-path" : "validate-trajectory", () =>
+    wasmRouteContext.runSmartPathfinding({
+      isDeleteOptimizationEnabled: shouldOptimizePath,
+      points: normalizedPath,
+      sourcePointCount: input.sourcePath.length,
+      target: input.hitTarget.center,
+      targetRadius: input.hitTarget.radius,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: input.bounds,
+          points: graphPoints,
+          settings: formulaMode.settings,
+          soldierCenter,
+        },
+        stop: {
+          boundsRect: input.boundsRect,
+          collision: input.simulationMask
+            ? {
+                boundaryExpansion: input.simulationBoundaryExpansion,
+                mask: input.simulationMask,
+                type: "mask",
+              }
+            : { type: "none" },
+          continueAfterTargetsUntilGraphX: { type: "none" },
+          orderedTargets: [input.hitTarget],
+          qualityPoints: graphPoints.slice(1, -1),
+          requiredTargets: [],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets",
+        },
+        type: "trajectory",
+      },
+    }),
+  );
+  if (composed.status === "success") {
+    return { path: composed.points.map(({ x, y }) => createPixelPoint(x, y)), timings };
+  }
+  return {
+    ...(composed.blockedPoint
+      ? { blockedPoint: createPixelPoint(composed.blockedPoint.x, composed.blockedPoint.y) }
+      : {}),
+    failureReason: mapWasmSmartFailureReason(composed.failureReason),
+    timings,
+  };
+}
+
+/** 把 WASM composition 的细分失败映射回智能寻路原有的公开失败分类。 */
+export function mapWasmSmartFailureReason(
+  reason: "graph-rule" | "route-obstacle" | "target" | "trajectory" | undefined,
+): "graph-rule" | "route" | "trajectory" {
+  if (reason === "graph-rule") {
+    return "graph-rule";
+  }
+  if (reason === "target" || reason === "trajectory") {
+    return "trajectory";
+  }
+  return "route";
+}
+
 /** Step ODE 邪道单目标直接扫描控制点；不经过普通 route mask、Theta* 或可视图。 */
 function findStepGlitchSmartPath(
   input: GraphwarSmartPathfindingPathInput,
@@ -558,6 +850,7 @@ function findStepGlitchSmartPath(
   timings: GraphwarSmartPathfindingWorkerTiming[],
   pathSearchPolicy: Extract<SmartPathSearchRuntimePolicy, { type: "step-glitch" }>,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): GraphwarSmartPathfindingPathResult {
   const simulationMask = pathSearchPolicy.runtime.simulationMask;
   const scannerFormulaMode =
@@ -567,6 +860,17 @@ function findStepGlitchSmartPath(
           ...formulaMode.settings,
           stepGlitchObstacleMask: simulationMask,
         });
+  if (wasmRuntime) {
+    return findStepGlitchSmartPathWithWasm(
+      input,
+      scannerFormulaMode,
+      timings,
+      pathSearchPolicy,
+      wasmRuntime,
+      formulaMode,
+      debugMetrics,
+    );
+  }
   const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
   const scanResult = scanGraphwarStepGlitchPath({
     bounds: input.bounds,
@@ -623,6 +927,7 @@ function findStepGlitchSmartPath(
     acceptedPoint: scanResult.acceptedPoint,
     formulaEvidence: scanResult.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
     prefixTarget: input.hitTarget,
+    requiredTargets: [],
     simulationBoundaryExpansion: input.simulationBoundaryExpansion,
     simulationMask,
   });
@@ -647,6 +952,125 @@ function findStepGlitchSmartPath(
   }
   setMasterStepGlitchEvidence(input, path, resultPrefixEvidence);
   return { path, timings };
+}
+
+/** Effective WASM smart Step-glitch path: one retained context owns scan and deletion replays. */
+export function findStepGlitchSmartPathWithWasm(
+  input: GraphwarSmartPathfindingPathInput,
+  scannerFormulaMode: GraphwarTrajectoryFormulaMode,
+  timings: GraphwarSmartPathfindingWorkerTiming[],
+  pathSearchPolicy: Extract<SmartPathSearchRuntimePolicy, { type: "step-glitch" }>,
+  wasmRuntime: GraphwarWasmKernelRuntime,
+  validationFormulaMode: GraphwarTrajectoryFormulaMode = scannerFormulaMode,
+  debugMetrics?: GraphwarPathfindingDebugMetrics,
+): GraphwarSmartPathfindingPathResult {
+  const simulationMask = pathSearchPolicy.runtime.simulationMask;
+  const hasSharedFormulaMask = validationFormulaMode.settings.stepGlitchObstacleMask === simulationMask;
+  const prefixEvidence = getMasterStepGlitchEvidence(input, input.sourcePath, input.prefixTarget);
+  const contextResult = createGraphwarWasmStepGlitchContext(
+    wasmRuntime,
+    createGraphwarWasmStepGlitchContextInput({
+      bounds: input.bounds,
+      boundsRect: input.boundsRect,
+      formulaMode: scannerFormulaMode,
+      ...(prefixEvidence ? { prefixEvidence } : {}),
+      ...(input.prefixTarget ? { prefixTarget: input.prefixTarget } : {}),
+      requiredTargets: [],
+      simulationBoundaryExpansion: input.simulationBoundaryExpansion,
+      simulationMask,
+      sourcePath: input.sourcePath,
+    }),
+  );
+  if (contextResult.status !== "ready") {
+    return { failureReason: "route", timings };
+  }
+
+  const scanner = contextResult.context;
+  try {
+    const scanStartedAt = nowMs();
+    const scanResult = scanner.scanRaw(
+      createGraphwarWasmStepGlitchScanCommandInput({
+        hitTarget: input.hitTarget,
+        targetPoint: input.targetPoint,
+      }),
+    );
+    timings.push({ elapsedMs: Math.max(0, nowMs() - scanStartedAt), stage: "search-route" });
+    if (scanResult.status !== "hit") {
+      const blockedPoint = scanResult.blockedPoint
+        ? graphToImagePoint(scanResult.blockedPoint, input.bounds, input.boundsRect)
+        : undefined;
+      return {
+        ...(blockedPoint ? { blockedPoint } : {}),
+        failureReason: blockedPoint ? "trajectory" : "route",
+        timings,
+      };
+    }
+    const evidence = scanResult.evidence?.owned;
+    if (!evidence) {
+      throw new GraphwarWasmFault("abi", "Step-glitch WASM scan returned no owned evidence");
+    }
+    let path = [...evidence.path];
+    if (!pathFollowsGraphRule(path, input.bounds, input.boundsRect)) {
+      return { failureReason: "graph-rule", timings };
+    }
+    const composeStartedAt = nowMs();
+    const composed = composeGraphwarWasmStepGlitchSmartPath({
+      controlX: imageToGraphPoint(input.targetPoint, input.bounds, input.boundsRect).x,
+      formulaSettings: scannerFormulaMode.settings,
+      initialEvidence: evidence,
+      initialPath: path,
+      // When the requested Formula Mode carries a different mask, command 20
+      // may only provide the scanner candidate. Deletion must be reproved by
+      // the requested mode below, matching the TypeScript cold path.
+      isDeleteOptimizationEnabled: input.isDeleteOptimizationEnabled && hasSharedFormulaMask,
+      targetControlPoints: [input.targetPoint],
+      scanner,
+      simulationMask,
+      sourcePointCount: input.sourcePath.length,
+      targetSequence: [...evidence.requiredTargets, input.hitTarget],
+    });
+    if (hasSharedFormulaMask) {
+      timings.push({
+        elapsedMs: Math.max(0, nowMs() - composeStartedAt),
+        stage: input.isDeleteOptimizationEnabled ? "optimize-path" : "validate-trajectory",
+      });
+    }
+    if (composed.status === "failure") {
+      const blockedPoint = composed.blockedPoint
+        ? graphToImagePoint(composed.blockedPoint, input.bounds, input.boundsRect)
+        : undefined;
+      return {
+        ...(blockedPoint ? { blockedPoint } : {}),
+        failureReason: composed.failureReason,
+        timings,
+      };
+    }
+    path = composed.path.map(({ x, y }) => createPixelPoint(x, y));
+    if (!hasSharedFormulaMask) {
+      const validation = measureSyncStage(timings, "validate-trajectory", () =>
+        validateSmartPathfindingTrajectory(input, path, validationFormulaMode, pathSearchPolicy, debugMetrics),
+      );
+      if (!validation.followsGraphRule) {
+        return { failureReason: "graph-rule", timings };
+      }
+      if (!validation.reachesTargetBeforeObstacle) {
+        return {
+          ...(validation.blockedPoint ? { blockedPoint: validation.blockedPoint } : {}),
+          failureReason: "trajectory",
+          timings,
+        };
+      }
+      if (input.isDeleteOptimizationEnabled) {
+        path = measureSyncStage(timings, "optimize-path", () =>
+          optimizeSmartPathfindingPath(input, path, validationFormulaMode, pathSearchPolicy, debugMetrics),
+        );
+      }
+    }
+    // 当前生产 evidence ABI 不携带完整 prefix evidence，不能据此合成一份可复用证据。
+    return { path, timings };
+  } finally {
+    scanner.dispose();
+  }
 }
 
 /** 删除单目标邪道路线的非锚点，并随精确成功路径更新可发布公式前缀。 */
@@ -691,6 +1115,7 @@ function optimizeStepGlitchSmartPath(
       acceptedPoint: replay.acceptedPoint,
       formulaEvidence: replay.replayEvidence.formulaContext.stepGlitchFormulaEvidence,
       prefixTarget: target,
+      requiredTargets: [],
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       simulationMask: input.simulationMask,
     });
@@ -717,25 +1142,26 @@ function getMasterStepGlitchEvidence(
   path: readonly PixelPoint[],
   prefixTarget: GraphwarTrajectoryTargetCircle | undefined,
 ): GraphwarStepGlitchPrefixEvidence | undefined {
-  if (!masterStepGlitchEvidence || !masterStepGlitchEvidenceIsEnabled(input)) {
+  if (!masterStepGlitchEvidence || !isMasterStepGlitchEvidenceEnabled(input)) {
     return undefined;
   }
   const key = createMasterStepGlitchEvidenceKey(input, path, prefixTarget);
-  return masterStepGlitchEvidence.key === key
-    ? {
-        acceptedPoint: createGraphPoint(
-          masterStepGlitchEvidence.acceptedPoint.x,
-          masterStepGlitchEvidence.acceptedPoint.y,
-        ),
-        formulaEvidence: {
-          prefix: {
-            ...masterStepGlitchEvidence.formulaEvidence.prefix,
-            settings: input.settings,
-          },
-        },
-        replayIdentity: masterStepGlitchEvidence.replayIdentity,
-      }
-    : undefined;
+  if (masterStepGlitchEvidence.key !== key) {
+    return undefined;
+  }
+  return createGraphwarStepGlitchPrefixEvidence({
+    acceptedPoint: masterStepGlitchEvidence.acceptedPoint,
+    formulaEvidence: {
+      prefix: {
+        ...masterStepGlitchEvidence.formulaEvidence.prefix,
+        settings: input.settings,
+      },
+    },
+    prefixTarget: masterStepGlitchEvidence.replayIdentity.prefixTarget,
+    requiredTargets: [],
+    simulationBoundaryExpansion: masterStepGlitchEvidence.replayIdentity.boundaryExpansion,
+    simulationMask: masterStepGlitchEvidence.replayIdentity.simulationMask,
+  });
 }
 
 /** 保存最近一条完整验证成功的邪道路径证据；下一次写入直接替换旧证据。 */
@@ -744,20 +1170,26 @@ function setMasterStepGlitchEvidence(
   path: readonly PixelPoint[],
   prefixEvidence: GraphwarStepGlitchPrefixEvidence,
 ) {
-  if (!masterStepGlitchEvidenceIsEnabled(input)) {
+  if (!isMasterStepGlitchEvidenceEnabled(input)) {
     return;
   }
-  masterStepGlitchEvidence = {
-    acceptedPoint: createGraphPoint(prefixEvidence.acceptedPoint.x, prefixEvidence.acceptedPoint.y),
-    // Master 只缓存 prefix-only 分支，局部 RK4 boundary 不跨 job。
+  const prefixOnlyEvidence = createGraphwarStepGlitchPrefixEvidence({
+    acceptedPoint: prefixEvidence.acceptedPoint,
+    // Master 只缓存 prefix-only 分支，局部 RK4 boundary 和历史 required targets 不跨 job。
     formulaEvidence: { prefix: prefixEvidence.formulaEvidence.prefix },
+    prefixTarget: prefixEvidence.replayIdentity.prefixTarget,
+    requiredTargets: [],
+    simulationBoundaryExpansion: prefixEvidence.replayIdentity.boundaryExpansion,
+    simulationMask: prefixEvidence.replayIdentity.simulationMask,
+  });
+  masterStepGlitchEvidence = {
+    ...prefixOnlyEvidence,
     key: createMasterStepGlitchEvidenceKey(input, path, prefixEvidence.replayIdentity.prefixTarget),
-    replayIdentity: prefixEvidence.replayIdentity,
   };
 }
 
 /** 判断 master Worker 是否应保存 Step 邪道前缀证据。 */
-function masterStepGlitchEvidenceIsEnabled(input: MasterStepGlitchEvidenceContext) {
+function isMasterStepGlitchEvidenceEnabled(input: MasterStepGlitchEvidenceContext) {
   return Boolean(input.simulationMask && input.settings.stepGlitchObstacleMask === input.simulationMask);
 }
 
@@ -924,6 +1356,7 @@ function validateSmartPathfindingTrajectory(
   formulaMode: GraphwarTrajectoryFormulaMode,
   pathSearchPolicy: SmartPathSearchRuntimePolicy,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ) {
   if (!pathFollowsGraphRule(points, input.bounds, input.boundsRect)) {
     return {
@@ -958,6 +1391,7 @@ function validateSmartPathfindingTrajectory(
     obstacleMask: input.simulationMask,
     points,
     targetHitRadiusPixels: input.hitTarget.radius,
+    ...(wasmRuntime ? { wasmRuntime } : {}),
   });
   return {
     ...(result.blockedPoint ? { blockedPoint: result.blockedPoint } : {}),
@@ -974,6 +1408,7 @@ function optimizeSmartPathfindingPath(
   formulaMode: GraphwarTrajectoryFormulaMode,
   pathSearchPolicy: SmartPathSearchRuntimePolicy,
   debugMetrics?: GraphwarPathfindingDebugMetrics,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ) {
   let optimized = [...points];
   let changed = true;
@@ -990,6 +1425,7 @@ function optimizeSmartPathfindingPath(
         formulaMode,
         pathSearchPolicy,
         debugMetrics,
+        wasmRuntime,
       );
       if (
         validation.followsGraphRule &&
@@ -1015,13 +1451,17 @@ async function buildOneClickClearPath(
   input: GraphwarOneClickClearPathWorkerInput,
   shouldReportIncumbents: boolean,
   shouldCollectDiagnostics: boolean,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): Promise<GraphwarOneClickClearPathWorkerResult> {
   const startedAt = nowMs();
   const timings: GraphwarOneClickClearDebugTiming[] = [];
   const formulaMode = createGraphwarTrajectoryFormulaMode(input.settings);
   const pathSearchSelection = resolveGraphwarPathSearchPolicy(formulaMode.contract, input.routeMode);
   const debugMetrics = shouldCollectDiagnostics
-    ? createGraphwarPathfindingDebugMetrics(pathSearchSelection.type === "step-glitch")
+    ? createGraphwarPathfindingDebugMetrics(
+        pathSearchSelection.type === "step-glitch",
+        wasmRuntime ? { effective: "wasm", requested: "wasm" } : { effective: "typescript", requested: "typescript" },
+      )
     : undefined;
   const routeMaskLookup = getMasterRouteMaskFromBase(input, pathSearchSelection.type === "step-stateful");
   timings.push({
@@ -1070,6 +1510,8 @@ async function buildOneClickClearPath(
     pathSearchPolicy = pathSearchSelection;
   }
   let dagEdgeSession: OneClickClearDagEdgeSession | undefined;
+  // Kept only for test/mocked search callbacks; production WASM and TS search paths provide the event identity.
+  let incumbentSequence = 0;
   let validatedStepGlitchEvidence:
     | {
         path: readonly PixelPoint[];
@@ -1086,7 +1528,7 @@ async function buildOneClickClearPath(
     result = await buildGraphwarOneClickClearPath({
       boundaryExpansion: input.boundaryExpansion,
       buildDagEdges: (request) => {
-        dagEdgeSession ??= createOneClickClearDagEdgeSession(attempt, request);
+        dagEdgeSession ??= createOneClickClearDagEdgeSession(requestId, attempt, request, wasmRuntime);
         return dagEdgeSession.runBatch(request.jobs);
       },
       bounds: input.bounds,
@@ -1099,15 +1541,17 @@ async function buildOneClickClearPath(
       deleteHitCheckRadiusPixels: input.deleteHitCheckRadiusPixels,
       hitCandidates: input.hitCandidates,
       isCancelled: () => false,
+      wasmAttemptIdentity: attempt,
       onDebugTiming: (timing) => timings.push(timing),
       ...(shouldReportIncumbents
         ? {
-            onValidatedIncumbent: (incumbent) => {
+            onValidatedIncumbent: (incumbent, event) => {
+              const sequence = event?.sequence ?? ++incumbentSequence;
               if (!debugMetrics) {
                 postResponse({
                   attempt,
                   id: requestId,
-                  progress: { incumbent },
+                  progress: { incumbent, sequence },
                   type: "one-click-clear-incumbent",
                 });
                 return;
@@ -1118,7 +1562,7 @@ async function buildOneClickClearPath(
               postResponse({
                 attempt,
                 id: requestId,
-                progress: { diagnostics: debugMetrics, incumbent },
+                progress: { diagnostics: debugMetrics, incumbent, sequence },
                 type: "one-click-clear-incumbent",
               });
               debugMetrics.timings.incumbentMessageSendElapsedMs += nowMs() - messageStartedAt;
@@ -1139,11 +1583,14 @@ async function buildOneClickClearPath(
         mask: routeMaskLookup.mask,
         routeTolerancePlanePixels: input.routeTolerancePlanePixels,
       },
+      routeMaskCacheId: input.routeMaskCacheId,
+      wasmRequestNonce: input.wasmRequestNonce ?? createGraphwarWasmRequestNonce(attempt, requestId),
       routeMode: input.routeMode,
       simulationBoundaryExpansion: input.simulationBoundaryExpansion,
       ...(input.simulationMask ? { simulationMask: input.simulationMask } : {}),
       simulationMaskCacheId: input.simulationMaskCacheId,
-      ...(pathSearchPolicy.type === "step-stateful"
+      ...(wasmRuntime ? { wasmRuntime } : {}),
+      ...(pathSearchPolicy.type === "step-stateful" && !wasmRuntime
         ? {
             validateStepRoute: (points) =>
               validateGraphwarStepRoutePath({
@@ -1153,7 +1600,7 @@ async function buildOneClickClearPath(
                 model: pathSearchPolicy.runtime.model,
                 points,
                 summedArea: pathSearchPolicy.runtime.summedArea,
-              }).ok,
+              }),
           }
         : {}),
     });
@@ -1191,10 +1638,12 @@ function createOneClickClearPreflightBlockedResult(
 
 /** 复用请求级 edge session 构建一批 DAG 边并收集子 Worker 耗时。 */
 async function buildOneClickClearDagEdges(
+  requestId: number,
   attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearDagEdgesWorkerInput,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): Promise<GraphwarOneClickClearDagEdgeBuildResult> {
-  const session = createOneClickClearDagEdgeSession(attempt, input);
+  const session = createOneClickClearDagEdgeSession(requestId, attempt, input, wasmRuntime);
   try {
     const result = await session.runBatch(input.jobs);
     return {
@@ -1213,8 +1662,10 @@ async function buildOneClickClearDagEdges(
  * Step 动态 DAG 会按 x 层多次提交批次；session 让 child worker、可视图预处理和 Theta* scratch 跨批次复用。
  */
 function createOneClickClearDagEdgeSession(
+  requestId: number,
   attempt: GraphwarBackendAttemptIdentity,
   input: GraphwarOneClickClearDagEdgesWorkerInput,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): OneClickClearDagEdgeSession {
   const requestedWorkerCount = Math.floor(input.workerCount);
   const configuredWorkerCount =
@@ -1235,15 +1686,16 @@ function createOneClickClearDagEdgeSession(
   let serialRouteContext: GraphwarOneClickClearDagEdgeRouteBuildContext | undefined;
   let sharedInit: GraphwarOneClickClearEdgeWorkerSharedInit | undefined;
   let state: OneClickClearDagEdgeSessionState = "idle";
+  let wasmFault: GraphwarWasmFault | undefined;
+  const sessionIdentity = createGraphwarWasmSessionIdentity(attempt, requestId, "one-click-clear");
 
   /** 终止并解绑单个 edge Worker，且只记录一次生命周期耗时。 */
   const finishWorker = (handle: EdgeWorkerHandle) => {
-    if (handle.isFinished) {
+    if (handle.state === "finished") {
       return;
     }
-    handle.isFinished = true;
-    handle.activeJob = undefined;
-    handle.activeRequestId = undefined;
+    handle.state = "finished";
+    handle.activeRequest = undefined;
     handle.cleanup();
     handle.worker.terminate();
     workerTimings.push({
@@ -1271,6 +1723,8 @@ function createOneClickClearDagEdgeSession(
     for (const handle of handles) {
       finishWorker(handle);
     }
+    serialRouteContext?.wasmRouteContext?.dispose();
+    serialRouteContext = undefined;
     return workerTimings.splice(0);
   };
 
@@ -1282,7 +1736,7 @@ function createOneClickClearDagEdgeSession(
     serialBatchRunning = true;
     try {
       // 只有真正进入串行路径时才支付预处理成本；后续 fallback 批次复用同一上下文。
-      serialRouteContext ??= createOneClickClearSerialRouteContext(input);
+      serialRouteContext ??= createOneClickClearSerialRouteContext(input, wasmRuntime);
       return await runOneClickClearDagEdgeJobsSerial(serialRouteContext, jobs);
     } finally {
       serialBatchRunning = false;
@@ -1319,7 +1773,7 @@ function createOneClickClearDagEdgeSession(
 
   /** 子 Worker 不可用时终止池，并只补跑尚未完成的 jobs。 */
   const switchToSerialFallback = () => {
-    if (state === "disposed" || state === "fallback") {
+    if (state === "disposed" || state === "failed" || state === "fallback") {
       return;
     }
     const batch = activeBatch;
@@ -1358,10 +1812,31 @@ function createOneClickClearDagEdgeSession(
       });
   };
 
+  /** Child typed fault 先终止全部 siblings/session 并拒绝批次，再原样通知页面 fuse。 */
+  const failWithWasmFault = (message: Extract<GraphwarBackendControlMessage, { type: "wasm-fault" }>) => {
+    if (state === "disposed" || state === "failed") {
+      return;
+    }
+    const fault = new GraphwarWasmFault(message.fault.code, message.fault.message);
+    wasmFault = fault;
+    state = "failed";
+    const batch = activeBatch;
+    activeBatch = undefined;
+    for (const handle of handles) {
+      finishWorker(handle);
+    }
+    if (batch && !batch.isSettled) {
+      batch.isSettled = true;
+      batch.reject(wasmFault);
+    }
+    workerScope.postMessage(message);
+    fault.markReported();
+  };
+
   /** 向空闲且就绪的 edge Worker 分配当前批次的下一个 job。 */
   const assignNextJob = (handle: EdgeWorkerHandle) => {
     const batch = activeBatch;
-    if (state !== "running" || !batch || batch.isSettled || handle.isFinished || !handle.isReady || handle.activeJob) {
+    if (state !== "running" || !batch || batch.isSettled || handle.state !== "ready" || handle.activeRequest) {
       return;
     }
     const job = batch.jobs[batch.nextJobIndex];
@@ -1373,18 +1848,17 @@ function createOneClickClearDagEdgeSession(
 
     const requestId = nextRequestId;
     nextRequestId += 1;
-    handle.activeJob = job;
-    handle.activeRequestId = requestId;
+    handle.activeRequest = { job, requestId };
     try {
       handle.worker.postMessage({
         attempt,
         job,
         requestId,
+        session: sessionIdentity,
         type: "job",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
-      handle.activeJob = undefined;
-      handle.activeRequestId = undefined;
+      handle.activeRequest = undefined;
       switchToSerialFallback();
     }
   };
@@ -1396,16 +1870,15 @@ function createOneClickClearDagEdgeSession(
     result: GraphwarOneClickClearEdgeWorkerJobResult,
   ) => {
     const batch = activeBatch;
-    const activeJob = handle.activeJob;
+    const activeRequest = handle.activeRequest;
     if (state !== "running" || !batch || batch.isSettled) {
       return;
     }
     if (
-      !activeJob ||
-      handle.activeRequestId !== requestId ||
-      activeJob.id !== result.jobId ||
-      (result.route !== undefined && activeJob.stepRouteStartState !== undefined) !==
-        (result.stepRouteEndState !== undefined)
+      !activeRequest ||
+      activeRequest.requestId !== requestId ||
+      activeRequest.job.id !== result.jobId ||
+      (result.type !== "unreachable" && result.type !== activeRequest.job.type)
     ) {
       switchToSerialFallback();
       return;
@@ -1415,8 +1888,7 @@ function createOneClickClearDagEdgeSession(
     batch.totals.routePathfindingElapsedMs += result.routePathfindingElapsedMs;
     batch.totals.routeMapPixelsElapsedMs += result.routeMapPixelsElapsedMs;
     batch.routesByJobId.set(result.jobId, createOneClickClearDagEdgeRoute(result));
-    handle.activeJob = undefined;
-    handle.activeRequestId = undefined;
+    handle.activeRequest = undefined;
     assignNextJob(handle);
     resolveParallelBatch(batch);
   };
@@ -1427,19 +1899,52 @@ function createOneClickClearDagEdgeSession(
       name: `graphwar-one-click-clear-edge-${workerIndex}`,
       type: "module",
     });
+    const backendSlot = createGraphwarWorkerBackendSlot({
+      configuration: backendRuntime.getNestedConfiguration(attempt),
+      onInfrastructureFailure: () => switchToSerialFallback(),
+      onWasmFault: (message) => {
+        if (message.fault.code === "module-clone") {
+          switchToSerialFallback();
+          return;
+        }
+        failWithWasmFault(message);
+      },
+      role: "one-click-clear-edge",
+      shouldAcceptWasmFault: (message) => {
+        if (message.context.type === "initialization") {
+          return true;
+        }
+        if (
+          (message.context.type !== "edge-session" && message.context.type !== "edge-job") ||
+          !graphwarBackendAttemptIdentitiesAreEqual(message.context.attempt, attempt) ||
+          !graphwarWasmSessionIdentitiesAreEqual(message.context.session, sessionIdentity)
+        ) {
+          return false;
+        }
+        const activeHandle = handles.find((candidate) => candidate.worker === worker);
+        return message.context.type === "edge-session" || message.context.jobId === activeHandle?.activeRequest?.job.id;
+      },
+      worker,
+    });
+    if (backendSlot.getState().type === "failed") {
+      worker.terminate();
+      return undefined;
+    }
     const handle: EdgeWorkerHandle = {
+      backendSlot,
       cleanup: () => cleanup(),
-      isFinished: false,
-      isInitialized: false,
-      isReady: false,
       startedAt: nowMs(),
+      state: "created",
       worker,
       workerIndex,
     };
     /** 将 edge Worker 响应路由到就绪、失败或 job 结算流程。 */
     const handleMessage = (event: MessageEvent<GraphwarOneClickClearEdgeWorkerResponse>) => {
       const response = event.data;
-      if (handle.isFinished) {
+      if (handle.state === "finished") {
+        return;
+      }
+      if (handle.backendSlot.handleMessage(response)) {
         return;
       }
       if (response.workerIndex !== handle.workerIndex) {
@@ -1451,7 +1956,11 @@ function createOneClickClearDagEdgeSession(
         return;
       }
       if (response.type === "ready") {
-        handle.isReady = true;
+        if (handle.state !== "initializing") {
+          switchToSerialFallback();
+          return;
+        }
+        handle.state = "ready";
         assignNextJob(handle);
         return;
       }
@@ -1480,14 +1989,15 @@ function createOneClickClearDagEdgeSession(
 
   /** 将同一条消息中的 mask 与共享 cache 原子发送，structured clone 会保留二者的引用绑定。 */
   const initializeEdgeWorkerHandle = (handle: EdgeWorkerHandle, init: GraphwarOneClickClearEdgeWorkerSharedInit) => {
-    if (handle.isFinished || handle.isInitialized) {
+    if (handle.state !== "created") {
       return;
     }
-    handle.isInitialized = true;
+    handle.state = "initializing";
     try {
       handle.worker.postMessage({
         attempt,
         context: { ...init, workerIndex: handle.workerIndex },
+        session: sessionIdentity,
         type: "init",
       } satisfies GraphwarOneClickClearEdgeWorkerRequest);
     } catch {
@@ -1536,7 +2046,11 @@ function createOneClickClearDagEdgeSession(
          * 4 Workers 重复扫描 mask。2026-07-28 同一真实 mask、40 条 Step edge 的热态交错测试
          * 各 56 次：结果均为 38 条可达，中位数约 278.9ms 降到 276.0ms，均值约改善 1.0%。
          */
-        sharedInit ??= prepareGraphwarOneClickClearEdgeWorkerSharedInit(input, pathSearchPolicy);
+        sharedInit ??= prepareGraphwarOneClickClearEdgeWorkerSharedInit(
+          input,
+          pathSearchPolicy,
+          wasmRuntime !== undefined,
+        );
       } catch {
         switchToSerialFallback();
         return;
@@ -1551,6 +2065,9 @@ function createOneClickClearDagEdgeSession(
   const runBatch = async (jobs: readonly GraphwarOneClickClearDagEdgeBuildJob[]) => {
     if (state === "disposed") {
       throw new Error("One-Click Clear DAG edge session is disposed");
+    }
+    if (state === "failed") {
+      throw wasmFault ?? new GraphwarWasmFault("trap", "One-Click Clear edge Worker backend failed");
     }
     if (state === "running" || serialBatchRunning) {
       throw new Error("One-Click Clear DAG edge batches must run sequentially");
@@ -1587,16 +2104,22 @@ function createOneClickClearDagEdgeSession(
 function prepareGraphwarOneClickClearEdgeWorkerSharedInit(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
   policy: OneClickClearDagEdgePolicy,
+  isWasmBackend: boolean,
 ): GraphwarOneClickClearEdgeWorkerSharedInit {
   const routeInit = (
     policy.routeMode === "visibility-graph"
       ? {
           routeMode: policy.routeMode,
-          visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
-            bounds: input.bounds,
-            routeMask: input.routeMask,
-            routeTolerancePlanePixels: input.routeTolerancePlanePixels,
-          }),
+          routePreprocessing: isWasmBackend
+            ? ({ type: "wasm" } as const)
+            : ({
+                type: "typescript",
+                visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+                  bounds: input.bounds,
+                  routeMask: input.routeMask,
+                  routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+                }),
+              } as const),
         }
       : { routeMode: policy.routeMode }
   ) satisfies GraphwarOneClickClearEdgeWorkerRouteInit;
@@ -1604,6 +2127,7 @@ function prepareGraphwarOneClickClearEdgeWorkerSharedInit(
     bounds: input.bounds,
     boundsRect: input.boundsRect,
     boundaryExpansion: input.boundaryExpansion,
+    routeOriginPoint: input.routeOriginPoint,
     routeMask: input.routeMask,
     routeTolerancePlanePixels: input.routeTolerancePlanePixels,
     ...routeInit,
@@ -1633,6 +2157,7 @@ function prepareGraphwarOneClickClearEdgeWorkerSharedInit(
 /** 串行与 parallel-fallback 共用同一份请求级预处理材料。 */
 function createOneClickClearSerialRouteContext(
   input: GraphwarOneClickClearDagEdgesWorkerInput,
+  wasmRuntime?: GraphwarWasmKernelRuntime,
 ): GraphwarOneClickClearDagEdgeRouteBuildContext {
   const pathSearchPolicy = resolveGraphwarPathSearchPolicy(
     resolveFormulaModeContract(input.settings.algorithm, input.settings.equation, false),
@@ -1642,7 +2167,7 @@ function createOneClickClearSerialRouteContext(
     throw new Error("Step-glitch does not build ordinary DAG edges");
   }
   const visibilityGraphObstacleData =
-    pathSearchPolicy.routeMode === "visibility-graph"
+    !wasmRuntime && pathSearchPolicy.routeMode === "visibility-graph"
       ? createGraphwarVisibilityGraphObstacleData({
           bounds: input.bounds,
           routeMask: input.routeMask,
@@ -1661,7 +2186,23 @@ function createOneClickClearSerialRouteContext(
     ...(visibilityGraphObstacleData ? { visibilityGraphObstacleData } : {}),
   };
   if (pathSearchPolicy.type === "stateless") {
-    return { ...contextBase, ...pathSearchPolicy };
+    return {
+      ...contextBase,
+      ...pathSearchPolicy,
+      ...(wasmRuntime
+        ? {
+            wasmRouteContext: createGraphwarWasmRouteContext(wasmRuntime, {
+              boundaryExpansion: input.boundaryExpansion,
+              bounds: input.bounds,
+              boundsRect: input.boundsRect,
+              routeOriginPoint: imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect),
+              routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+              sourceMask: input.routeMask,
+              sourceMaskType: "route",
+            }),
+          }
+        : {}),
+    };
   }
   const model = createGraphwarStepRouteModel(
     imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect).y,
@@ -1678,6 +2219,23 @@ function createOneClickClearSerialRouteContext(
       routeMask: input.routeMask,
       summedArea: getOrCreateMasterStepSummedArea(input.routeMask),
     },
+    ...(wasmRuntime
+      ? {
+          wasmRouteContext: createGraphwarWasmRouteContext(wasmRuntime, {
+            boundaryExpansion: input.boundaryExpansion,
+            bounds: input.bounds,
+            boundsRect: input.boundsRect,
+            routeOriginPoint: imageToGraphPoint(input.routeOriginPoint, input.bounds, input.boundsRect),
+            routeTolerancePlanePixels: input.routeTolerancePlanePixels,
+            sourceMask: input.routeMask,
+            sourceMaskType: "route",
+            stepRouteModel: {
+              ...model,
+              qualityTargetPlanePixels: graphwarToolDefaults.formulaPathQualityTargetPlanePixels,
+            },
+          }),
+        }
+      : {}),
   };
 }
 
@@ -1732,21 +2290,32 @@ function createOneClickClearDagEdgeBuildResult(
 }
 
 /** 并行完成顺序不稳定；最终始终按提交 jobs 顺序合并。 */
-function collectOneClickClearDagEdgeBatchRoutes(batch: OneClickClearDagEdgeBatch) {
-  return batch.jobs.map((job) => batch.routesByJobId.get(job.id) ?? { jobId: job.id });
+function collectOneClickClearDagEdgeBatchRoutes(batch: OneClickClearDagEdgeBatch): GraphwarOneClickClearDagEdgeRoute[] {
+  return batch.jobs.map((job) => {
+    const route = batch.routesByJobId.get(job.id);
+    if (!route) {
+      throw new Error("One-Click Clear DAG edge batch is missing a completed job result");
+    }
+    return route;
+  });
 }
 
-/** 把单边 worker 结果合并回 DAG 边结果；默认没有 route 表示不可达边，jobId 仍用于稳定匹配边。 */
+/** 去掉 Worker timing 后保留同一个原子 DAG 边结果。 */
 function createOneClickClearDagEdgeRoute(
-  result: Pick<GraphwarOneClickClearEdgeWorkerJobResult, "jobId" | "route" | "stepRouteEndState">,
+  result: GraphwarOneClickClearEdgeWorkerJobResult,
 ): GraphwarOneClickClearDagEdgeRoute {
-  return result.route
-    ? {
-        jobId: result.jobId,
-        route: result.route,
-        ...(result.stepRouteEndState ? { stepRouteEndState: result.stepRouteEndState } : {}),
-      }
-    : { jobId: result.jobId };
+  if (result.type === "unreachable") {
+    return { jobId: result.jobId, type: result.type };
+  }
+  if (result.type === "stateless") {
+    return { jobId: result.jobId, route: result.route, type: result.type };
+  }
+  return {
+    jobId: result.jobId,
+    route: result.route,
+    stepRouteEndState: result.stepRouteEndState,
+    type: result.type,
+  };
 }
 
 /** 将 master 响应发送到主线程。 */

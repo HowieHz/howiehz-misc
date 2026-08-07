@@ -1,5 +1,7 @@
+import { calculateGraphwarTrajectoryWithWasm } from "../../controllers/path/trajectory-calculation";
 import { imageToGraphPoint } from "../../core/geometry";
 import type { BoundsRect, GraphBounds, PixelPoint } from "../../core/types";
+import type { GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
 import type { GraphwarTrajectoryDebugMetrics } from "../../formula/debug-metrics";
 import {
   graphwarTrajectoryReachesGraphXBeforeObstacle,
@@ -41,6 +43,8 @@ interface GraphwarSmartPathfindingTrajectoryOptions {
   points: readonly PixelPoint[];
   /** 普通点击目标点使用的默认真实命中半径，单位为截图像素；无有效 bounds 时不可用。 */
   targetHitRadiusPixels: number | undefined;
+  /** Optional WASM trajectory core used by effective smart-path validation. */
+  wasmRuntime?: GraphwarWasmKernelRuntime;
 }
 
 /** 提取新增路径段并保留连接点，供搜索动画绘制。 */
@@ -67,12 +71,41 @@ export function createGraphwarSmartPathfindingTrajectoryResult(
   if (!options.bounds) {
     return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
   }
+  const bounds = options.bounds;
 
   const target = options.hitTarget
     ? createGraphwarSmartPathfindingHitTarget(options.hitTarget, options.targetHitRadiusPixels)
     : undefined;
   if (!target) {
     return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
+  }
+
+  if (options.wasmRuntime && options.formulaMode.contract.pathSearchPolicy.type !== "step-glitch") {
+    const outcome = calculateGraphwarTrajectoryWithWasm(options.wasmRuntime, {
+      bounds,
+      boundsRect: options.boundsRect,
+      ...(options.obstacleMask
+        ? { collision: { boundaryExpansion: options.boundaryExpansion, mask: options.obstacleMask } }
+        : {}),
+      points: options.points.map((point) => imageToGraphPoint(point, bounds, options.boundsRect)),
+      settings: options.formulaMode.settings,
+      target: { hitRadiusPixels: target.radius, point: target.center },
+      shouldStopOnTargetsComplete: true,
+      type: "solver",
+    });
+    if (!outcome.ok) {
+      return { reachesTargetBeforeObstacle: false, visiblePixels: [] };
+    }
+    const obstacleHitPoint = outcome.result.warningReason === "obstacle" ? outcome.result.obstacleHitPoint : undefined;
+    const visiblePixels = obstacleHitPoint
+      ? [...outcome.result.trajectoryPoints, obstacleHitPoint]
+      : [...outcome.result.trajectoryPoints];
+    return {
+      ...(obstacleHitPoint ? { blockedPoint: obstacleHitPoint } : {}),
+      ...(outcome.result.pathError === undefined ? {} : { pathError: outcome.result.pathError }),
+      reachesTargetBeforeObstacle: outcome.result.warningReason !== "obstacle" && !outcome.result.hasTargetMissWarning,
+      visiblePixels,
+    };
   }
 
   const lastPoint = options.points.at(-1);

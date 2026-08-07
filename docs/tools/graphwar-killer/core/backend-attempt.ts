@@ -18,7 +18,7 @@ export function createGraphwarBackendAttemptGate() {
     const identity = createIdentity(backendGeneration, nextOuterTaskId);
     nextOuterTaskId = incrementIdentity(nextOuterTaskId, "outer task id");
     activeTasks.set(identity.outerTaskId, identity);
-    return identity;
+    return copyIdentity(identity);
   }
 
   /** 只替换 backend attempt，同时保留公开 outer task id。 */
@@ -30,7 +30,7 @@ export function createGraphwarBackendAttemptGate() {
     const current = requireCurrentAttempt(currentIdentity);
     const replacement = createIdentity(backendGeneration, current.outerTaskId);
     activeTasks.set(replacement.outerTaskId, replacement);
-    return replacement;
+    return copyIdentity(replacement);
   }
 
   /** 同一 generation 首个 fault 赢得 fuse compare-and-set；并发或迟到 fault 返回 false。 */
@@ -100,6 +100,11 @@ export function createGraphwarBackendAttemptGate() {
     replaceAttempt,
     revokeGeneration,
   };
+}
+
+/** Gate 不把 Map 内身份对象引用交给调用方，运行时篡改副本也不能改变 commit 权限。 */
+function copyIdentity(identity: GraphwarBackendAttemptIdentity) {
+  return Object.freeze({ ...identity });
 }
 
 function assertGeneration(value: number) {

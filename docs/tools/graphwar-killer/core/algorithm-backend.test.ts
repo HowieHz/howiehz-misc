@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createGraphwarBackendExecution,
+  createGraphwarBackendFallbackExecution,
+  createGraphwarWasmRequestNonce,
   createGraphwarTypescriptBackendContext,
   createGraphwarWasmBackendContext,
   GraphwarValidatedWasmRuntime,
@@ -83,6 +86,20 @@ describe("Graphwar algorithm backend contracts", () => {
     expect(isGraphwarBackendExecution(value)).toBe(false);
   });
 
+  it("constructs direct and fallback execution diagnostics without half-states", () => {
+    expect(createGraphwarBackendExecution("typescript")).toEqual({
+      effective: "typescript",
+      requested: "typescript",
+    });
+    expect(createGraphwarBackendExecution("wasm")).toEqual({ effective: "wasm", requested: "wasm" });
+    expect(createGraphwarBackendFallbackExecution("  trap: export failed  ")).toEqual({
+      effective: "typescript",
+      fallbackReason: "trap: export failed",
+      requested: "wasm",
+    });
+    expect(() => createGraphwarBackendFallbackExecution(" ")).toThrow(TypeError);
+  });
+
   it("validates the complete replaceable-attempt identity", () => {
     expect(
       isGraphwarBackendAttemptIdentity({
@@ -106,6 +123,16 @@ describe("Graphwar algorithm backend contracts", () => {
         { attemptId: 2, backendGeneration: 4, outerTaskId: 1 },
       ),
     ).toBe(false);
+  });
+
+  it("derives task nonces from request and attempt identity rather than route cache ids", () => {
+    const attempt = { attemptId: 2, backendGeneration: 3, outerTaskId: 1 };
+    const nonce = createGraphwarWasmRequestNonce(attempt, 7);
+
+    expect(nonce).toBeGreaterThan(0);
+    expect(createGraphwarWasmRequestNonce(attempt, 7)).toBe(nonce);
+    expect(createGraphwarWasmRequestNonce(attempt, 8)).not.toBe(nonce);
+    expect(createGraphwarWasmRequestNonce({ ...attempt, attemptId: 3 }, 7)).not.toBe(nonce);
   });
 
   it("validates attempt-bearing business envelopes without weakening their payload boundary", () => {
@@ -154,7 +181,7 @@ describe("Graphwar algorithm backend contracts", () => {
     expect(() => new GraphwarWasmFault("trap", " ")).toThrow(TypeError);
   });
 
-  it("validates initialization, task, template shard, and edge job fault contexts", () => {
+  it("validates initialization, task, template shard, edge session, and edge job fault contexts", () => {
     const attempt = { attemptId: 2, backendGeneration: 3, outerTaskId: 1 };
     const contexts = [
       { type: "initialization" },
@@ -164,6 +191,11 @@ describe("Graphwar algorithm backend contracts", () => {
         session: { backendGeneration: 3, nonce: 1, requestId: 7, taskType: "detection" },
         shardId: 4,
         type: "template-shard",
+      },
+      {
+        attempt,
+        session: { backendGeneration: 3, nonce: 2, requestId: 8, taskType: "one-click-clear" },
+        type: "edge-session",
       },
       {
         attempt,
@@ -196,12 +228,14 @@ describe("Graphwar algorithm backend contracts", () => {
     const messages = [
       {
         backend: { type: "typescript" },
+        backendExecution: { effective: "typescript", requested: "typescript" },
         generation: 0,
         role: "trajectory",
         type: "backend-init",
       },
       {
         backend: { module: emptyWasmModule, type: "wasm" },
+        backendExecution: { effective: "wasm", requested: "wasm" },
         generation: 1,
         role: "detection-main",
         type: "backend-init",
@@ -225,6 +259,20 @@ describe("Graphwar algorithm backend contracts", () => {
   });
 
   it.each([
+    {
+      backend: { module: emptyWasmModule, type: "wasm" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 1,
+      role: "trajectory",
+      type: "backend-init",
+    },
+    {
+      backend: { type: "typescript" },
+      backendExecution: { effective: "wasm", requested: "wasm" },
+      generation: 1,
+      role: "trajectory",
+      type: "backend-init",
+    },
     {
       backend: { module: emptyWasmModule, type: "typescript" },
       generation: 1,
@@ -298,6 +346,28 @@ describe("Graphwar algorithm backend contracts", () => {
       fault: { code: "trap", message: "unexpected" },
       generation: 1,
       role: "detection-main",
+      type: "wasm-fault",
+    },
+    {
+      context: {
+        attempt: { attemptId: 2, backendGeneration: 1, outerTaskId: 1 },
+        type: "task",
+      },
+      fault: { code: "trap", message: "missing child provenance" },
+      generation: 1,
+      role: "detection-template",
+      type: "wasm-fault",
+    },
+    {
+      context: {
+        attempt: { attemptId: 2, backendGeneration: 1, outerTaskId: 1 },
+        jobId: 4,
+        session: { backendGeneration: 1, nonce: 1, requestId: 7, taskType: "one-click-clear" },
+        type: "edge-job",
+      },
+      fault: { code: "trap", message: "child context on root role" },
+      generation: 1,
+      role: "pathfinding-master",
       type: "wasm-fault",
     },
   ])("rejects backend control half-state %#", (value) => {

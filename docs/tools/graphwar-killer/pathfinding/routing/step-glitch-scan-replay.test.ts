@@ -250,6 +250,7 @@ function createCompatiblePrefixEvidence(
       } satisfies GraphwarStepGlitchFormulaPrefix,
     },
     prefixTarget: { center: prefixTarget, radius: 12 },
+    requiredTargets: [],
     simulationMask,
   });
 }

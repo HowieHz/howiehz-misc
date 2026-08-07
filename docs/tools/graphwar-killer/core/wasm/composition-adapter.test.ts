@@ -1,0 +1,2614 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  assignGraphwarWasmOneClickTargetRoutePoints,
+  beginGraphwarWasmOneClickClear,
+  beginGraphwarWasmOneClickIncumbentEventSession,
+  compareGraphwarWasmOneClickIncumbent,
+  consumeGraphwarWasmOneClickStepStateLayer,
+  createGraphwarWasmOneClickStepStateTable,
+  expandGraphwarWasmOneClickStepDagJobs,
+  graphwarWasmCompositionLayout,
+  internGraphwarWasmOneClickStepStates,
+  mergeGraphwarWasmOneClickStepStateEvidence,
+  runGraphwarWasmOneClickTrajectoryValidation,
+  runGraphwarWasmSmartPathfinding,
+  type GraphwarWasmOneClickEdgeResult,
+} from "./composition-adapter";
+import { readGraphwarKernelBytes } from "./kernel-test-fixture";
+import { instantiateGraphwarWasmRuntime } from "./runtime";
+
+const kernelModulePromise = readGraphwarKernelBytes().then((bytes) => WebAssembly.compile(bytes));
+
+describe("Graphwar WASM composition adapter", () => {
+  it("retains incumbent score and event sequence in one WASM session", async () => {
+    const runtime = await createRuntime();
+    const session = beginGraphwarWasmOneClickIncumbentEventSession(runtime, {
+      attemptId: 7,
+      backendGeneration: 3,
+      outerTaskId: 11,
+      requestNonce: 19,
+    });
+    expect(session.consider({ pointCount: 4, targetCount: 1 })).toEqual({
+      event: { sequence: 1 },
+      isBetter: true,
+    });
+    expect(session.consider({ pointCount: 5, targetCount: 1 })).toEqual({ isBetter: false });
+    expect(session.consider({ pointCount: 5, targetCount: 2 })).toEqual({
+      event: { sequence: 2 },
+      isBetter: true,
+    });
+    session.dispose();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("owns one-click incumbent ordering and keeps omitted path errors neutral", async () => {
+    const runtime = await createRuntime();
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: 2, pointCount: 9, targetCount: 3 },
+        { pathError: 1, pointCount: 4, targetCount: 2 },
+      ),
+    ).toBe(true);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: 2, pointCount: 4, targetCount: 3 },
+        { pathError: 1, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pointCount: 4, targetCount: 3 },
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: 1, pointCount: 4, targetCount: 3 },
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(true);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+        { pathError: 1, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+        { pathError: Number.POSITIVE_INFINITY, pointCount: 4, targetCount: 3 },
+      ),
+    ).toBe(false);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects NaN incumbent path-error evidence at the adapter boundary", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pathError: Number.NaN, pointCount: 2, targetCount: 1 },
+        { pointCount: 3, targetCount: 1 },
+      ),
+    ).toThrow(/pathError/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    { field: "alignment padding", mutate: (view: DataView) => view.setUint32(36, 1, true) },
+    { field: "tail reserved word", mutate: (view: DataView) => view.setUint32(52, 1, true) },
+    {
+      field: "negative path error",
+      mutate: (view: DataView) => view.setFloat64(16, -1, true),
+    },
+    {
+      field: "non-neutral omitted path error",
+      mutate: (view: DataView) => view.setFloat64(16, 1, true),
+    },
+  ])("rejects raw incumbent input with a non-canonical $field", async ({ mutate }) => {
+    const runtime = await createRuntime();
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementationOnce((command, inputPointer, inputByteLength) => {
+      mutate(new DataView(runtime.buffer, inputPointer, inputByteLength));
+      return runRouteTask(command, inputPointer, inputByteLength);
+    });
+
+    expect(() =>
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pointCount: 2, targetCount: 1 },
+        { pointCount: 3, targetCount: 1 },
+      ),
+    ).toThrow(/unreachable/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    { field: "magic", mutate: (view: DataView) => view.setUint32(0, 0, true) },
+    { field: "reserved result word", mutate: (view: DataView) => view.setUint32(8, 1, true) },
+    { field: "status", mutate: (view: DataView) => view.setUint32(4, 2, true) },
+  ])("rejects a malicious incumbent comparison $field", async ({ mutate }) => {
+    const runtime = await createRuntime();
+    const runRouteTask = runtime.runRouteTask.bind(runtime);
+    vi.spyOn(runtime, "runRouteTask").mockImplementationOnce((command, inputPointer, inputByteLength) => {
+      const resultPointer = runRouteTask(command, inputPointer, inputByteLength);
+      mutate(
+        new DataView(
+          runtime.buffer,
+          resultPointer,
+          graphwarWasmCompositionLayout.oneClickIncumbentCompareResultByteLength,
+        ),
+      );
+      return resultPointer;
+    });
+
+    expect(() =>
+      compareGraphwarWasmOneClickIncumbent(
+        runtime,
+        { pointCount: 2, targetCount: 1 },
+        { pointCount: 3, targetCount: 1 },
+      ),
+    ).toThrow(/incumbent comparison/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("returns an empty Step state mapping without crossing the raw ABI", async () => {
+    const runtime = await createRuntime();
+    expect(internGraphwarWasmOneClickStepStates(runtime, [])).toEqual({ nodeCount: 0, nodeIds: [] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("interns canonical Step state identities without truncating large keys", async () => {
+    const runtime = await createRuntime();
+    const result = internGraphwarWasmOneClickStepStates(runtime, [
+      { resolvedStateKey: "0", resolvedY: 1, targetIndex: 2 },
+      { resolvedStateKey: "18446744073709551616", resolvedY: 3, targetIndex: 2 },
+      { resolvedStateKey: "0", resolvedY: 1, targetIndex: 2 },
+      { resolvedStateKey: "0", resolvedY: 1, targetIndex: 3 },
+    ]);
+
+    expect(result).toEqual({ nodeCount: 3, nodeIds: [0, 1, 0, 2] });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("merges terminal evidence without re-owning canonical node ids in TypeScript", async () => {
+    const runtime = await createRuntime();
+    const existing = [{ resolvedStateKey: "18446744073709551616", resolvedY: 3, targetIndex: 2 }];
+    const merged = mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+      batch: [
+        { resolvedStateKey: "18446744073709551616", resolvedY: 3, targetIndex: 2 },
+        { resolvedStateKey: "18446744073709551617", resolvedY: 4, targetIndex: 0 },
+        { resolvedStateKey: "18446744073709551617", resolvedY: 4, targetIndex: 0 },
+      ],
+      existing,
+      targetCount: 3,
+    });
+
+    expect(merged).toEqual({
+      batchNodeIds: [0, 1, 1],
+      newNodes: [
+        {
+          evidence: { resolvedStateKey: "18446744073709551617", resolvedY: 4, targetIndex: 0 },
+          id: 1,
+        },
+      ],
+      nodeCount: 2,
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a terminal evidence splice that changes the retained state's Y", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+        batch: [{ resolvedStateKey: "0", resolvedY: -0, targetIndex: 1 }],
+        existing: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 1 }],
+        targetCount: 2,
+      }),
+    ).toThrow();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects terminal evidence outside the mirrored target index table", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      mergeGraphwarWasmOneClickStepStateEvidence(runtime, {
+        batch: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 3 }],
+        existing: [{ resolvedStateKey: "1", resolvedY: 0, targetIndex: 2 }],
+        targetCount: 3,
+      }),
+    ).toThrow(/target table/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("retains Step evidence and returns copies across incremental batches", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 3 });
+    const firstEntry = { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 };
+    const firstBatch = [firstEntry];
+    expect(table.append(firstBatch)).toEqual({
+      batchNodeIds: [0],
+      newNodes: [{ evidence: firstEntry, id: 0 }],
+      nodeCount: 1,
+    });
+    firstEntry.resolvedY = 99;
+    expect(table.evidence).toEqual([{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }]);
+
+    const secondBatch = [{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }];
+    expect(table.append(secondBatch)).toEqual({ batchNodeIds: [0], newNodes: [], nodeCount: 1 });
+    expect(table.nodeCount).toBe(1);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("owns ordered Step DAG layer progress and rejects reuse after cancellation", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    const first = { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 };
+    expect(
+      table.consumeLayer({
+        jobs: [{ id: 7, targetIndex: 0 }],
+        layerIndex: 0,
+        results: [{ jobId: 7, successor: first }],
+      }),
+    ).toEqual({
+      batchNodeIds: [0],
+      jobNodeIds: [{ jobId: 7, nodeId: 0 }],
+      newNodes: [{ evidence: first, id: 0 }],
+      nodeCount: 1,
+    });
+    expect(table.layerCursor).toBe(1);
+    expect(() => table.consumeLayer({ jobs: [], layerIndex: 0, results: [] })).toThrow(/retained cursor/u);
+    table.cancel();
+    expect(() => table.consumeLayer({ jobs: [], layerIndex: 1, results: [] })).toThrow(/no longer active/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each([
+    {
+      name: "missing result",
+      mutate: (jobs: readonly { id: number; targetIndex: number }[]) => ({
+        jobs,
+        layerIndex: 0,
+        results: [],
+      }),
+      message: /same count/u,
+    },
+    {
+      name: "stale result",
+      mutate: (jobs: readonly { id: number; targetIndex: number }[]) => ({
+        jobs,
+        layerIndex: 0,
+        results: [{ jobId: 999 }],
+      }),
+      message: /retained layer/u,
+    },
+  ])("rejects $name Step edge identity", async ({ mutate, message }) => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    const jobs = [{ id: 3, targetIndex: 1 }];
+    expect(() => table.consumeLayer(mutate(jobs))).toThrow(message);
+    expect(table.layerCursor).toBe(0);
+    expect(table.evidence).toEqual([]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects duplicate Step edge results even when the batch count matches", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    expect(() =>
+      table.consumeLayer({
+        jobs: [
+          { id: 3, targetIndex: 0 },
+          { id: 4, targetIndex: 1 },
+        ],
+        layerIndex: 0,
+        results: [{ jobId: 3 }, { jobId: 3 }],
+      }),
+    ).toThrow(/duplicated/u);
+    expect(table.layerCursor).toBe(0);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a job id replayed in a later Step layer", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    expect(
+      table.consumeLayer({
+        jobs: [{ id: 7, targetIndex: 0 }],
+        layerIndex: 0,
+        results: [{ jobId: 7 }],
+      }),
+    ).toEqual({
+      batchNodeIds: [],
+      jobNodeIds: [{ jobId: 7 }],
+      newNodes: [],
+      nodeCount: 0,
+    });
+    expect(() =>
+      table.consumeLayer({
+        jobs: [{ id: 7, targetIndex: 1 }],
+        layerIndex: 1,
+        results: [{ jobId: 7 }],
+      }),
+    ).toThrow(/already consumed/u);
+    expect(table.layerCursor).toBe(1);
+    expect(table.evidence).toEqual([]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a Step successor whose target identity differs from its job", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    expect(() =>
+      table.consumeLayer({
+        jobs: [{ id: 4, targetIndex: 1 }],
+        layerIndex: 0,
+        results: [
+          {
+            jobId: 4,
+            successor: { resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 },
+          },
+        ],
+      }),
+    ).toThrow(/successor target/u);
+    expect(table.layerCursor).toBe(0);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("keeps each reachable Step route paired with its terminal evidence", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 2 });
+    const result = consumeGraphwarWasmOneClickStepStateLayer(table, {
+      jobs: [
+        { id: 10, targetIndex: 0 },
+        { id: 11, targetIndex: 1 },
+      ],
+      layerIndex: 0,
+      results: [
+        { jobId: 11 },
+        {
+          jobId: 10,
+          route: [
+            { x: 0, y: 0 },
+            { x: 10, y: 1 },
+          ],
+          successor: { resolvedStateKey: "18446744073709551616", resolvedY: 1, targetIndex: 0 },
+        },
+      ],
+    });
+
+    expect(result.routes).toEqual([
+      {
+        jobId: 10,
+        nodeId: 0,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 1 },
+        ],
+        successor: { resolvedStateKey: "18446744073709551616", resolvedY: 1, targetIndex: 0 },
+      },
+      { jobId: 11 },
+    ]);
+    expect(result.jobNodeIds).toEqual([{ jobId: 11 }, { jobId: 10, nodeId: 0 }]);
+    expect(table.layerCursor).toBe(1);
+  });
+
+  it("rejects a Step route without matching terminal evidence before consuming the layer", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, { targetCount: 1 });
+    expect(() =>
+      consumeGraphwarWasmOneClickStepStateLayer(table, {
+        jobs: [{ id: 10, targetIndex: 0 }],
+        layerIndex: 0,
+        results: [
+          {
+            jobId: 10,
+            route: [
+              { x: 0, y: 0 },
+              { x: 10, y: 1 },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/route and successor together/u);
+    expect(table.layerCursor).toBe(0);
+    expect(table.evidence).toEqual([]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("does not mutate retained Step evidence when a later batch conflicts", async () => {
+    const runtime = await createRuntime();
+    const table = createGraphwarWasmOneClickStepStateTable(runtime, {
+      initial: [{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }],
+      targetCount: 1,
+    });
+    expect(() => table.append([{ resolvedStateKey: "0", resolvedY: 2, targetIndex: 0 }])).toThrow();
+    expect(table.evidence).toEqual([{ resolvedStateKey: "0", resolvedY: 1, targetIndex: 0 }]);
+    expect(table.nodeCount).toBe(1);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("expands stateful Step START and layer jobs with stable node evidence", async () => {
+    const runtime = await createRuntime();
+    const targets = [
+      { graphX: 1, routePoint: { x: 10, y: 20 } },
+      { graphX: 1, routePoint: { x: 11, y: 30 } },
+      { graphX: 2, routePoint: { x: 20, y: 40 } },
+    ];
+
+    expect(
+      expandGraphwarWasmOneClickStepDagJobs(runtime, {
+        isStartExpansion: true,
+        nodeCount: 0,
+        sourceNodes: [],
+        startPoint: { x: 0, y: 0 },
+        targets,
+      }),
+    ).toEqual([
+      {
+        fromNodeId: 0xffff_ffff,
+        fromTargetIndex: 0xffff_ffff,
+        id: 0,
+        startPoint: { x: 0, y: 0 },
+        targetPoint: { x: 10, y: 20 },
+        toTargetIndex: 0,
+      },
+      {
+        fromNodeId: 0xffff_ffff,
+        fromTargetIndex: 0xffff_ffff,
+        id: 1,
+        startPoint: { x: 0, y: 0 },
+        targetPoint: { x: 11, y: 30 },
+        toTargetIndex: 1,
+      },
+      {
+        fromNodeId: 0xffff_ffff,
+        fromTargetIndex: 0xffff_ffff,
+        id: 2,
+        startPoint: { x: 0, y: 0 },
+        targetPoint: { x: 20, y: 40 },
+        toTargetIndex: 2,
+      },
+    ]);
+
+    expect(
+      expandGraphwarWasmOneClickStepDagJobs(runtime, {
+        isStartExpansion: false,
+        nodeCount: 2,
+        sourceNodes: [
+          { nodeId: 0, targetIndex: 0 },
+          { nodeId: 1, targetIndex: 1 },
+        ],
+        startPoint: { x: 0, y: 0 },
+        targets,
+      }),
+    ).toEqual([
+      {
+        fromNodeId: 0,
+        fromTargetIndex: 0,
+        id: 0,
+        startPoint: { x: 10, y: 20 },
+        targetPoint: { x: 20, y: 40 },
+        toTargetIndex: 2,
+      },
+      {
+        fromNodeId: 1,
+        fromTargetIndex: 1,
+        id: 1,
+        startPoint: { x: 11, y: 30 },
+        targetPoint: { x: 20, y: 40 },
+        toTargetIndex: 2,
+      },
+    ]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a stateful Step expansion source outside the retained node table", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      expandGraphwarWasmOneClickStepDagJobs(runtime, {
+        isStartExpansion: false,
+        nodeCount: 1,
+        sourceNodes: [{ nodeId: 1, targetIndex: 0 }],
+        startPoint: { x: 0, y: 0 },
+        targets: [{ graphX: 1, routePoint: { x: 10, y: 20 } }],
+      }),
+    ).toThrow(/outside the retained evidence table/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each(["01", "-0", "+1", "1.0"])("rejects non-canonical Step state key %s", async (resolvedStateKey) => {
+    const runtime = await createRuntime();
+    expect(() =>
+      internGraphwarWasmOneClickStepStates(runtime, [{ resolvedStateKey, resolvedY: 0, targetIndex: 0 }]),
+    ).toThrow(/canonical/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("assigns stable source identities and route columns in the versioned WASM ABI", async () => {
+    const runtime = await createRuntime();
+    const result = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+      boundaryExpansion: 0,
+      boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+      candidates: [
+        { center: { x: 200, y: 225 }, hitRadius: 2, sourceIndex: 10 },
+        { center: { x: 200, y: 300 }, hitRadius: 2, sourceIndex: 20 },
+        { center: { x: 300, y: 225 }, hitRadius: 0, sourceIndex: 99 },
+      ],
+      isMirrored: false,
+      pathTail: { x: 0, y: 225 },
+      usableRect: { height: 450, width: 770, x: 0, y: 0 },
+    });
+
+    expect(result).toEqual([
+      { hitCenter: { x: 200, y: 300 }, hitRadius: 2, routePoint: { x: 199, y: 300 }, sourceIndex: 20 },
+      { hitCenter: { x: 200, y: 225 }, hitRadius: 2, routePoint: { x: 200, y: 225 }, sourceIndex: 10 },
+    ]);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("matches the TS scale-aware half-column projection in both directions", async () => {
+    const runtime = await createRuntime();
+    const forward = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+      boundaryExpansion: 0,
+      boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+      candidates: [{ center: { x: 1.4999999995, y: 225 }, hitRadius: 0.8, sourceIndex: 1 }],
+      isMirrored: false,
+      pathTail: { x: 0, y: 225 },
+      usableRect: { height: 450, width: 770, x: 0, y: 0 },
+    });
+    const mirrored = assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+      boundaryExpansion: 0,
+      boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+      candidates: [{ center: { x: 767.5000000005, y: 225 }, hitRadius: 0.8, sourceIndex: 2 }],
+      isMirrored: true,
+      pathTail: { x: 769, y: 225 },
+      usableRect: { height: 450, width: 770, x: 0, y: 0 },
+    });
+
+    expect(forward).toEqual([
+      { hitCenter: { x: 1.4999999995, y: 225 }, hitRadius: 0.8, routePoint: { x: 1, y: 225 }, sourceIndex: 1 },
+    ]);
+    expect(mirrored).toEqual([
+      { hitCenter: { x: 767.5000000005, y: 225 }, hitRadius: 0.8, routePoint: { x: 768, y: 225 }, sourceIndex: 2 },
+    ]);
+  });
+
+  it("rejects an assignment route point whose source candidate geometry was mutated", async () => {
+    const runtime = await createRuntime();
+    const assignOneClickTargets = runtime.assignOneClickTargets.bind(runtime);
+    vi.spyOn(runtime, "assignOneClickTargets").mockImplementation((inputPointer, inputByteLength) => {
+      const resultPointer = assignOneClickTargets(inputPointer, inputByteLength);
+      const result = new DataView(
+        runtime.buffer,
+        resultPointer,
+        graphwarWasmCompositionLayout.oneClickTargetAssignmentResultByteLength,
+      );
+      const routeXPointer = result.getUint32(12, true);
+      new Float64Array(runtime.buffer, routeXPointer, 1)[0] = 100;
+      return resultPointer;
+    });
+
+    expect(() =>
+      assignGraphwarWasmOneClickTargetRoutePoints(runtime, {
+        boundaryExpansion: 0,
+        boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+        candidates: [{ center: { x: 200, y: 225 }, hitRadius: 2, sourceIndex: 10 }],
+        isMirrored: false,
+        pathTail: { x: 0, y: 225 },
+        usableRect: { height: 450, width: 770, x: 0, y: 0 },
+      }),
+    ).toThrow(/source candidate hit circle/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("validates an ordinary one-click route with ordered multi-target stop state", async () => {
+    const runtime = await createRuntime();
+    const graphPoints = [
+      { x: -20, y: 0 },
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+    ];
+    const soldierCenter = graphPoints[0];
+    if (!soldierCenter) {
+      throw new Error("test fixture must contain a soldier center");
+    }
+    const result = runGraphwarWasmOneClickTrajectoryValidation(runtime, {
+      descriptor: {
+        bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+        points: graphPoints,
+        settings: {
+          algorithm: "abs",
+          decimalPlaces: 4,
+          equation: "y",
+          isStepGlitchModeEnabled: false,
+          isStepOverflowProtectionEnabled: true,
+          steepness: 67,
+        },
+        soldierCenter,
+      },
+      stop: {
+        boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+        collision: { type: "none" },
+        continueAfterTargetsUntilGraphX: { type: "none" },
+        orderedTargets: [
+          { center: { x: 385, y: 225 }, radius: 30 },
+          { center: { x: 693, y: 225 }, radius: 30 },
+        ],
+        qualityPoints: [],
+        requiredTargets: [],
+        shouldCollectVisiblePixels: true,
+        shouldStopOnTargetsComplete: true,
+        trackedTargets: [],
+        type: "targets",
+      },
+    });
+
+    expect(result?.trajectory.reachedTargetCount).toBe(2);
+    expect(result?.trajectory.targetHitIndex).toBeGreaterThanOrEqual(0);
+    expect(result?.trajectory.visiblePixels.length).toBeGreaterThan(0);
+    expect(result?.formula.compiledMaterials.algorithm).toBe("abs");
+    expect(result?.formula.observedSignProtection).toEqual(
+      result?.trajectory.continuationEvidence.observedSignProtection,
+    );
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("round-trips smart path output and performs owned point deletion", async () => {
+    const runtime = await createRuntime();
+
+    const result = runGraphwarWasmSmartPathfinding(runtime, {
+      isDeleteOptimizationEnabled: true,
+      points: [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+      ],
+      sourcePointCount: 1,
+      target: { x: 2, y: 2 },
+      targetRadius: 0,
+      trajectoryValidation: { type: "route-only" },
+    });
+
+    expect(result).toEqual({
+      points: [
+        { x: 0, y: 0 },
+        { x: 2, y: 2 },
+      ],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 1,
+      sourcePointIndexes: [0, 2],
+      status: "success",
+      validation: {
+        target: { center: { x: 2, y: 2 }, radius: 0 },
+        type: "route-only",
+      },
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("returns a normal smart no-candidate result without trapping", async () => {
+    const runtime = await createRuntime();
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [],
+        sourcePointCount: 0,
+        target: { x: 2, y: 2 },
+        targetRadius: 1,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toEqual({
+      points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 0,
+      status: "failure",
+    });
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [{ x: 0, y: 0 }],
+        sourcePointCount: 0,
+        target: { x: 2, y: 2 },
+        targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toEqual({
+      points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 0,
+      status: "failure",
+    });
+  });
+
+  it("rejects one-click route-only deletion when a retained route context is present", async () => {
+    const runtime = await createRuntime();
+    const mark = runtime.markArena();
+    const contextPointer = runtime.reserveArena(8, 8);
+
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        routeContextPointer: contextPointer,
+      }),
+    ).toThrow(/route-context composition cannot enable deletion/u);
+    runtime.resetArena(mark);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("keeps route-only positive target radii closed while reserving zero for exact identity", async () => {
+    const runtime = await createRuntime();
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 2, y: 0 },
+        targetRadius: 1,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ status: "success" });
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 0, y: 0 },
+          { x: 0.99, y: 0 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 2, y: 0 },
+        targetRadius: 1,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toEqual({
+      points: [],
+      reachedRequiredTargetCount: 0,
+      reachedTargetCount: 0,
+      removedPointCount: 0,
+      status: "failure",
+    });
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        isDeleteOptimizationEnabled: false,
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ],
+        sourcePointCount: 1,
+        target: { x: 1, y: 0 },
+        targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ status: "success" });
+  });
+
+  it("does not apply trajectory deletion semantics to a non-collinear route-only path", async () => {
+    const runtime = await createRuntime();
+    const points = [
+      { x: 0, y: 0 },
+      { x: 1, y: 1 },
+      { x: 2, y: 0 },
+      { x: 3, y: 1 },
+    ];
+
+    expect(
+      runGraphwarWasmSmartPathfinding(runtime, {
+        allowTerminalPointDeletion: true,
+        isDeleteOptimizationEnabled: true,
+        points,
+        sourcePointCount: 1,
+        target: points[3],
+        targetRadius: 0,
+        trajectoryValidation: { type: "route-only" },
+      }),
+    ).toMatchObject({ points, removedPointCount: 0, status: "success" });
+  });
+
+  it("deletes a terminal generated point only when trajectory validation opts in", async () => {
+    const createInput = (allowTerminalPointDeletion?: boolean) => ({
+      ...(allowTerminalPointDeletion === undefined ? {} : { allowTerminalPointDeletion }),
+      isDeleteOptimizationEnabled: true,
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+        { x: 693, y: 300 },
+      ],
+      sourcePointCount: 1,
+      target: { x: 385, y: 225 },
+      targetRadius: 30,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+          points: [
+            { x: -20, y: 0 },
+            { x: 0, y: 0 },
+            { x: 20, y: -5 },
+          ],
+          settings: {
+            algorithm: "abs" as const,
+            decimalPlaces: 4,
+            equation: "y" as const,
+            isStepGlitchModeEnabled: false,
+            isStepOverflowProtectionEnabled: true,
+            steepness: 67,
+          },
+          soldierCenter: { x: -20, y: 0 },
+        },
+        stop: {
+          boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+          collision: { type: "none" as const },
+          continueAfterTargetsUntilGraphX: { type: "none" as const },
+          orderedTargets: [{ center: { x: 385, y: 225 }, radius: 30 }],
+          qualityPoints: [{ x: 0, y: 0 }],
+          requiredTargets: [],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets" as const,
+        },
+        type: "trajectory" as const,
+      },
+    });
+
+    const defaultRuntime = await createRuntime();
+    const defaultResult = runGraphwarWasmSmartPathfinding(defaultRuntime, createInput());
+    expect(defaultResult).toMatchObject({
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+        { x: 693, y: 300 },
+      ],
+      removedPointCount: 0,
+      status: "success",
+    });
+    expect(defaultRuntime.arenaCursor).toBe(defaultRuntime.arenaBase);
+
+    const optimizedRuntime = await createRuntime();
+    const optimizedResult = runGraphwarWasmSmartPathfinding(optimizedRuntime, createInput(true));
+    expect(optimizedResult).toMatchObject({
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+      ],
+      removedPointCount: 1,
+      status: "success",
+    });
+    expect(optimizedRuntime.arenaCursor).toBe(optimizedRuntime.arenaBase);
+  });
+
+  it("accepts multi-target smart deletion with required prefix targets", async () => {
+    const runtime = await createRuntime();
+    const descriptorPoints = [
+      { x: -20, y: 0 },
+      { x: 0, y: 0 },
+      { x: 20, y: -5 },
+    ];
+
+    const result = runGraphwarWasmSmartPathfinding(runtime, {
+      allowTerminalPointDeletion: true,
+      isDeleteOptimizationEnabled: true,
+      points: [
+        { x: 77, y: 225 },
+        { x: 385, y: 225 },
+        { x: 693, y: 300 },
+      ],
+      sourcePointCount: 1,
+      target: { x: 693, y: 300 },
+      targetRadius: 1_000,
+      trajectoryValidation: {
+        descriptor: {
+          bounds: { maxX: 25, maxY: 15, minX: -25, minY: -15 },
+          points: descriptorPoints,
+          settings: {
+            algorithm: "abs",
+            decimalPlaces: 4,
+            equation: "y",
+            isStepGlitchModeEnabled: false,
+            isStepOverflowProtectionEnabled: true,
+            steepness: 67,
+          },
+          soldierCenter: { x: -20, y: 0 },
+        },
+        stop: {
+          boundsRect: { height: 450, width: 770, x: 0, y: 0 },
+          collision: { type: "none" },
+          continueAfterTargetsUntilGraphX: { type: "none" },
+          orderedTargets: [{ center: { x: 693, y: 300 }, radius: 1_000 }],
+          qualityPoints: [{ x: 0, y: 0 }],
+          requiredTargets: [{ center: { x: 385, y: 225 }, radius: 1_000 }],
+          shouldCollectVisiblePixels: false,
+          shouldStopOnTargetsComplete: true,
+          trackedTargets: [],
+          type: "targets",
+        },
+        type: "trajectory",
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.points[0]).toEqual({ x: 77, y: 225 });
+    expect(result.points.at(-1)).toEqual({ x: 693, y: 300 });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("consumes one-click edge results by stable job id, independent of completion order", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    expect(started.targetOrder).toEqual([0, 1]);
+    expect(started.edgeJobs.map(({ id, from, to }) => ({ from, id, to }))).toEqual([
+      { from: -1, id: 0, to: 0 },
+      { from: -1, id: 1, to: 1 },
+      { from: 0, id: 2, to: 1 },
+    ]);
+
+    const result = started.handle.resume([
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(result).toEqual({
+      path: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ],
+      selectedEdgeIds: [0, 2],
+      selectedEdgeCount: 2,
+      status: "complete",
+      targetOrder: [0, 1],
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("does not let callers mutate the retained edge descriptors through the handle", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const exposedJob = started.handle.edgeJobs[0];
+    if (exposedJob) exposedJob.targetPoint.x = 999;
+    const result = started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce));
+    expect(result.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a begin result and retained target order that point back into the input command", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      const sessionPointer = result.getUint32(8, true);
+      result.setUint32(20, commandPointer, true);
+      new DataView(runtime.buffer, sessionPointer, 112).setUint32(84, commandPointer, true);
+      return resultPointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(/outside the current/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a begin waiting session whose source path changed", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 1) {
+        const sessionPointer = result.getUint32(8, true);
+        const session = new DataView(runtime.buffer, sessionPointer, 112);
+        const pathXPointer = session.getUint32(32, true);
+        new Float64Array(runtime.buffer, pathXPointer, session.getUint32(40, true))[0] += 1;
+      }
+      return resultPointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(
+      /one-click session source path changed/u,
+    );
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects overlapping retained target arrays", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      const sessionPointer = result.getUint32(8, true);
+      const session = new DataView(runtime.buffer, sessionPointer, 112);
+      session.setUint32(20, session.getUint32(16, true), true);
+      return resultPointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(/overlapping ranges/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a resume result that reuses the previous result record", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let previousResultPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (previousResultPointer === 0) previousResultPointer = resultPointer;
+      else return previousResultPointer;
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(() => partial.handle.resume([])).toThrow(/outside the current/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a resume pending edge batch that reuses an older output range", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let previousEdgeJobPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (previousEdgeJobPointer === 0) {
+        previousEdgeJobPointer = result.getUint32(12, true);
+      } else {
+        result.setUint32(12, previousEdgeJobPointer, true);
+      }
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(() => partial.handle.resume([])).toThrow(/outside the current/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects retained target descriptor content mutation on resume", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let targetXPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (targetXPointer === 0) {
+        const result = new DataView(runtime.buffer, resultPointer, 56);
+        const sessionPointer = result.getUint32(8, true);
+        targetXPointer = new DataView(runtime.buffer, sessionPointer, 112).getUint32(16, true);
+      }
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    new Float64Array(runtime.buffer, targetXPointer, 2)[0] += 1;
+    expect(() => partial.handle.resume([])).toThrow(/retained session content changed/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects retained source path content mutation on resume", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let pathXPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (pathXPointer === 0) {
+        const result = new DataView(runtime.buffer, resultPointer, 56);
+        const sessionPointer = result.getUint32(8, true);
+        pathXPointer = new DataView(runtime.buffer, sessionPointer, 112).getUint32(32, true);
+      }
+      return resultPointer;
+    });
+
+    const partial = started.handle.resume([]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    new Float64Array(runtime.buffer, pathXPointer, 1)[0] += 1;
+    expect(() => partial.handle.resume([])).toThrow(/retained session content changed/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("retains completed edges and returns only pending jobs for a partial batch", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const noProgress = started.handle.resume([]);
+    expect(noProgress.status).toBe("waiting-edge-batch");
+    if (noProgress.status !== "waiting-edge-batch") return;
+    expect(noProgress.edgeJobs.map(({ id }) => id)).toEqual([0, 1, 2]);
+
+    const partial = noProgress.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(partial.edgeJobs.map(({ id }) => id)).toEqual([1, 2]);
+
+    const complete = partial.handle.resume([
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(complete.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a completed edge submitted again after a partial batch", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const partial = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: false,
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    expect(() =>
+      partial.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: false,
+          sessionNonce: started.handle.nonce,
+        },
+      ]),
+    ).toThrow(/not in the session/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("treats an all-unreachable edge batch as a normal failure", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const result = started.handle.resume(
+      started.edgeJobs.map((job) => ({
+        jobId: job.id,
+        requestNonce: started.handle.requestNonce,
+        reachable: false,
+        sessionNonce: started.handle.nonce,
+      })),
+    );
+    expect(result).toEqual({
+      path: [{ x: 0, y: 0 }],
+      selectedEdgeIds: [],
+      selectedEdgeCount: 0,
+      status: "failure",
+      targetOrder: [0, 1],
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("supports descending target order for mirrored x+ maps", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+      ],
+      isTargetOrderDescending: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([0, 1]);
+      started.handle.cancel();
+    }
+  });
+
+  it("matches TS longest-path point-count and vertical-variation tie-breaks", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      verticalVariationScale: 1 / 15,
+      candidates: [
+        { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const result = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 5, y: 8 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: false,
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+
+    expect(result).toEqual({
+      path: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ],
+      selectedEdgeIds: [1],
+      selectedEdgeCount: 1,
+      status: "complete",
+      targetOrder: [0, 1],
+    });
+  });
+
+  it("keeps normal target ordering stable for equal x columns", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 10, y: 2 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 10, y: 8 }, hitRadius: 1, isEnemy: true },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    expect(started.targetOrder).toEqual([1, 0]);
+    started.handle.cancel();
+  });
+
+  it("keeps equal-x ordering stable on mirrored maps", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 10, y: 2 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 10, y: 8 }, hitRadius: 1, isEnemy: true },
+      ],
+      isTargetOrderDescending: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([1, 0]);
+      started.handle.cancel();
+    }
+  });
+
+  it("uses quantized forward columns instead of raw image x for target identity", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 1.1, y: 2 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 1.4, y: 8 }, hitRadius: 1, isEnemy: true },
+      ],
+      targetOrderKeys: [0, 0],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([1, 0]);
+      started.handle.cancel();
+    }
+  });
+
+  it("accepts friendly-fire candidates as valid one-click targets", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [{ hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: false }],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.targetOrder).toEqual([0]);
+      started.handle.cancel();
+    }
+  });
+
+  it("preserves explicit DAG node identities for duplicate target pairs", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 2,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 1,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 3,
+        },
+        {
+          from: 0,
+          fromNodeId: 2,
+          id: 2,
+          startPoint: { x: 10, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 4,
+        },
+        {
+          from: 0,
+          fromNodeId: 3,
+          id: 3,
+          startPoint: { x: 10, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 5,
+        },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(started.handle.dagNodeCount).toBe(6);
+    expect(started.edgeJobs.map(({ fromNodeId, id, toNodeId }) => ({ fromNodeId, id, toNodeId }))).toEqual([
+      { fromNodeId: 0xffff_ffff, id: 0, toNodeId: 2 },
+      { fromNodeId: 0xffff_ffff, id: 1, toNodeId: 3 },
+      { fromNodeId: 2, id: 2, toNodeId: 4 },
+      { fromNodeId: 3, id: 3, toNodeId: 5 },
+    ]);
+
+    const result = started.handle.resume(
+      started.edgeJobs.map((job) => ({
+        jobId: job.id,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [job.startPoint, job.targetPoint],
+        sessionNonce: started.handle.nonce,
+      })),
+    );
+    expect(result.status).toBe("complete");
+    if (result.status === "complete") {
+      expect(result.path).toEqual([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ]);
+      expect(result.selectedEdgeIds).toEqual([0, 2]);
+      expect(result.selectedEdgeCount).toBe(2);
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("derives sparse explicit DAG node storage for a retained retry descriptor", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 2,
+        },
+      ],
+      dagNodeEvidence: [
+        { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        { resolvedStateKey: "1", resolvedY: 0, targetIndex: 1 },
+        { resolvedStateKey: "2", resolvedY: 0, targetIndex: 0 },
+      ],
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") {
+      expect(started.handle.dagNodeCount).toBe(3);
+      started.handle.cancel();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("transfers stateful DAG node evidence through the begin ABI", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      isStepStateful: true,
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status === "waiting-edge-batch") started.handle.cancel();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects duplicate target/state identities in explicit stateful evidence", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 1,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 1,
+          },
+        ],
+        dagNodeCount: 2,
+        dagNodeEvidence: [
+          { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+          { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        ],
+        isStepStateful: true,
+      }),
+    ).toThrow(/duplicates a target\/state identity/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rechecks duplicate target/state identities at the raw begin boundary", async () => {
+    const runtime = await createRuntime();
+    const input = {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 1,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 1,
+        },
+      ],
+      dagNodeCount: 2,
+      dagNodeEvidence: [
+        { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        { resolvedStateKey: "1", resolvedY: 0, targetIndex: 0 },
+      ],
+      isStepStateful: true,
+    } as const;
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
+        const keyOffsets = new Uint32Array(runtime.buffer, inputView.getUint32(100, true), 3);
+        const keyBytes = new Uint8Array(runtime.buffer, inputView.getUint32(108, true), 2);
+        const firstOffset = keyOffsets[0];
+        const secondOffset = keyOffsets[1];
+        const firstByte = firstOffset === undefined ? undefined : keyBytes[firstOffset];
+        if (firstOffset === undefined || secondOffset === undefined || firstByte === undefined) {
+          throw new Error("expected two state evidence keys");
+        }
+        keyBytes[secondOffset] = firstByte;
+        return beginOneClickClear(inputPointer, inputByteLength);
+      });
+    try {
+      expect(() => beginGraphwarWasmOneClickClear(runtime, input)).toThrow();
+    } finally {
+      beginOneClickClearSpy.mockRestore();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rechecks target bounds for isolated stateful evidence at the raw begin boundary", async () => {
+    const runtime = await createRuntime();
+    const input = {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 2,
+      dagNodeEvidence: [
+        { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+        { resolvedStateKey: "1", resolvedY: 0, targetIndex: 1 },
+      ],
+      isStepStateful: true,
+    } as const;
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        const inputView = new DataView(runtime.buffer, inputPointer, inputByteLength);
+        const targetPointer = inputView.getUint32(92, true);
+        new Uint32Array(runtime.buffer, targetPointer, 2)[1] = 2;
+        return beginOneClickClear(inputPointer, inputByteLength);
+      });
+    try {
+      expect(() => beginGraphwarWasmOneClickClear(runtime, input)).toThrow();
+    } finally {
+      beginOneClickClearSpy.mockRestore();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a mutated initial stateful session node count", async () => {
+    const runtime = await createRuntime();
+    const beginOneClickClear = runtime.beginOneClickClear.bind(runtime);
+    const beginOneClickClearSpy = vi
+      .spyOn(runtime, "beginOneClickClear")
+      .mockImplementation((inputPointer, inputByteLength) => {
+        const resultPointer = beginOneClickClear(inputPointer, inputByteLength);
+        const result = new DataView(
+          runtime.buffer,
+          resultPointer,
+          graphwarWasmCompositionLayout.oneClickResultByteLength,
+        );
+        const sessionPointer = result.getUint32(8, true);
+        new DataView(runtime.buffer, sessionPointer, graphwarWasmCompositionLayout.oneClickSessionByteLength).setUint32(
+          104,
+          2,
+          true,
+        );
+        return resultPointer;
+      });
+    try {
+      expect(() =>
+        beginGraphwarWasmOneClickClear(runtime, {
+          ...createOneClickInput(),
+          dagJobs: [
+            {
+              from: -1,
+              fromNodeId: 0xffff_ffff,
+              id: 0,
+              startPoint: { x: 0, y: 0 },
+              targetPoint: { x: 10, y: 0 },
+              to: 0,
+              toNodeId: 0,
+            },
+          ],
+          dagNodeCount: 1,
+          dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+          isStepStateful: true,
+        }),
+      ).toThrow(/DAG node count changed before publication/u);
+    } finally {
+      beginOneClickClearSpy.mockRestore();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a stateful DAG that omits its atomic node evidence", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+        ],
+      }),
+    ).toThrow(/stateful DAG node evidence count/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("returns a normal failure for an empty explicit stateful DAG", async () => {
+    const runtime = await createRuntime();
+    expect(
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [],
+        dagNodeCount: 0,
+        isStepStateful: true,
+      }),
+    ).toEqual({
+      path: [{ x: 0, y: 0 }],
+      selectedEdgeIds: [],
+      selectedEdgeCount: 0,
+      status: "failure",
+      targetOrder: [0, 1],
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects stateful DAG evidence whose target binding differs at begin", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+        ],
+        dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 1 }],
+      }),
+    ).toThrow(/unreachable/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it.each(["01", "-0", "+1", "1.0"])(
+    "rejects non-canonical stateful DAG evidence key %s before begin",
+    async (resolvedStateKey) => {
+      const runtime = await createRuntime();
+      expect(() =>
+        beginGraphwarWasmOneClickClear(runtime, {
+          ...createOneClickInput(),
+          isStepStateful: true,
+          dagJobs: [
+            {
+              from: -1,
+              fromNodeId: 0xffff_ffff,
+              id: 0,
+              startPoint: { x: 0, y: 0 },
+              targetPoint: { x: 10, y: 0 },
+              to: 0,
+              toNodeId: 0,
+            },
+          ],
+          dagNodeEvidence: [{ resolvedStateKey, resolvedY: 0, targetIndex: 0 }],
+        }),
+      ).toThrow(/canonical/u);
+      expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+    },
+  );
+
+  it("rejects stateful DAG evidence whose count differs from the node table", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 0,
+          },
+        ],
+        dagNodeEvidence: [],
+      }),
+    ).toThrow(/evidence count/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects explicit DAG endpoints that do not match retained target descriptors", async () => {
+    const runtime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 999, y: 999 },
+            to: 0,
+            toNodeId: 1,
+          },
+        ],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/endpoints do not match its target descriptors/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("resolves an explicit DAG whose child job precedes its parent", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: 0,
+          fromNodeId: 2,
+          id: 0,
+          startPoint: { x: 10, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 4,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 1,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 2,
+        },
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 2,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 20, y: 0 },
+          to: 1,
+          toNodeId: 3,
+        },
+      ],
+      dagNodeCount: 5,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    const result = started.handle.resume(
+      started.edgeJobs.map((job) => ({
+        jobId: job.id,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [job.startPoint, job.targetPoint],
+        sessionNonce: started.handle.nonce,
+      })),
+    );
+    expect(result.status).toBe("complete");
+    if (result.status === "complete") {
+      expect(result.path).toEqual([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ]);
+      expect(result.selectedEdgeIds).toEqual([1, 0]);
+      expect(result.selectedEdgeCount).toBe(2);
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects unknown or duplicate explicit DAG node identities at the adapter boundary", async () => {
+    const runtime = await createRuntime();
+    const createJob = (toNodeId: number) => ({
+      from: -1,
+      fromNodeId: 0xffff_ffff,
+      id: 0,
+      startPoint: { x: 0, y: 0 },
+      targetPoint: { x: 10, y: 0 },
+      to: 0,
+      toNodeId,
+    });
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        dagJobs: [createJob(2)],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/unknown DAG node/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+
+    const duplicateRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(duplicateRuntime, {
+        ...createOneClickInput(),
+        dagJobs: [createJob(1), { ...createJob(1), id: 1 }],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/duplicates a DAG node identity/u);
+    expect(duplicateRuntime.arenaCursor).toBe(duplicateRuntime.arenaBase);
+
+    const selfLoopRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(selfLoopRuntime, {
+        ...createOneClickInput(),
+        dagJobs: [{ ...createJob(1), from: 0, fromNodeId: 1, to: 1 }],
+        dagNodeCount: 2,
+      }),
+    ).toThrow(/invalid source identity/u);
+    expect(selfLoopRuntime.arenaCursor).toBe(selfLoopRuntime.arenaBase);
+
+    const emptyRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(emptyRuntime, {
+        ...createOneClickInput(),
+        dagJobs: [],
+        dagNodeCount: 1,
+      }),
+    ).toThrow(/dagNodeCount must be zero/u);
+    expect(emptyRuntime.arenaCursor).toBe(emptyRuntime.arenaBase);
+
+    const targetBindingRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(targetBindingRuntime, {
+        ...createOneClickInput(),
+        isStepStateful: true,
+        candidates: [
+          { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 30, y: 0 }, hitRadius: 1, isEnemy: true },
+        ],
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 1,
+          },
+          {
+            from: 1,
+            fromNodeId: 1,
+            id: 1,
+            startPoint: { x: 20, y: 0 },
+            targetPoint: { x: 30, y: 0 },
+            to: 2,
+            toNodeId: 2,
+          },
+        ],
+        dagNodeEvidence: [
+          { resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 },
+          { resolvedStateKey: "1", resolvedY: 0, targetIndex: 1 },
+          { resolvedStateKey: "2", resolvedY: 0, targetIndex: 2 },
+        ],
+        dagNodeCount: 3,
+      }),
+    ).toThrow(/reuses DAG node 1/u);
+    expect(targetBindingRuntime.arenaCursor).toBe(targetBindingRuntime.arenaBase);
+
+    const cycleRuntime = await createRuntime();
+    expect(() =>
+      beginGraphwarWasmOneClickClear(cycleRuntime, {
+        ...createOneClickInput(),
+        candidates: [
+          { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+          { hitCenter: { x: 30, y: 0 }, hitRadius: 1, isEnemy: true },
+        ],
+        dagJobs: [
+          {
+            from: -1,
+            fromNodeId: 0xffff_ffff,
+            id: 0,
+            startPoint: { x: 0, y: 0 },
+            targetPoint: { x: 10, y: 0 },
+            to: 0,
+            toNodeId: 2,
+          },
+          {
+            from: 0,
+            fromNodeId: 2,
+            id: 1,
+            startPoint: { x: 10, y: 0 },
+            targetPoint: { x: 20, y: 0 },
+            to: 1,
+            toNodeId: 3,
+          },
+          {
+            from: 1,
+            fromNodeId: 3,
+            id: 2,
+            startPoint: { x: 20, y: 0 },
+            targetPoint: { x: 30, y: 0 },
+            to: 2,
+            toNodeId: 2,
+          },
+        ],
+        dagNodeCount: 4,
+      }),
+    ).toThrow(/reuses DAG node 2/u);
+    expect(cycleRuntime.arenaCursor).toBe(cycleRuntime.arenaBase);
+  });
+
+  it("rejects duplicate edge ids and invalidates the retained session", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const duplicateResults: GraphwarWasmOneClickEdgeResult[] = [
+      { jobId: 0, requestNonce: started.handle.requestNonce, reachable: false, sessionNonce: started.handle.nonce },
+      { jobId: 0, requestNonce: started.handle.requestNonce, reachable: false, sessionNonce: started.handle.nonce },
+      { jobId: 1, requestNonce: started.handle.requestNonce, reachable: false, sessionNonce: started.handle.nonce },
+    ];
+    expect(() => started.handle.resume(duplicateResults)).toThrow(/duplicated/u);
+    expect(() => started.handle.resume(duplicateResults)).toThrow(/no longer active/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects an edge result from another task identity before touching the kernel", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce + 1)),
+    ).toThrow(/belongs to another one-click session/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a reachable route whose endpoints belong to another edge", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    expect(() =>
+      started.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: true,
+          route: [
+            { x: 0, y: 0 },
+            { x: 20, y: 0 },
+          ],
+          sessionNonce: started.handle.nonce,
+        },
+        {
+          jobId: 1,
+          requestNonce: started.handle.requestNonce,
+          reachable: false,
+          sessionNonce: started.handle.nonce,
+        },
+        {
+          jobId: 2,
+          requestNonce: started.handle.requestNonce,
+          reachable: false,
+          sessionNonce: started.handle.nonce,
+        },
+      ]),
+    ).toThrow(/endpoints do not match/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a terminal selected-edge chain that was mutated in linear memory", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0 && result.getUint32(40, true) === 2) {
+        const selectedEdgeIdsPointer = result.getUint32(52, true);
+        new Uint32Array(runtime.buffer, selectedEdgeIdsPointer, 2)[1] = 0;
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/duplicated/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a terminal path whose final endpoint was mutated in linear memory", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0) {
+        const pathYPointer = result.getUint32(32, true);
+        const pathCount = result.getUint32(36, true);
+        new Float64Array(runtime.buffer, pathYPointer, pathCount)[pathCount - 1] += 1;
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/terminal path does not match/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects terminal point arrays that overlap each other", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0) result.setUint32(32, result.getUint32(28, true), true);
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/terminal output contains overlapping ranges/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects selected edge ids that alias the retained target order", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const sessionPointer = new DataView(runtime.buffer, pointer, 16).getUint32(0, true);
+      const resultPointer = resume(pointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      if (result.getUint32(4, true) === 0) {
+        const targetOrderPointer = runtime.reserveArena(8, 4);
+        new Uint32Array(runtime.buffer, targetOrderPointer, 2).set([0, 1]);
+        result.setUint32(20, targetOrderPointer, true);
+        const retainedTargetOrderPointer = new DataView(runtime.buffer, sessionPointer, 112).getUint32(84, true);
+        result.setUint32(52, retainedTargetOrderPointer, true);
+      }
+      return resultPointer;
+    });
+
+    expect(() =>
+      started.handle.resume(createReachableEdgeResults(started.handle.nonce, started.handle.requestNonce)),
+    ).toThrow(/terminal selected edge ids overlaps a live one-click range/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a completed route whose x/y pointer identity was replaced on resume", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [
+        { hitCenter: { x: 10, y: 10 }, hitRadius: 1, isEnemy: true },
+        { hitCenter: { x: 20, y: 20 }, hitRadius: 1, isEnemy: true },
+      ],
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const resume = runtime.resumeOneClickClear.bind(runtime);
+    let sessionPointer = 0;
+    vi.spyOn(runtime, "resumeOneClickClear").mockImplementation((pointer, byteLength) => {
+      const resultPointer = resume(pointer, byteLength);
+      if (sessionPointer === 0) sessionPointer = new DataView(runtime.buffer, resultPointer, 56).getUint32(8, true);
+      return resultPointer;
+    });
+    const partial = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 10 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    const retained = partial.handle.resume([]);
+    expect(retained.status).toBe("waiting-edge-batch");
+    if (retained.status !== "waiting-edge-batch") return;
+    const session = new DataView(runtime.buffer, sessionPointer, 112);
+    const routeXByJobPointer = session.getUint32(72, true);
+    const routeYByJobPointer = session.getUint32(80, true);
+    const routeYPointer = new Uint32Array(runtime.buffer, routeYByJobPointer, 3)[0];
+    new Uint32Array(runtime.buffer, routeXByJobPointer, 3)[0] = routeYPointer;
+
+    expect(() => retained.handle.resume([])).toThrow(/route pointers changed while resuming/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("keeps a paused partial session valid across linear-memory growth and supports cancellation", async () => {
+    const runtime = await createRuntime(2_048);
+    const started = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+
+    const partial = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(partial.status).toBe("waiting-edge-batch");
+    if (partial.status !== "waiting-edge-batch") return;
+    runtime.reserveArena(runtime.buffer.byteLength * 2, 8);
+    const result = partial.handle.resume([
+      {
+        jobId: 2,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 10, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+      {
+        jobId: 1,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+      },
+    ]);
+    expect(result.status).toBe("complete");
+
+    const secondRuntime = await createRuntime();
+    const secondStarted = beginGraphwarWasmOneClickClear(secondRuntime, createOneClickInput());
+    expect(secondStarted.status).toBe("waiting-edge-batch");
+    if (secondStarted.status !== "waiting-edge-batch") return;
+    secondStarted.handle.cancel();
+    expect(() =>
+      secondStarted.handle.resume(
+        createReachableEdgeResults(secondStarted.handle.nonce, secondStarted.handle.requestNonce),
+      ),
+    ).toThrow(/no longer active/u);
+    expect(secondRuntime.arenaCursor).toBe(secondRuntime.arenaBase);
+    const restarted = beginGraphwarWasmOneClickClear(secondRuntime, createOneClickInput());
+    expect(restarted.status).toBe("waiting-edge-batch");
+    if (restarted.status === "waiting-edge-batch") restarted.handle.cancel();
+  });
+
+  it("does not cancel an existing session when a later begin command fails", async () => {
+    const runtime = await createRuntime();
+    const first = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(first.status).toBe("waiting-edge-batch");
+    if (first.status !== "waiting-edge-batch") return;
+
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        requestNonce: 43,
+      }),
+    ).toThrow();
+
+    const result = first.handle.resume(createReachableEdgeResults(first.handle.nonce, first.handle.requestNonce));
+    expect(result.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("retries after a begin trap without retaining a half-published session", async () => {
+    const runtime = await createRuntime();
+    const begin = vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce(() => {
+      throw new WebAssembly.RuntimeError("synthetic allocation trap");
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(/allocation trap/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+
+    begin.mockRestore();
+    const retried = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(retried.status).toBe("waiting-edge-batch");
+    if (retried.status === "waiting-edge-batch") retried.handle.cancel();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("cancels a session published before a begin-boundary fault and permits restart", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    const cancel = vi.spyOn(runtime, "cancelOneClickClear");
+    const beginSpy = vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((pointer, byteLength) => {
+      begin(pointer, byteLength);
+      throw new Error("post-begin fault");
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow("post-begin fault");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+
+    beginSpy.mockRestore();
+    const restarted = beginGraphwarWasmOneClickClear(runtime, createOneClickInput());
+    expect(restarted.status).toBe("waiting-edge-batch");
+    if (restarted.status === "waiting-edge-batch") {
+      restarted.handle.cancel();
+    }
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("reports an empty candidate set as a normal failure", async () => {
+    const runtime = await createRuntime();
+    const result = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      candidates: [],
+    });
+
+    expect(result).toEqual({
+      path: [{ x: 0, y: 0 }],
+      selectedEdgeIds: [],
+      selectedEdgeCount: 0,
+      status: "failure",
+      targetOrder: [],
+    });
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects an initial failure whose path differs from the owned input snapshot", async () => {
+    const runtime = await createRuntime();
+    const begin = runtime.beginOneClickClear.bind(runtime);
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementationOnce((commandPointer, byteLength) => {
+      const resultPointer = begin(commandPointer, byteLength);
+      const result = new DataView(runtime.buffer, resultPointer, 56);
+      const pathXPointer = result.getUint32(28, true);
+      new Float64Array(runtime.buffer, pathXPointer, 1)[0] = 999;
+      return resultPointer;
+    });
+
+    expect(() =>
+      beginGraphwarWasmOneClickClear(runtime, {
+        ...createOneClickInput(),
+        candidates: [],
+      }),
+    ).toThrow(/changed its retained source path/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a complete result whose selected edge count exceeds its target count", async () => {
+    const runtime = await createRuntime();
+    vi.spyOn(runtime, "beginOneClickClear").mockImplementation(() => {
+      const pointer = runtime.reserveArena(graphwarWasmCompositionLayout.oneClickResultByteLength, 8);
+      const view = new DataView(runtime.buffer, pointer, graphwarWasmCompositionLayout.oneClickResultByteLength);
+      view.setUint32(0, 0x4f43_5253, true);
+      view.setUint32(4, 0, true);
+      view.setUint32(8, 0, true);
+      view.setUint32(12, 0, true);
+      view.setUint32(16, 0, true);
+      view.setUint32(20, 0, true);
+      view.setUint32(24, 0, true);
+      view.setUint32(28, 0, true);
+      view.setUint32(32, 0, true);
+      view.setUint32(36, 0, true);
+      view.setUint32(40, 1, true);
+      view.setUint32(44, 1, true);
+      view.setUint32(48, 42, true);
+      return pointer;
+    });
+
+    expect(() => beginGraphwarWasmOneClickClear(runtime, createOneClickInput())).toThrow(
+      /selected edge count exceeds target count/u,
+    );
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("retains stateful evidence and layer cursor in the WASM session", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 1,
+      dagNodeEvidence: [{ resolvedStateKey: "18446744073709551616", resolvedY: -0, targetIndex: 0 }],
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(started.handle.layerCursor).toBe(0);
+    expect(started.handle.stepStateEvidence).toEqual([
+      { resolvedStateKey: "18446744073709551616", resolvedY: -0, targetIndex: 0 },
+    ]);
+    const pending = started.handle.resume([]);
+    expect(pending.status).toBe("waiting-edge-batch");
+    expect(started.handle.layerCursor).toBe(0);
+    if (pending.status !== "waiting-edge-batch") return;
+    const result = started.handle.resume([
+      {
+        jobId: 0,
+        requestNonce: started.handle.requestNonce,
+        reachable: true,
+        route: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+        sessionNonce: started.handle.nonce,
+        successor: { resolvedStateKey: "18446744073709551616", resolvedY: -0, targetIndex: 0 },
+      },
+    ]);
+    expect(result.status).toBe("complete");
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a reachable stateful edge without successor evidence", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 1,
+      dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(() =>
+      started.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: true,
+          route: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
+          sessionNonce: started.handle.nonce,
+        },
+      ]),
+    ).toThrow(/bind route and successor/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+
+  it("rejects a stateful successor whose target identity changes", async () => {
+    const runtime = await createRuntime();
+    const started = beginGraphwarWasmOneClickClear(runtime, {
+      ...createOneClickInput(),
+      dagJobs: [
+        {
+          from: -1,
+          fromNodeId: 0xffff_ffff,
+          id: 0,
+          startPoint: { x: 0, y: 0 },
+          targetPoint: { x: 10, y: 0 },
+          to: 0,
+          toNodeId: 0,
+        },
+      ],
+      dagNodeCount: 1,
+      dagNodeEvidence: [{ resolvedStateKey: "0", resolvedY: 0, targetIndex: 0 }],
+      isDeleteOptimizationEnabled: false,
+      isStepStateful: true,
+    });
+    expect(started.status).toBe("waiting-edge-batch");
+    if (started.status !== "waiting-edge-batch") return;
+    expect(() =>
+      started.handle.resume([
+        {
+          jobId: 0,
+          requestNonce: started.handle.requestNonce,
+          reachable: true,
+          route: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
+          sessionNonce: started.handle.nonce,
+          successor: { resolvedStateKey: "0", resolvedY: 0, targetIndex: 1 },
+        },
+      ]),
+    ).toThrow(/changed its successor target/u);
+    expect(runtime.arenaCursor).toBe(runtime.arenaBase);
+  });
+});
+
+function createOneClickInput() {
+  return {
+    candidates: [
+      { hitCenter: { x: 10, y: 0 }, hitRadius: 1, isEnemy: true },
+      { hitCenter: { x: 20, y: 0 }, hitRadius: 1, isEnemy: true },
+    ],
+    isDeleteOptimizationEnabled: true,
+    isStepStateful: false,
+    path: [{ x: 0, y: 0 }],
+    requestNonce: 42,
+  } as const;
+}
+
+function createReachableEdgeResults(sessionNonce: number, requestNonce: number): GraphwarWasmOneClickEdgeResult[] {
+  return [
+    {
+      jobId: 0,
+      requestNonce,
+      reachable: true,
+      route: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      sessionNonce,
+    },
+    {
+      jobId: 1,
+      requestNonce,
+      reachable: true,
+      route: [
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+      ],
+      sessionNonce,
+    },
+    {
+      jobId: 2,
+      requestNonce,
+      reachable: true,
+      route: [
+        { x: 10, y: 0 },
+        { x: 20, y: 0 },
+      ],
+      sessionNonce,
+    },
+  ];
+}
+
+async function createRuntime(initialArenaCapacity = 65_536) {
+  return instantiateGraphwarWasmRuntime(await kernelModulePromise, { initialArenaCapacity });
+}

@@ -78,14 +78,18 @@ describe("Graphwar pathfinding debug reports", () => {
 
   it("aggregates real Worker diagnostics across attempts while leaving cache hits diagnostic-free", () => {
     const capture = createCapture();
-    const first = createGraphwarPathfindingDebugMetrics(true);
+    const first = createGraphwarPathfindingDebugMetrics(true, { effective: "wasm", requested: "wasm" });
     first.counters.trajectoryReplayCount = 2;
     first.timings.trajectoryReplayElapsedMs = 12;
     if (!first.stepGlitch) {
       throw new Error("Expected Step-glitch diagnostics to be created");
     }
     first.stepGlitch.candidateReplayCount = 3;
-    const second = createGraphwarPathfindingDebugMetrics(false);
+    const second = createGraphwarPathfindingDebugMetrics(false, {
+      effective: "typescript",
+      fallbackReason: "trap: search trapped",
+      requested: "wasm",
+    });
     second.counters.trajectoryReplayCount = 5;
     second.timings.trajectoryReplayElapsedMs = 20;
     capture.attempts.push(
@@ -100,29 +104,30 @@ describe("Graphwar pathfinding debug reports", () => {
         source: "worker",
       },
       {
+        diagnostics: second,
         input: {
           hitTarget: { center: createPixelPoint(40, 40), radius: 7 },
           kind: "smart-pathfinding",
           sourcePath: [createPixelPoint(10, 20)],
           targetPoint: createPixelPoint(40, 40),
         },
-        source: "result-cache",
+        source: "worker",
       },
       {
-        diagnostics: second,
         input: {
           hitTarget: { center: createPixelPoint(50, 40), radius: 7 },
           kind: "smart-pathfinding",
           sourcePath: [createPixelPoint(10, 20)],
           targetPoint: createPixelPoint(50, 40),
         },
-        source: "worker",
+        source: "result-cache",
       },
     );
-    const summary = summarizeGraphwarPathfindingDiagnostics(
-      finishGraphwarPathfindingDebugCapture(capture, { type: "failure" }, 2000, completedAt).report,
-    );
+    const report = finishGraphwarPathfindingDebugCapture(capture, { type: "failure" }, 2000, completedAt).report;
+    const summary = summarizeGraphwarPathfindingDiagnostics(report);
 
+    expect(report.backendExecution).toEqual(second.backendExecution);
+    expect(summary?.backendExecution).toEqual(second.backendExecution);
     expect(summary?.counters.trajectoryReplayCount).toBe(7);
     expect(summary?.timings.trajectoryReplayElapsedMs).toBe(32);
     expect(summary?.stepGlitch).toEqual({ candidateReplayCount: 3, directReplayCount: 0 });

@@ -131,12 +131,18 @@ export interface GraphwarStepGlitchPrefixScanner {
 /** 完全相同旧整式的验证证据；新增后缀仍必须从发射点完整回放。 */
 export interface GraphwarStepGlitchPrefixEvidence {
   acceptedPoint: GraphPoint;
+  /** 构造时固定的完整证据快照；任一组成字段后续被修改都只能走 cold prefix。 */
+  evidenceIdentity: {
+    canonical: string;
+    simulationMask: Uint8Array;
+  };
   /** 已解前缀和可选同 Worker 边界整体替换；Master 证据只保留 prefix-only 分支。 */
   formulaEvidence: GraphwarStepGlitchFormulaEvidence;
   /** AcceptedPoint 所属的碰撞与尾目标身份；mask 保存精确快照以拒绝原地修改。 */
   replayIdentity: {
     boundaryExpansion: number;
     prefixTarget: GraphwarTrajectoryTargetCircle;
+    requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
     simulationMask: Uint8Array;
   };
 }
@@ -146,18 +152,139 @@ export function createGraphwarStepGlitchPrefixEvidence(options: {
   acceptedPoint: GraphPoint;
   formulaEvidence: GraphwarStepGlitchFormulaEvidence;
   prefixTarget: GraphwarTrajectoryTargetCircle;
+  requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
   simulationBoundaryExpansion?: number;
   simulationMask: Uint8Array;
 }): GraphwarStepGlitchPrefixEvidence {
-  return {
+  const evidence = {
     acceptedPoint: createGraphPoint(options.acceptedPoint.x, options.acceptedPoint.y),
     formulaEvidence: options.formulaEvidence,
     replayIdentity: {
       boundaryExpansion: Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)),
       prefixTarget: copyGraphwarTrajectoryTargetCircle(options.prefixTarget),
+      requiredTargets: options.requiredTargets.map(copyGraphwarTrajectoryTargetCircle),
       simulationMask: options.simulationMask.slice(),
     },
+  } satisfies Omit<GraphwarStepGlitchPrefixEvidence, "evidenceIdentity">;
+  return {
+    ...evidence,
+    evidenceIdentity: createGraphwarStepGlitchPrefixEvidenceIdentity(evidence),
   };
+}
+
+const graphwarStepGlitchIdentityNumberView = new DataView(new ArrayBuffer(Float64Array.BYTES_PER_ELEMENT));
+
+/** 以排序字段和 IEEE-754 bits 固化证据。公式 settings 内的 mask 引用由 replayIdentity 的精确 bytes 统一记录，避免同一大 mask 重复进入身份。 */
+export function createGraphwarStepGlitchPrefixEvidenceIdentity(
+  evidence: Omit<GraphwarStepGlitchPrefixEvidence, "evidenceIdentity">,
+): GraphwarStepGlitchPrefixEvidence["evidenceIdentity"] {
+  return {
+    canonical: serializeGraphwarStepGlitchIdentityValue({
+      acceptedPoint: evidence.acceptedPoint,
+      formulaEvidence: evidence.formulaEvidence,
+      replayIdentity: {
+        boundaryExpansion: evidence.replayIdentity.boundaryExpansion,
+        prefixTarget: evidence.replayIdentity.prefixTarget,
+        requiredTargets: evidence.replayIdentity.requiredTargets,
+      },
+    }),
+    simulationMask: evidence.replayIdentity.simulationMask.slice(),
+  };
+}
+
+/** 验证 stored snapshot，而不在每次 pack/match 时重新复制大 mask。 */
+export function graphwarStepGlitchPrefixEvidenceHasValidIdentity(evidence: GraphwarStepGlitchPrefixEvidence): boolean {
+  return (
+    evidence.evidenceIdentity.canonical ===
+      serializeGraphwarStepGlitchIdentityValue({
+        acceptedPoint: evidence.acceptedPoint,
+        formulaEvidence: evidence.formulaEvidence,
+        replayIdentity: {
+          boundaryExpansion: evidence.replayIdentity.boundaryExpansion,
+          prefixTarget: evidence.replayIdentity.prefixTarget,
+          requiredTargets: evidence.replayIdentity.requiredTargets,
+        },
+      }) && graphwarByteArraysEqual(evidence.evidenceIdentity.simulationMask, evidence.replayIdentity.simulationMask)
+  );
+}
+
+/** 内部受控 evidence 的 canonical serializer；数值不能经过 JSON 的 -0/NaN 归一化。 */
+function serializeGraphwarStepGlitchIdentityValue(value: unknown): string {
+  if (value === undefined) {
+    return '{"$undefined":true}';
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    graphwarStepGlitchIdentityNumberView.setFloat64(0, value, false);
+    const high = graphwarStepGlitchIdentityNumberView.getUint32(0, false).toString(16).padStart(8, "0");
+    const low = graphwarStepGlitchIdentityNumberView.getUint32(4, false).toString(16).padStart(8, "0");
+    return `{"$f64":"${high}${low}"}`;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(serializeGraphwarStepGlitchIdentityValue).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([key, entryValue]) => key !== "stepGlitchObstacleMask" && entryValue !== undefined)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    return `{${entries
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${serializeGraphwarStepGlitchIdentityValue(entryValue)}`)
+      .join(",")}}`;
+  }
+  throw new TypeError("Step-glitch prefix evidence contains an unsupported identity value");
+}
+
+/** Exact prefix proof shared by the TS scanner and the WASM Adapter provenance check. */
+export function graphwarStepGlitchPrefixEvidenceMatchesContext(
+  options: {
+    bounds: GraphBounds;
+    formulaMode: GraphwarTrajectoryFormulaMode;
+    graphPoints: readonly GraphPoint[];
+    prefixTarget?: GraphwarTrajectoryTargetCircle;
+    requiredTargets: readonly GraphwarTrajectoryTargetCircle[];
+    simulationBoundaryExpansion: number;
+    simulationMask: Uint8Array;
+  },
+  evidence: GraphwarStepGlitchPrefixEvidence,
+): boolean {
+  const transferredPrefixTarget = options.prefixTarget ? undefined : options.requiredTargets.at(-1);
+  const evidenceRequiredTargets = evidence.replayIdentity.requiredTargets;
+  const hasMatchingRequiredTargets = options.prefixTarget
+    ? evidenceRequiredTargets.length === options.requiredTargets.length &&
+      evidenceRequiredTargets.every((target, index) => {
+        const requiredTarget = options.requiredTargets[index];
+        return requiredTarget !== undefined && pixelCirclesEqual(target, requiredTarget);
+      })
+    : evidenceRequiredTargets.length + 1 === options.requiredTargets.length &&
+      evidenceRequiredTargets.every((target, index) => {
+        const requiredTarget = options.requiredTargets[index];
+        return requiredTarget !== undefined && pixelCirclesEqual(target, requiredTarget);
+      }) &&
+      transferredPrefixTarget !== undefined &&
+      pixelCirclesEqual(evidence.replayIdentity.prefixTarget, transferredPrefixTarget);
+  const lastGraphPoint = options.graphPoints.at(-1);
+  return Boolean(
+    lastGraphPoint &&
+    (options.prefixTarget === undefined ||
+      pixelCirclesEqual(evidence.replayIdentity.prefixTarget, options.prefixTarget)) &&
+    hasMatchingRequiredTargets &&
+    evidence.replayIdentity.boundaryExpansion === options.simulationBoundaryExpansion &&
+    graphwarByteArraysEqual(evidence.replayIdentity.simulationMask, options.simulationMask) &&
+    graphwarStepGlitchPrefixEvidenceHasValidIdentity(evidence) &&
+    evidence.formulaEvidence.prefix.points.length === options.graphPoints.length &&
+    graphwarStepGlitchFormulaEvidenceMatchesSource(
+      {
+        bounds: options.bounds,
+        formulaMode: options.formulaMode,
+        points: options.graphPoints,
+        soldierCenter: options.graphPoints[0],
+      },
+      evidence.formulaEvidence,
+    ) &&
+    evidence.acceptedPoint.x >= lastGraphPoint.x,
+  );
 }
 
 /** Worker 和页面耗时汇总使用的稳定扫描阶段。 */
@@ -233,6 +360,7 @@ interface ScanGateWindow {
   /** 右门所在的原生列；公式精度为 0 或 1 时，左门量化偏移可能让不同宽度落到不同列。 */
   searchX: number;
   startX: number;
+  windowOrdinal: number;
 }
 
 /** 按一个回退距离分组的 11 档 gate 宽度；原版像素固定，但低公式精度时仍可能跨列。 */
@@ -242,7 +370,7 @@ interface ScanGateWindowBatch {
   /** 共享的右门列；为 undefined 时，低精度量化让门宽跨列，使用旧的逐窗口 fallback。 */
   sharedWindowSearchX: number | undefined;
   /** 只有右门仍位于预期回退列时，才能使用“跳过剩余更远批次”的单调性规则。 */
-  usesMonotonicBackoffPruning: boolean;
+  canUseMonotonicBackoffPruning: boolean;
   /** 所有宽度共享右门列时实际查询的原生列；跨列时仅作为 fallback 提示。 */
   searchX: number;
   windows: ScanGateWindow[];
@@ -254,6 +382,71 @@ interface ScanGateRows {
   rows: ScanLandingRow[];
   state: ScanState;
   windowBatches: ScanGateWindowBatch[];
+}
+
+/** Stable single-frontier geometry exposed only for the WASM differential seam. */
+export interface GraphwarStepGlitchGeometryFrontierTrace {
+  batches: readonly {
+    backoffColumns: number;
+    canUseMonotonicBackoffPruning: boolean;
+    searchX: number;
+    sharedWindowSearchX: number | undefined;
+    windowCount: number;
+    windowStart: number;
+  }[];
+  candidates: readonly {
+    backoffColumns: number;
+    controlPoint: PixelPoint;
+    controlX: number;
+    decimalPlaces: number;
+    expansionOrdinal: number;
+    row: number;
+    startX: number;
+    windowOrdinal: number;
+  }[];
+  firstBlockedSearchX: number;
+  rows: readonly ScanLandingRow[];
+  windows: readonly ScanGateWindow[];
+}
+
+/** Test-only replay outcome used to drive the iterative scanner without crossing the WASM boundary per candidate. */
+export type GraphwarStepGlitchGeometryReplayOutcome =
+  | {
+      blockedX?: number;
+      reachedTargetCount: number;
+      status: "miss";
+    }
+  | {
+      acceptedPoint: GraphPoint;
+      blockedX?: number;
+      reachedTargetCount: number;
+      status: "hit";
+    };
+
+export interface GraphwarStepGlitchGeometryDfsInput {
+  hitTargetCenter: PixelPoint;
+  prefixAcceptedPoint: GraphPoint;
+  prefixBlockedX?: number;
+  prefixReachedTargetCount: number;
+  replayMode: { type: "all-miss" } | { outcomes: readonly GraphwarStepGlitchGeometryReplayOutcome[]; type: "scripted" };
+  targetPoint: PixelPoint;
+}
+
+export type GraphwarStepGlitchGeometryDfsCandidateTrace = {
+  blockedX?: number;
+  expansionOrdinal: number;
+  kind: "direct" | "gate" | "target";
+  path: readonly PixelPoint[];
+  reachedTargetCount: number;
+} & ({ acceptedPoint?: never; status: "miss" } | { acceptedPoint: GraphPoint; status: "hit" });
+
+export interface GraphwarStepGlitchGeometryDfsTrace {
+  bestReachedTargetCount: number;
+  blockedX?: number;
+  candidates: readonly GraphwarStepGlitchGeometryDfsCandidateTrace[];
+  expandedStates: number;
+  scriptConsumed: number;
+  status: "hit" | "no-path";
 }
 
 /** 迭代 DFS 工作项；扫描器不会通过候选状态递归调用自身。 */
@@ -324,13 +517,13 @@ export function createGraphwarStepGlitchScanMaskIndex(options: {
     let farthest = -1;
     for (let searchX = GRAPHWAR_PLANE_LENGTH - 1; searchX >= 0; searchX -= 1) {
       const planeX = forwardColumnToPlaneColumn(searchX, isMirrored);
-      const blocked =
+      const isBlocked =
         planeX < boundaryExpansion ||
         planeX >= GRAPHWAR_PLANE_LENGTH - boundaryExpansion ||
         row < boundaryExpansion ||
         row >= GRAPHWAR_PLANE_HEIGHT - boundaryExpansion ||
         Boolean(options.simulationMask[row * GRAPHWAR_PLANE_LENGTH + planeX]);
-      if (blocked) {
+      if (isBlocked) {
         farthest = -1;
         continue;
       }
@@ -405,28 +598,20 @@ function prepareGraphwarStepGlitchPrefix(
 
   const evidenceStartedAt = nowMs();
   const evidence = options.prefixEvidence;
-  const hasEvidencePrefixTarget = Boolean(
-    evidence &&
-    (prefixTarget
-      ? pixelCirclesEqual(evidence.replayIdentity.prefixTarget, prefixTarget)
-      : requiredTargets.some((target) => pixelCirclesEqual(evidence.replayIdentity.prefixTarget, target))),
-  );
   const isEvidenceSourceCompatible = Boolean(
     evidence &&
-    hasEvidencePrefixTarget &&
-    evidence.replayIdentity.boundaryExpansion === context.simulationBoundaryExpansion &&
-    graphwarByteArraysEqual(evidence.replayIdentity.simulationMask, options.simulationMask) &&
-    evidence.formulaEvidence.prefix.points.length === context.graphPoints.length &&
-    graphwarStepGlitchFormulaEvidenceMatchesSource(
+    graphwarStepGlitchPrefixEvidenceMatchesContext(
       {
         bounds: options.bounds,
         formulaMode: context.formulaMode,
-        points: context.graphPoints,
-        soldierCenter: context.graphPoints[0],
+        graphPoints: context.graphPoints,
+        ...(prefixTarget ? { prefixTarget } : {}),
+        requiredTargets,
+        simulationBoundaryExpansion: context.simulationBoundaryExpansion,
+        simulationMask: options.simulationMask,
       },
-      evidence.formulaEvidence,
-    ) &&
-    evidence.acceptedPoint.x >= lastGraphPoint.x,
+      evidence,
+    ),
   );
   timings.push({
     elapsedMs: nowMs() - evidenceStartedAt,
@@ -666,7 +851,7 @@ function scanPreparedGraphwarStepGlitchPath(
           if (windowBatch.backoffColumns > 1) {
             if (
               windowBatch.sharedWindowSearchX !== undefined &&
-              windowBatch.usesMonotonicBackoffPruning &&
+              windowBatch.canUseMonotonicBackoffPruning &&
               getFarthestFreeX(maskIndex, windowBatch.searchX, row.row) < item.scan.firstBlockedSearchX
             ) {
               rowIndex += 1;
@@ -995,7 +1180,11 @@ function createGateRowScan(
     }
 
     const windows: ScanGateWindow[] = [];
-    for (const window of glitchWindows) {
+    for (let windowOrdinal = 0; windowOrdinal < glitchWindows.length; windowOrdinal += 1) {
+      const window = glitchWindows[windowOrdinal];
+      if (!window) {
+        continue;
+      }
       const gateDecimalPlaces = Math.max(leftGateDecimalPlaces, window.decimalPlaces);
       // L 与 width 已按 gateDecimalPlaces 表示；就近量化只清理 binary 加法残差，不移动窗口方向。
       const controlX = roundToDecimalPlaces(leftGateX + window.width, gateDecimalPlaces);
@@ -1015,6 +1204,7 @@ function createGateRowScan(
         decimalPlaces: gateDecimalPlaces,
         searchX: graphXToSearchColumn(controlX, state.acceptedPoint.y, options, maskIndex.isMirrored),
         startX: leftGateX,
+        windowOrdinal,
       });
     }
     if (windows.length > 0) {
@@ -1027,7 +1217,7 @@ function createGateRowScan(
         backoffColumns,
         searchX: sharedWindowSearchX === undefined ? searchX : Math.min(sharedWindowSearchX, firstBlockedSearchX),
         sharedWindowSearchX,
-        usesMonotonicBackoffPruning: sharedWindowSearchX === searchX,
+        canUseMonotonicBackoffPruning: sharedWindowSearchX === searchX,
         windows,
       });
     }
@@ -1048,7 +1238,7 @@ function createGateRowScan(
     if (firstWindowBatch?.backoffColumns === 1) {
       if (
         firstWindowBatch.sharedWindowSearchX !== undefined &&
-        firstWindowBatch.usesMonotonicBackoffPruning &&
+        firstWindowBatch.canUseMonotonicBackoffPruning &&
         getFarthestFreeX(maskIndex, firstWindowBatch.searchX, row) < firstBlockedSearchX
       ) {
         // B-1 不能到达 B 时，按列连续可达性可知所有更远回退列也不可能绕过 B-1。
@@ -1074,6 +1264,272 @@ function createGateRowScan(
       left.row - right.row,
   );
   return rows.length > 0 ? { firstBlockedSearchX, rows, state, windowBatches } : undefined;
+}
+
+/** Returns the real TS scanner's stable geometry without executing a replay candidate. */
+export function createGraphwarStepGlitchGeometryFrontierTraceForTest(
+  options: GraphwarStepGlitchPrefixOptions,
+  input: {
+    acceptedPoint: GraphPoint;
+    firstBlockedSearchX: number;
+    row: number;
+    target: GraphPoint;
+    targetRow: number;
+  },
+): GraphwarStepGlitchGeometryFrontierTrace {
+  const maskIndex = getCompatibleMaskIndex(options, Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0)));
+  const scan = createGateRowScan(
+    {
+      acceptedPoint: input.acceptedPoint,
+      path: [],
+      row: input.row,
+      searchX: input.firstBlockedSearchX,
+      stepGlitchXWindows: [],
+    },
+    input.firstBlockedSearchX,
+    input.target,
+    input.targetRow,
+    options,
+    maskIndex,
+  );
+  if (!scan) {
+    return { batches: [], candidates: [], firstBlockedSearchX: input.firstBlockedSearchX, rows: [], windows: [] };
+  }
+  const windows: ScanGateWindow[] = [];
+  const batches = scan.windowBatches.map((batch) => {
+    const windowStart = windows.length;
+    windows.push(...batch.windows);
+    return {
+      backoffColumns: batch.backoffColumns,
+      canUseMonotonicBackoffPruning: batch.canUseMonotonicBackoffPruning,
+      searchX: batch.searchX,
+      sharedWindowSearchX: batch.sharedWindowSearchX,
+      windowCount: batch.windows.length,
+      windowStart,
+    };
+  });
+  const candidates: GraphwarStepGlitchGeometryFrontierTrace["candidates"][number][] = [];
+  for (const row of scan.rows) {
+    let shouldSkipRow = false;
+    for (const batch of scan.windowBatches) {
+      const batchBit = 1 << (batch.backoffColumns - 1);
+      if ((row.usableWindowBatchMask & batchBit) === 0) {
+        if (batch.backoffColumns <= 1) {
+          continue;
+        }
+        if (
+          batch.sharedWindowSearchX !== undefined &&
+          batch.canUseMonotonicBackoffPruning &&
+          getFarthestFreeX(maskIndex, batch.searchX, row.row) < scan.firstBlockedSearchX
+        ) {
+          shouldSkipRow = true;
+          break;
+        }
+        row.usableWindowBatchMask |= batchBit;
+      }
+      for (const window of batch.windows) {
+        if (batch.sharedWindowSearchX === undefined) {
+          const farthestX = getFarthestFreeX(maskIndex, Math.min(window.searchX, scan.firstBlockedSearchX), row.row);
+          if (farthestX < Math.max(window.searchX, scan.firstBlockedSearchX)) {
+            continue;
+          }
+        } else if (row.farthestX < window.searchX) {
+          continue;
+        }
+        const controlPoint = createControlPointForFormulaEndX(
+          window.controlX,
+          input.target.x,
+          row.row,
+          options,
+          window.decimalPlaces,
+        );
+        if (!controlPoint) {
+          continue;
+        }
+        candidates.push({
+          backoffColumns: batch.backoffColumns,
+          controlPoint,
+          controlX: window.controlX,
+          decimalPlaces: window.decimalPlaces,
+          expansionOrdinal: candidates.length,
+          row: row.row,
+          startX: window.startX,
+          windowOrdinal: window.windowOrdinal,
+        });
+      }
+    }
+    if (shouldSkipRow) {
+      continue;
+    }
+  }
+  return { batches, candidates, firstBlockedSearchX: scan.firstBlockedSearchX, rows: scan.rows, windows };
+}
+
+/** Runs the production scanner's DFS order against deterministic outcomes for the raw WASM differential seam. */
+export function createGraphwarStepGlitchGeometryDfsTraceForTest(
+  options: GraphwarStepGlitchPrefixOptions,
+  input: GraphwarStepGlitchGeometryDfsInput,
+): GraphwarStepGlitchGeometryDfsTrace {
+  const boundaryExpansion = Math.max(0, Math.floor(options.simulationBoundaryExpansion ?? 0));
+  const maskIndex = getCompatibleMaskIndex(options, boundaryExpansion);
+  const target = imageToGraphPoint(input.targetPoint, options.bounds, options.boundsRect);
+  const targetGrid = pixelPointToSearchGrid(input.targetPoint, options.boundsRect, maskIndex.isMirrored);
+  const hitTargetGrid = pixelPointToSearchGrid(input.hitTargetCenter, options.boundsRect, maskIndex.isMirrored);
+  const directPath = [...options.sourcePath, input.targetPoint];
+  const candidates: GraphwarStepGlitchGeometryDfsTrace["candidates"][number][] = [];
+  let scriptConsumed = 0;
+  const consumeOutcome = (): GraphwarStepGlitchGeometryReplayOutcome => {
+    if (input.replayMode.type === "all-miss") {
+      return { reachedTargetCount: 0, status: "miss" };
+    }
+    const outcome = input.replayMode.outcomes[scriptConsumed];
+    if (!outcome) {
+      throw new Error("Step-glitch geometry replay script was exhausted");
+    }
+    scriptConsumed += 1;
+    return outcome;
+  };
+  const recordCandidate = (
+    kind: GraphwarStepGlitchGeometryDfsTrace["candidates"][number]["kind"],
+    path: readonly PixelPoint[],
+    outcome: GraphwarStepGlitchGeometryReplayOutcome,
+  ) => {
+    const candidate = {
+      ...(outcome.blockedX === undefined ? {} : { blockedX: outcome.blockedX }),
+      expansionOrdinal: candidates.length,
+      kind,
+      path,
+      reachedTargetCount: outcome.reachedTargetCount,
+    };
+    candidates.push(
+      outcome.status === "hit"
+        ? { ...candidate, acceptedPoint: outcome.acceptedPoint, status: "hit" }
+        : { ...candidate, status: "miss" },
+    );
+  };
+
+  const directOutcome = consumeOutcome();
+  recordCandidate("direct", directPath, directOutcome);
+  let expandedStates = 1;
+  let bestReachedTargetCount = Math.max(input.prefixReachedTargetCount, directOutcome.reachedTargetCount);
+  let blockedX = directOutcome.blockedX ?? input.prefixBlockedX;
+  const finish = (status: GraphwarStepGlitchGeometryDfsTrace["status"]) => {
+    if (input.replayMode.type === "scripted" && scriptConsumed !== input.replayMode.outcomes.length) {
+      throw new Error("Step-glitch geometry replay script has leftover outcomes");
+    }
+    return {
+      bestReachedTargetCount,
+      ...(blockedX === undefined ? {} : { blockedX }),
+      candidates,
+      expandedStates,
+      scriptConsumed,
+      status,
+    } satisfies GraphwarStepGlitchGeometryDfsTrace;
+  };
+  if (directOutcome.status === "hit") {
+    return finish("hit");
+  }
+
+  interface ScriptedState {
+    acceptedPoint: GraphPoint;
+    blockedX?: number;
+    path: PixelPoint[];
+  }
+  type ScriptedWorkItem =
+    | { candidate: { kind: "gate" | "target"; path: PixelPoint[] }; type: "candidate" }
+    | {
+        candidateIndex: number;
+        frontier: GraphwarStepGlitchGeometryFrontierTrace;
+        state: ScriptedState;
+        type: "frontier";
+      }
+    | { state: ScriptedState; type: "state" };
+  const work: ScriptedWorkItem[] = [
+    {
+      state: {
+        acceptedPoint: input.prefixAcceptedPoint,
+        ...(directOutcome.blockedX === undefined ? {} : { blockedX: directOutcome.blockedX }),
+        path: [...options.sourcePath],
+      },
+      type: "state",
+    },
+  ];
+
+  while (work.length > 0) {
+    const item = work.pop();
+    if (!item) {
+      break;
+    }
+    if (item.type === "state") {
+      if (item.state.acceptedPoint.x >= target.x) {
+        continue;
+      }
+      const stateGrid = graphPointToSearchGrid(item.state.acceptedPoint, options, maskIndex.isMirrored);
+      const farthestX = getFarthestFreeX(maskIndex, stateGrid.x, stateGrid.y);
+      if (farthestX < stateGrid.x) {
+        continue;
+      }
+      if (item.state.blockedX === undefined && farthestX >= targetGrid.x) {
+        work.push({ candidate: { kind: "target", path: [...item.state.path, input.targetPoint] }, type: "candidate" });
+        continue;
+      }
+      const firstBlockedSearchX =
+        item.state.blockedX === undefined
+          ? farthestX + 1
+          : graphXToSearchColumn(item.state.blockedX, item.state.acceptedPoint.y, options, maskIndex.isMirrored);
+      const frontier = createGraphwarStepGlitchGeometryFrontierTraceForTest(options, {
+        acceptedPoint: item.state.acceptedPoint,
+        firstBlockedSearchX,
+        row: stateGrid.y,
+        target,
+        targetRow: hitTargetGrid.y,
+      });
+      if (frontier.candidates.length > 0) {
+        work.push({ candidateIndex: 0, frontier, state: item.state, type: "frontier" });
+      }
+      continue;
+    }
+    if (item.type === "frontier") {
+      const frontierCandidate = item.frontier.candidates[item.candidateIndex];
+      if (!frontierCandidate) {
+        continue;
+      }
+      if (item.candidateIndex + 1 < item.frontier.candidates.length) {
+        work.push({ ...item, candidateIndex: item.candidateIndex + 1 });
+      }
+      work.push({
+        candidate: { kind: "gate", path: [...item.state.path, frontierCandidate.controlPoint] },
+        type: "candidate",
+      });
+      continue;
+    }
+    if (graphwarPixelPathsEqual(item.candidate.path, directPath)) {
+      continue;
+    }
+    expandedStates += 1;
+    const outcome = consumeOutcome();
+    recordCandidate(item.candidate.kind, item.candidate.path, outcome);
+    bestReachedTargetCount = Math.max(bestReachedTargetCount, outcome.reachedTargetCount);
+    blockedX ??= outcome.blockedX;
+    if (item.candidate.kind === "target") {
+      if (outcome.status === "hit") {
+        return finish("hit");
+      }
+      continue;
+    }
+    if (outcome.status === "miss" || outcome.acceptedPoint.x >= target.x) {
+      continue;
+    }
+    work.push({
+      state: {
+        acceptedPoint: outcome.acceptedPoint,
+        ...(outcome.blockedX === undefined ? {} : { blockedX: outcome.blockedX }),
+        path: item.candidate.path,
+      },
+      type: "state",
+    });
+  }
+  return finish("no-path");
 }
 
 /** 查询指定行从 searchX 开始连续可通行区的最右列。 */

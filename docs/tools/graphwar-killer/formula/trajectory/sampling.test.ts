@@ -100,6 +100,31 @@ describe("Graphwar trajectory formula modes", () => {
 });
 
 describe("Graphwar trajectory target tracking", () => {
+  it("truncates negative fractional collision coordinates like Java", () => {
+    const negativeFractionalX = (-0.5 * (bounds.maxX - bounds.minX)) / GRAPHWAR_PLANE_LENGTH + bounds.minX;
+    const start = createGraphPoint(negativeFractionalX, 0);
+    const resolved = resolveGraphwarTrajectory({
+      bounds,
+      boundsRect,
+      collision: { mask: new Uint8Array(GRAPHWAR_PLANE_LENGTH * GRAPHWAR_PLANE_HEIGHT) },
+      formulaMode: createGraphwarTrajectoryFormulaMode(settings),
+      points: [start, createGraphPoint(start.x + 1, 0)],
+      soldierCenter: start,
+      start: {
+        reachedRequiredTargetCount: 0,
+        reachedTargetCount: 0,
+        samplingState: { currentPoint: start, sampleIndex: 0 },
+        shouldSkipInitialStop: false,
+        signProtection: [],
+        type: "continuation",
+      },
+      stopOnTargetsComplete: false,
+    });
+
+    expect(resolved.result.earlyStopReason).toBeUndefined();
+    expect(resolved.result.obstacleHitIndex).toBe(-1);
+  });
+
   it.each(ordinaryFormulaModes)(
     "keeps fixed-formula %s %s continuation identical through required, tracked, and collision boundaries",
     (algorithm, equation) => {

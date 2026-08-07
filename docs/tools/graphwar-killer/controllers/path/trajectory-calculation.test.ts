@@ -1,15 +1,154 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { graphToImagePoint } from "../../core/geometry";
 import { roundGraphwarLaunchAngleToDisplayRadians } from "../../core/numbers";
 import { graphwarToolDefaults } from "../../core/tool/defaults";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
-import { calculateGraphwarTrajectory } from "./trajectory-calculation";
+import { prepareGraphwarWasmFormulaLaunch } from "../../core/wasm/formula-adapter";
+import { readGraphwarKernelBytes } from "../../core/wasm/kernel-test-fixture";
+import { instantiateGraphwarWasmRuntime, type GraphwarWasmKernelRuntime } from "../../core/wasm/runtime";
+import { buildFormula } from "../../formula/generation/build";
+import { createStepOverflowProtectionRange } from "../../formula/generation/step-numeric-strategy";
+import { calculateGraphwarTrajectory, calculateGraphwarTrajectoryWithWasm } from "./trajectory-calculation";
 
 const bounds = { maxX: 25, maxY: 15, minX: -25, minY: -15 };
 const boundsRect = { height: 450, width: 770, x: 0, y: 0 };
+let kernelModule: WebAssembly.Module;
+
+beforeAll(async () => {
+  kernelModule = await WebAssembly.compile(await readGraphwarKernelBytes());
+});
 
 describe("main trajectory calculation", () => {
+  it("keeps smart target-stop policy identical across TS and WASM", async () => {
+    const points = [createGraphPoint(-20, 0), createGraphPoint(-5, 4), createGraphPoint(10, 0)];
+    const target = { hitRadiusPixels: 10_000, point: graphToImagePoint(points[2], bounds, boundsRect) };
+    const input = {
+      bounds,
+      boundsRect,
+      points,
+      settings: {
+        algorithm: "step" as const,
+        decimalPlaces: 4,
+        equation: "y" as const,
+        steepness: 67,
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: true,
+      },
+      target,
+      type: "solver" as const,
+    };
+    const tsEarly = calculateGraphwarTrajectory({ ...input, shouldStopOnTargetsComplete: true });
+    const wasmEarly = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
+      ...input,
+      shouldStopOnTargetsComplete: true,
+    });
+    const tsNatural = calculateGraphwarTrajectory({ ...input, shouldStopOnTargetsComplete: false });
+    const wasmNatural = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
+      ...input,
+      shouldStopOnTargetsComplete: false,
+    });
+    const tsNaturalOmitted = calculateGraphwarTrajectory(input);
+    const wasmNaturalOmitted = calculateGraphwarTrajectoryWithWasm(await createRuntime(), input);
+
+    expect(
+      tsEarly.ok && wasmEarly.ok && tsNatural.ok && wasmNatural.ok && tsNaturalOmitted.ok && wasmNaturalOmitted.ok,
+    ).toBe(true);
+    if (
+      !tsEarly.ok ||
+      !wasmEarly.ok ||
+      !tsNatural.ok ||
+      !wasmNatural.ok ||
+      !tsNaturalOmitted.ok ||
+      !wasmNaturalOmitted.ok
+    ) {
+      return;
+    }
+    expect(wasmEarly.result).toEqual(tsEarly.result);
+    expect(tsEarly.result.trajectoryPoints.length).toBeLessThan(tsNatural.result.trajectoryPoints.length);
+    expect(wasmEarly.result.trajectoryPoints.length).toBeLessThan(wasmNatural.result.trajectoryPoints.length);
+    expect(wasmNatural.result).toEqual(tsNatural.result);
+    expect(tsNaturalOmitted.result).toEqual(tsNatural.result);
+    expect(wasmNaturalOmitted.result).toEqual(wasmNatural.result);
+  });
+
+  it("reports the WASM ABS pulse steepness reason without guessing from settings", async () => {
+    const outcome = calculateGraphwarTrajectoryWithWasm(await createRuntime(), {
+      bounds,
+      boundsRect,
+      points: [createGraphPoint(-10, 0), createGraphPoint(10, 0)],
+      settings: {
+        algorithm: "abs",
+        decimalPlaces: 0,
+        equation: "ddy",
+        isStepGlitchModeEnabled: false,
+        isStepOverflowProtectionEnabled: false,
+        steepness: 0.4,
+      },
+      type: "solver",
+    });
+
+    expect(outcome).toEqual({
+      message: "ABS second-order pulse steepness is not positive.",
+      ok: false,
+      stage: "formula",
+    });
+  });
+
+  it("formats the WASM formula from refined launch evidence", async () => {
+    const points = [
+      createGraphPoint(-23.376623376623378, 2.5974025974025974),
+      createGraphPoint(-19, 0),
+      createGraphPoint(-17, -2),
+    ];
+    const settings = {
+      algorithm: "step" as const,
+      decimalPlaces: 4,
+      equation: "dy" as const,
+      formulaPathSteepness: 7.5,
+      isStepGlitchModeEnabled: false,
+      isStepOverflowProtectionEnabled: true,
+      steepness: 210,
+    };
+    const descriptor = { bounds, points, settings, soldierCenter: points[0] };
+    const runtime = await createRuntime();
+    const launch = prepareGraphwarWasmFormulaLaunch(runtime, descriptor);
+    expect(launch.status).toBe("success");
+    if (launch.status !== "success") {
+      return;
+    }
+    expect(launch.formulaPoints).not.toEqual(points);
+
+    const outcome = calculateGraphwarTrajectoryWithWasm(runtime, {
+      bounds,
+      boundsRect,
+      points,
+      settings,
+      type: "solver",
+    });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) {
+      return;
+    }
+
+    expect(outcome.result.secondOrderLaunchAngle).toBeUndefined();
+    expect(outcome.result.formulaResult).toEqual(
+      buildFormula(
+        launch.formulaPoints,
+        settings.steepness,
+        settings.equation,
+        settings.algorithm,
+        settings.decimalPlaces,
+        {
+          compiledMaterials: launch.compiledMaterials,
+          isStepOverflowProtectionEnabled: settings.isStepOverflowProtectionEnabled,
+          signProtection: launch.observedSignProtection,
+          stepOverflowProtectionRange: createStepOverflowProtectionRange(bounds, launch.formulaPoints),
+        },
+      ),
+    );
+  });
+
   it("solves a y'' formula and returns its angle and visible trajectory atomically", () => {
     const start = createGraphPoint(-10, 0);
     const target = createGraphPoint(10, 0);
@@ -122,7 +261,7 @@ describe("main trajectory calculation", () => {
     expect(outcome).toMatchObject({ ok: false, stage: "trajectory" });
   });
 
-  it("keeps the formula and visible prefix when an obstacle stops the trajectory before its final target", () => {
+  it("keeps the formula and visible prefix when an obstacle stops the trajectory before its final target", async () => {
     const points = [createGraphPoint(-10, 0), createGraphPoint(0, 0), createGraphPoint(10, 0)];
     const input = {
       bounds,
@@ -157,6 +296,7 @@ describe("main trajectory calculation", () => {
     mask[Math.floor(collisionPixel.y) * boundsRect.width + Math.floor(collisionPixel.x)] = 1;
 
     const outcome = calculateGraphwarTrajectory({ ...input, collision: { mask } });
+    const wasmOutcome = calculateGraphwarTrajectoryWithWasm(await createRuntime(), { ...input, collision: { mask } });
 
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) {
@@ -167,6 +307,12 @@ describe("main trajectory calculation", () => {
     expect(outcome.result.trajectoryPoints.length).toBeLessThan(baseline.result.trajectoryPoints.length);
     expect(outcome.result.hasTargetMissWarning).toBeUndefined();
     expect(outcome.result.warningReason).toBe("obstacle");
+    expect(outcome.result.obstacleHitPoint).toBeDefined();
+    expect(wasmOutcome.ok).toBe(true);
+    if (!wasmOutcome.ok) {
+      return;
+    }
+    expect(wasmOutcome.result).toEqual(outcome.result);
   });
 
   it("rejects a target miss when an obstacle is hit at the target circle's forward boundary", () => {
@@ -335,6 +481,29 @@ describe("main trajectory calculation", () => {
     expect(outcome.result.warningReason).toBe("out-of-bounds");
   });
 
+  it.each([
+    { equation: "y" as const, expression: "sin(x)", label: "normal" },
+    { equation: "dy" as const, expression: "sin(x)+y/10", label: "first-order" },
+    { equation: "ddy" as const, expression: "sin(x)+y/10+y'/10", label: "second-order", launchAngleRadians: 0 },
+  ])("matches TypeScript for a $label simulator trajectory in one coarse WASM call", async (input) => {
+    const request = {
+      bounds,
+      boundsRect,
+      ...input,
+      soldierCenter: createGraphPoint(-10, 0),
+      type: "simulator" as const,
+    };
+    const runtime = await createRuntime();
+    const runTrajectorySpy = vi.spyOn(runtime, "runTrajectory");
+    const runFormulaSpy = vi.spyOn(runtime, "runFormula");
+
+    const wasm = calculateGraphwarTrajectoryWithWasm(runtime, request);
+
+    expectSimulatorParity(wasm, calculateGraphwarTrajectory(request));
+    expect(runTrajectorySpy).toHaveBeenCalledOnce();
+    expect(runFormulaSpy).not.toHaveBeenCalled();
+  });
+
   it("returns normal sampling stop reasons as successful warnings", () => {
     const outcome = calculateGraphwarTrajectory({
       bounds,
@@ -349,10 +518,103 @@ describe("main trajectory calculation", () => {
       ok: true,
       result: {
         curvePoints: "",
-        trajectoryPoints: [],
+        trajectoryPoints: [createPixelPoint(231, 225)],
         warningReason: "invalid",
       },
     });
+  });
+
+  it.each([
+    { equation: "y" as const, expression: "1/0" },
+    { equation: "dy" as const, expression: "1/0" },
+    { equation: "ddy" as const, expression: "1/0", launchAngleRadians: 0 },
+  ])("keeps the $equation simulator's non-finite stop ordering across backends", async (input) => {
+    const request = {
+      bounds,
+      boundsRect,
+      ...input,
+      soldierCenter: createGraphPoint(-10, 0),
+      type: "simulator" as const,
+    };
+
+    expectSimulatorParity(
+      calculateGraphwarTrajectoryWithWasm(await createRuntime(), request),
+      calculateGraphwarTrajectory(request),
+    );
+  });
+
+  it.each(["y", "dy", "ddy"] as const)(
+    "keeps a simulator %s non-finite stop ahead of collision probing",
+    async (equation) => {
+      const request = {
+        bounds,
+        boundsRect,
+        collision: { mask: new Uint8Array(770 * 450).fill(1) },
+        equation,
+        expression: "1/0",
+        ...(equation === "ddy" ? { launchAngleRadians: 0 } : {}),
+        soldierCenter: createGraphPoint(-10, 0),
+        type: "simulator" as const,
+      };
+
+      expectSimulatorParity(
+        calculateGraphwarTrajectoryWithWasm(await createRuntime(), request),
+        calculateGraphwarTrajectory(request),
+      );
+    },
+  );
+
+  it("keeps an invalid y'' launch angle as an empty simulator trajectory", async () => {
+    const request = {
+      bounds,
+      boundsRect,
+      equation: "ddy" as const,
+      expression: "0",
+      launchAngleRadians: Number.NaN,
+      soldierCenter: createGraphPoint(-10, 0),
+      type: "simulator" as const,
+    };
+
+    expectSimulatorParity(
+      calculateGraphwarTrajectoryWithWasm(await createRuntime(), request),
+      calculateGraphwarTrajectory(request),
+    );
+  });
+
+  it("keeps a finite y'' launch angle outside Graphwar's aiming range", async () => {
+    const request = {
+      bounds,
+      boundsRect,
+      equation: "ddy" as const,
+      expression: "0",
+      launchAngleRadians: Math.PI,
+      soldierCenter: createGraphPoint(-10, 0),
+      type: "simulator" as const,
+    };
+
+    expectSimulatorParity(
+      calculateGraphwarTrajectoryWithWasm(await createRuntime(), request),
+      calculateGraphwarTrajectory(request),
+    );
+  });
+
+  it("keeps y'' collision classification ahead of a non-finite derivative", async () => {
+    const mask = new Uint8Array(770 * 450);
+    mask[225 * 770 + 239] = 1;
+    const request = {
+      bounds,
+      boundsRect,
+      collision: { mask },
+      equation: "ddy" as const,
+      expression: "1/(10^100*(x+9.475454545454546))",
+      launchAngleRadians: 0,
+      soldierCenter: createGraphPoint(-10, 0),
+      type: "simulator" as const,
+    };
+    const typescript = calculateGraphwarTrajectory(request);
+
+    expect(typescript).toMatchObject({ ok: true, result: { warningReason: "obstacle" } });
+    expectSimulatorParity(calculateGraphwarTrajectoryWithWasm(await createRuntime(), request), typescript);
   });
 
   it("returns an obstacle stop as a successful warning", () => {
@@ -371,6 +633,24 @@ describe("main trajectory calculation", () => {
       return;
     }
     expect(outcome.result.warningReason).toBe("obstacle");
+  });
+
+  it.each(["y", "dy", "ddy"] as const)("keeps a simulator %s obstacle result across backends", async (equation) => {
+    const request = {
+      bounds,
+      boundsRect,
+      collision: { mask: new Uint8Array(770 * 450).fill(1) },
+      equation,
+      expression: "0",
+      ...(equation === "ddy" ? { launchAngleRadians: 0 } : {}),
+      soldierCenter: createGraphPoint(-10, 0),
+      type: "simulator" as const,
+    };
+
+    expectSimulatorParity(
+      calculateGraphwarTrajectoryWithWasm(await createRuntime(), request),
+      calculateGraphwarTrajectory(request),
+    );
   });
 
   it("keeps a target hit when the same sample also reaches an obstacle", () => {
@@ -422,3 +702,30 @@ describe("main trajectory calculation", () => {
     expect(outcome.result.trajectoryPoints).toEqual(obstacleOnly.ok ? obstacleOnly.result.trajectoryPoints : undefined);
   });
 });
+
+async function createRuntime(): Promise<GraphwarWasmKernelRuntime> {
+  return instantiateGraphwarWasmRuntime(kernelModule, { initialArenaCapacity: 65_536 });
+}
+
+/** The displayed SVG coordinates are canonical; retained raw pixels may differ by one libm rounding ulp. */
+function expectSimulatorParity(
+  wasm: ReturnType<typeof calculateGraphwarTrajectory>,
+  ts: ReturnType<typeof calculateGraphwarTrajectory>,
+) {
+  expect(wasm.ok).toBe(ts.ok);
+  if (!wasm.ok || !ts.ok) {
+    expect(wasm).toEqual(ts);
+    return;
+  }
+  expect(wasm.result.curvePoints).toBe(ts.result.curvePoints);
+  expect(wasm.result.warningReason).toBe(ts.result.warningReason);
+  expect(wasm.result.trajectoryPoints).toHaveLength(ts.result.trajectoryPoints.length);
+  for (let index = 0; index < ts.result.trajectoryPoints.length; index += 1) {
+    const wasmPoint = wasm.result.trajectoryPoints[index];
+    const tsPoint = ts.result.trajectoryPoints[index];
+    expect(wasmPoint).toBeDefined();
+    expect(tsPoint).toBeDefined();
+    expect(Math.abs((wasmPoint?.x ?? Number.NaN) - (tsPoint?.x ?? Number.NaN))).toBeLessThanOrEqual(1e-9);
+    expect(Math.abs((wasmPoint?.y ?? Number.NaN) - (tsPoint?.y ?? Number.NaN))).toBeLessThanOrEqual(1e-9);
+  }
+}

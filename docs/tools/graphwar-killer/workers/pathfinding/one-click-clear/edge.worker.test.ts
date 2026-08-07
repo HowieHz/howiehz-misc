@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
 
-import type { GraphwarBackendAttemptIdentity } from "../../../core/algorithm-backend";
+import type { GraphwarBackendAttemptIdentity, GraphwarBackendControlMessage } from "../../../core/algorithm-backend";
 import { GRAPHWAR_PLANE_HEIGHT, GRAPHWAR_PLANE_LENGTH } from "../../../core/game/constants";
+import { createPixelPoint } from "../../../core/types";
 import {
   createGraphwarStepRouteModel,
   createGraphwarStepRouteSummedArea,
@@ -22,7 +23,8 @@ const attempt = {
   backendGeneration: 0,
   outerTaskId: 1,
 } satisfies GraphwarBackendAttemptIdentity;
-const postMessage = vi.fn<(message: GraphwarOneClickClearEdgeWorkerResponse) => void>();
+const session = { backendGeneration: 0, nonce: 1, requestId: 0, taskType: "one-click-clear" as const };
+const postMessage = vi.fn<(message: GraphwarBackendControlMessage | GraphwarOneClickClearEdgeWorkerResponse) => void>();
 let handleMessage: ((event: MessageEvent<unknown>) => void) | undefined;
 
 beforeAll(async () => {
@@ -38,6 +40,17 @@ beforeAll(async () => {
     },
   });
   await import("./edge.worker");
+  handleMessage?.({
+    data: {
+      backend: { type: "typescript" },
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      generation: 0,
+      role: "one-click-clear-edge",
+      type: "backend-init",
+    },
+  } as MessageEvent<GraphwarBackendControlMessage>);
+  await vi.waitFor(() => expect(postMessage).toHaveBeenCalledOnce());
+  postMessage.mockClear();
 });
 
 afterAll(() => {
@@ -58,9 +71,9 @@ describe("One-Click Clear edge Worker initialization", () => {
     expectTypeOf<StatefulInit["stepRouteRuntime"]>().toEqualTypeOf<GraphwarStepRouteRuntime>();
     expectTypeOf<StatelessInit["stepRouteRuntime"]>().toEqualTypeOf<undefined>();
     expectTypeOf<
-      VisibilityGraphInit["visibilityGraphObstacleData"]
+      Extract<VisibilityGraphInit["routePreprocessing"], { type: "typescript" }>["visibilityGraphObstacleData"]
     >().toEqualTypeOf<GraphwarVisibilityGraphObstacleData>();
-    expectTypeOf<ThetaStarInit["visibilityGraphObstacleData"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<ThetaStarInit["routePreprocessing"]>().toEqualTypeOf<undefined>();
   });
 
   it("rejects a mismatched Step runtime and a second init", async () => {
@@ -72,6 +85,7 @@ describe("One-Click Clear edge Worker initialization", () => {
         ...context,
         stepRouteRuntime: { ...context.stepRouteRuntime, routeMask: context.routeMask.slice() },
       },
+      session,
       type: "init",
     });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
@@ -82,11 +96,11 @@ describe("One-Click Clear edge Worker initialization", () => {
       workerIndex: 1,
     });
 
-    dispatch({ attempt, context, type: "init" });
+    dispatch({ attempt, context, session, type: "init" });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
     expect(postMessage.mock.calls[1]?.[0]).toEqual({ attempt, type: "ready", workerIndex: 1 });
 
-    dispatch({ attempt, context: { ...context, boundaryExpansion: 1 }, type: "init" });
+    dispatch({ attempt, context: { ...context, boundaryExpansion: 1 }, session, type: "init" });
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(3));
     expect(postMessage.mock.calls[2]?.[0]).toEqual({
       attempt,
@@ -119,6 +133,7 @@ function createContext() {
     bounds,
     boundsRect: { height: 450, width: 770, x: 0, y: 0 },
     boundaryExpansion: 0,
+    routeOriginPoint: createPixelPoint(100, 225),
     routeMask,
     routeMode: "visibility-graph",
     routeTolerancePlanePixels: 2,
@@ -128,11 +143,14 @@ function createContext() {
       summedArea: createGraphwarStepRouteSummedArea(routeMask),
     },
     type: "step-stateful",
-    visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
-      bounds,
-      routeMask,
-      routeTolerancePlanePixels: 2,
-    }),
+    routePreprocessing: {
+      type: "typescript",
+      visibilityGraphObstacleData: createGraphwarVisibilityGraphObstacleData({
+        bounds,
+        routeMask,
+        routeTolerancePlanePixels: 2,
+      }),
+    },
     workerIndex: 1,
   } satisfies GraphwarOneClickClearEdgeWorkerInit;
 }

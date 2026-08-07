@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
 
+import { isGraphwarBackendControlMessage, type GraphwarBackendControlMessage } from "../../core/algorithm-backend";
 import { createGraphPoint, createPixelPoint } from "../../core/types";
 import type {
   GraphwarTrajectoryCalculationOutcome,
@@ -50,7 +51,10 @@ describe("main trajectory result lifecycle", () => {
     expect(controller.pathError.value).toBe(Number.POSITIVE_INFINITY);
     expect(controller.hasTargetMissWarning.value).toBe(false);
     expect(controller.trajectoryWarningReason.value).toBe("obstacle");
-    expect(controller.calculationStatus.value.type).toBe("success");
+    expect(controller.calculationStatus.value).toMatchObject({
+      backendExecution: { effective: "typescript", requested: "typescript" },
+      type: "success",
+    });
 
     setSolverPath(state, 0, 5);
     await nextTick();
@@ -452,6 +456,7 @@ describe("main trajectory result lifecycle", () => {
 class FakeWorker {
   static readonly instances: FakeWorker[] = [];
 
+  readonly controlMessages: GraphwarBackendControlMessage[] = [];
   readonly requests: GraphwarTrajectoryCalculationWorkerRequest[] = [];
   terminated = false;
   private readonly messageListeners: ((event: MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>) => void)[] =
@@ -469,8 +474,12 @@ class FakeWorker {
     }
   }
 
-  postMessage(request: GraphwarTrajectoryCalculationWorkerRequest) {
-    this.requests.push(request);
+  postMessage(message: GraphwarBackendControlMessage | GraphwarTrajectoryCalculationWorkerRequest) {
+    if (isGraphwarBackendControlMessage(message)) {
+      this.controlMessages.push(message);
+      return;
+    }
+    this.requests.push(message);
   }
 
   terminate() {
@@ -483,7 +492,12 @@ class FakeWorker {
       throw new Error("Worker has no pending request");
     }
     const event = {
-      data: { attempt: request.attempt, id: request.id, outcome },
+      data: {
+        attempt: request.attempt,
+        backendExecution: { effective: "typescript", requested: "typescript" },
+        id: request.id,
+        outcome,
+      },
     } as MessageEvent<GraphwarTrajectoryCalculationWorkerResponse>;
     for (const listener of this.messageListeners) {
       listener(event);

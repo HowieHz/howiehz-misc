@@ -14,11 +14,15 @@ const wasmPath = join(buildDirectory, "graphwar-kernel.wasm");
 const roleExports = [
   "beginDetectionTask",
   "resumeDetectionTask",
+  "runDetectionTemplateShard",
   "runFormula",
   "runTrajectory",
+  "runTrajectoryWithMetadata",
   "runRouteTask",
+  "assignOneClickTargets",
   "runSmartPathfinding",
   "beginOneClickClear",
+  "cancelOneClickClear",
   "resumeOneClickClear",
 ];
 const arenaExports = [
@@ -27,6 +31,7 @@ const arenaExports = [
   "reserveArena",
   "markArena",
   "resetArena",
+  "resetArenaAfterFault",
   "getArenaBase",
   "getArenaCursor",
   "getArenaPeak",
@@ -195,6 +200,29 @@ test("supports aligned reserve and provenance-bearing LIFO mark/reset", async ()
   assert.throws(() => exports.reserveArena(0xffff_ffff, 1), WebAssembly.RuntimeError);
 });
 
+test("fault cleanup validates an ancestor before unwinding nested marks", async () => {
+  const { exports } = await instantiateKernel();
+  const base = exports.initializeArena(64);
+  const rootMark = exports.markArena();
+  exports.reserveArena(17, 8);
+  exports.markArena();
+  exports.reserveArena(31, 16);
+  exports.markArena();
+  exports.reserveArena(47, 8);
+
+  exports.resetArenaAfterFault(rootMark);
+  assert.equal(exports.getArenaCursor(), base);
+
+  const retainedMark = exports.markArena();
+  exports.reserveArena(9, 8);
+  exports.markArena();
+  const cursorBeforeInvalidReset = exports.getArenaCursor();
+  assert.throws(() => exports.resetArenaAfterFault(rootMark), WebAssembly.RuntimeError);
+  assert.equal(exports.getArenaCursor(), cursorBeforeInvalidReset);
+  exports.resetArenaAfterFault(retainedMark);
+  assert.equal(exports.getArenaCursor(), base);
+});
+
 test("grows a continuous arena and requires callers to refresh detached views", async () => {
   const { exports } = await instantiateKernel();
   const base = exports.initializeArena(64);
@@ -226,9 +254,37 @@ test("keeps allocator count, canary, cursor, and high-water stable across long-l
 
   const stableByteLength = exports.memory.buffer.byteLength;
   const stablePeak = exports.getArenaPeak();
-  for (const roleExport of roleExports) {
+  for (const roleExport of roleExports.filter(
+    (name) =>
+      name !== "beginDetectionTask" &&
+      name !== "resumeDetectionTask" &&
+      name !== "runDetectionTemplateShard" &&
+      name !== "runRouteTask" &&
+      name !== "assignOneClickTargets" &&
+      name !== "runSmartPathfinding" &&
+      name !== "beginOneClickClear" &&
+      name !== "cancelOneClickClear" &&
+      name !== "resumeOneClickClear",
+  )) {
     assert.equal(exports[roleExport](), 0);
   }
+  const detectionMark = exports.markArena();
+  const rgbaPointer = exports.reserveArena(4, 1);
+  new Uint8Array(exports.memory.buffer, rgbaPointer, 4).fill(255);
+  const detectionInputPointer = exports.reserveArena(160, 8);
+  const detectionInput = new DataView(exports.memory.buffer, detectionInputPointer, 160);
+  detectionInput.setUint32(0, 1, true);
+  detectionInput.setUint32(4, 1, true);
+  detectionInput.setUint32(8, 1, true);
+  detectionInput.setUint32(12, rgbaPointer, true);
+  detectionInput.setUint32(16, 4, true);
+  const detectionBeginResult = exports.beginDetectionTask(detectionInputPointer, 160);
+  assert.ok(detectionBeginResult > detectionInputPointer);
+  const detectionSessionPointer = new DataView(exports.memory.buffer, detectionBeginResult, 96).getUint32(20, true);
+  assert.equal(detectionSessionPointer, detectionInputPointer);
+  assert.ok(exports.resumeDetectionTask(detectionSessionPointer, 0, 0) > detectionBeginResult);
+  assert.throws(() => exports.resumeDetectionTask(detectionSessionPointer, 0, 0), WebAssembly.RuntimeError);
+  exports.resetArena(detectionMark);
   for (let iteration = 0; iteration < 5_000; iteration += 1) {
     const markToken = exports.markArena();
     exports.reserveArena(reservationBytes, 16);
@@ -288,7 +344,9 @@ test("watch mode keeps the synchronized kernel and waits without an initial rebu
 
 test("guards the source and release configuration against managed hot-path allocation", async () => {
   const assemblyDirectory = join(packageRoot, "assembly");
-  const sourceFiles = (await readdir(assemblyDirectory, { recursive: true })).filter((file) => file.endsWith(".ts"));
+  const sourceFiles = (await readdir(assemblyDirectory, { recursive: true }))
+    .filter((file) => file.endsWith(".ts"))
+    .map((file) => file.replaceAll("\\", "/"));
   const sources = await Promise.all(
     sourceFiles.map(async (file) => ({ file, source: await readFile(join(assemblyDirectory, file), "utf8") })),
   );
@@ -302,6 +360,47 @@ test("guards the source and release configuration against managed hot-path alloc
   const combinedSource = executableSources.map(({ source }) => source).join("\n");
   const heapAllocMatches = combinedSource.match(/\bheap\.alloc\s*\(/g) ?? [];
   assert.equal(heapAllocMatches.length, 1);
+
+  const trajectorySource = executableSources.find(({ file }) => file === "trajectory/entry.ts")?.source ?? "";
+  const stepGlitchSource = executableSources.find(({ file }) => file === "step-glitch/entry.ts")?.source ?? "";
+  const pathfindingSource = executableSources.find(({ file }) => file === "pathfinding/entry.ts")?.source ?? "";
+  const trajectoryRequestReferenceFiles = executableSources
+    .filter(({ source }) => /\brunTrajectoryRequest\b/.test(source))
+    .map(({ file }) => file)
+    .sort();
+  assert.deepEqual(trajectoryRequestReferenceFiles, [
+    "pathfinding/entry.ts",
+    "step-glitch/entry.ts",
+    "trajectory/entry.ts",
+  ]);
+  assert.equal((combinedSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 8);
+  assert.equal((trajectorySource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 2);
+  assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 3);
+  assert.equal((pathfindingSource.match(/\brunTrajectoryRequest\b/g) ?? []).length, 3);
+  assert.equal((combinedSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 6);
+  assert.equal((trajectorySource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
+  assert.equal((stepGlitchSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
+  assert.equal((pathfindingSource.match(/\brunTrajectoryRequest\s*\(/g) ?? []).length, 2);
+  assert.match(stepGlitchSource, /import \{ runTrajectoryRequest(?:, runTrajectoryRequestWithMetadata)? \} ;/);
+  const prepareLaunchReferenceFiles = executableSources
+    .filter(({ source }) => /\brunPrepareLaunch\b/.test(source))
+    .map(({ file }) => file)
+    .sort();
+  assert.deepEqual(prepareLaunchReferenceFiles, [
+    "formula/entry.ts",
+    "formula/launch.ts",
+    "step-glitch/entry.ts",
+    "trajectory/entry.ts",
+  ]);
+  assert.equal((combinedSource.match(/\brunPrepareLaunch\b/g) ?? []).length, 7);
+  assert.equal((stepGlitchSource.match(/\brunPrepareLaunch\b/g) ?? []).length, 2);
+  assert.equal((combinedSource.match(/\brunPrepareLaunch\s*\(/g) ?? []).length, 4);
+  assert.equal((stepGlitchSource.match(/\brunPrepareLaunch\s*\(/g) ?? []).length, 1);
+  assert.match(stepGlitchSource, /import \{ runPrepareLaunch \} ;/);
+  assert.doesNotMatch(
+    stepGlitchSource,
+    /\b(?:evaluateFormulaMaterialValue|replayFormulaTrajectoryScalar\w*|rk4|bisection)\b/i,
+  );
 
   const forbiddenPatterns = [
     /\bheap\.(?:realloc|free)\s*\(/,
@@ -364,4 +463,20 @@ test("guards the source and release configuration against managed hot-path alloc
   } finally {
     await rm(guardDirectory, { recursive: true, force: true });
   }
+});
+
+test("publishes a one-click session only after its waiting result is allocated", async () => {
+  const source = (await readFile(join(packageRoot, "assembly", "pathfinding", "entry.ts"), "utf8")).replace(
+    /\r\n?/gu,
+    "\n",
+  );
+  const waitingResult = source.indexOf(
+    "const resultPointer = writeOneClickResult(\n    Layout.ONE_CLICK_RESULT_STATUS_WAITING_EDGE_BATCH,",
+  );
+  const publish = source.indexOf("activeOneClickSessionPointer = sessionPointer;", waitingResult);
+  const returnResult = source.indexOf("return resultPointer;", publish);
+
+  assert.ok(waitingResult >= 0, "waiting one-click result allocation is present");
+  assert.ok(publish > waitingResult, "active session is published after result allocation");
+  assert.ok(returnResult > publish, "published session is returned after the publication write");
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GRAPHWAR_SOLDIER_VISIBLE_SIZE } from "../../core/game/constants";
 import { createGraphwarSoldierTemplateCanonicalData } from "../objects";
 import {
   createGraphwarSoldierTemplateProfileData,
@@ -27,6 +28,7 @@ describe("Graphwar soldier template canonical data", () => {
       graphwarSoldierTemplateMinimumPlayerScore,
       graphwarSoldierTemplateMinimumSignatureScore,
       graphwarSoldierGenerationMinimumAxisGap,
+      GRAPHWAR_SOLDIER_VISIBLE_SIZE / 2,
     ]);
 
     first[0] = 0;

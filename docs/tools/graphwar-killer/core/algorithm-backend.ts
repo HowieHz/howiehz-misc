@@ -67,11 +67,49 @@ export type GraphwarBackendExecution =
       requested: "wasm";
     };
 
+/** Creates the complete diagnostic state for an attempt that executes its selected backend directly. */
+export function createGraphwarBackendExecution(
+  backend: GraphwarAlgorithmBackendType,
+):
+  | Extract<GraphwarBackendExecution, { requested: "typescript" }>
+  | Extract<GraphwarBackendExecution, { effective: "wasm" }> {
+  return backend === "wasm"
+    ? { effective: "wasm", requested: "wasm" }
+    : { effective: "typescript", requested: "typescript" };
+}
+
+/** Creates the only legal cross-backend diagnostic state after a requested WASM attempt falls back to TypeScript. */
+export function createGraphwarBackendFallbackExecution(
+  fallbackReason: string,
+): Extract<GraphwarBackendExecution, { effective: "typescript"; requested: "wasm" }> {
+  const reason = fallbackReason.trim();
+  if (!reason) {
+    throw new TypeError("Graphwar backend fallback requires a non-empty reason");
+  }
+  return { effective: "typescript", fallbackReason: reason, requested: "wasm" };
+}
+
 /** 稳定外层任务与当前获准 commit 的可替换 backend attempt 身份。 */
 export interface GraphwarBackendAttemptIdentity {
-  attemptId: number;
-  backendGeneration: number;
-  outerTaskId: number;
+  readonly attemptId: number;
+  readonly backendGeneration: number;
+  readonly outerTaskId: number;
+}
+
+/**
+ * Derives a non-zero task nonce for flat WASM work records.
+ *
+ * Route-mask cache ids describe reusable geometry and therefore cannot identify an outer task. Mixing the complete
+ * attempt identity with the request id keeps edge results from a replaced backend attempt distinguishable even when the
+ * geometry inputs are byte-for-byte identical.
+ */
+export function createGraphwarWasmRequestNonce(attempt: GraphwarBackendAttemptIdentity, requestId: number): number {
+  let hash = 0x811c_9dc5;
+  for (const value of [attempt.outerTaskId, requestId, attempt.attemptId, attempt.backendGeneration]) {
+    hash ^= value >>> 0;
+    hash = Math.imul(hash, 0x0100_0193);
+  }
+  return hash >>> 0 || 1;
 }
 
 /** 通用业务 payload envelope；每个 task、event 和 result 都必须携带完整可替换 attempt 身份。 */
@@ -111,10 +149,10 @@ export interface GraphwarWasmFaultDescriptor {
 
 /** 子 Worker fault provenance 使用的可克隆 session 身份，不暴露 raw arena pointer。 */
 export interface GraphwarWasmSessionIdentity {
-  backendGeneration: number;
-  nonce: number;
-  requestId: number;
-  taskType: "detection" | "one-click-clear";
+  readonly backendGeneration: number;
+  readonly nonce: number;
+  readonly requestId: number;
+  readonly taskType: "detection" | "one-click-clear";
 }
 
 /** Typed WASM fault 跨 Worker 边界时附带的精确命令上下文。 */
@@ -129,6 +167,11 @@ export type GraphwarWasmFaultContext =
     }
   | {
       attempt: GraphwarBackendAttemptIdentity;
+      session: GraphwarWasmSessionIdentity;
+      type: "edge-session";
+    }
+  | {
+      attempt: GraphwarBackendAttemptIdentity;
       jobId: number;
       session: GraphwarWasmSessionIdentity;
       type: "edge-job";
@@ -137,6 +180,7 @@ export type GraphwarWasmFaultContext =
 /** 进程内 typed WASM 故障；正常收敛、取消和 Worker failure 使用各自独立的错误类型。 */
 export class GraphwarWasmFault extends Error {
   readonly code: GraphwarWasmFaultCode;
+  private hasReported = false;
 
   constructor(code: GraphwarWasmFaultCode, message: string) {
     if (!isNonEmptyString(message)) {
@@ -151,22 +195,85 @@ export class GraphwarWasmFault extends Error {
   toDescriptor(): GraphwarWasmFaultDescriptor {
     return { code: this.code, message: this.message };
   }
+
+  /** 同一进程内的 parent/root 传播链是否已经发布过 control 消息。 */
+  get hasBeenReported() {
+    return this.hasReported;
+  }
+
+  /** 精确 child provenance 发布成功后标记，避免 root 再发布泛化 task fault。 */
+  markReported() {
+    this.hasReported = true;
+    return this;
+  }
 }
 
 /** 为某个 generation 创建 Worker slot 时发送的原子 backend 材料。 */
 export type GraphwarWorkerBackendInitialization =
   | {
-      type: "typescript";
+      readonly type: "typescript";
     }
   | {
-      module: WebAssembly.Module;
-      type: "wasm";
+      readonly module: WebAssembly.Module;
+      readonly type: "wasm";
     };
+
+/** Worker initialization and the caller-visible execution state must stay one legal atomic configuration. */
+export type GraphwarWorkerBackendConfiguration =
+  | {
+      readonly backend: Extract<GraphwarWorkerBackendInitialization, { type: "typescript" }>;
+      readonly backendExecution: Extract<GraphwarBackendExecution, { effective: "typescript" }>;
+      readonly generation: number;
+    }
+  | {
+      readonly backend: Extract<GraphwarWorkerBackendInitialization, { type: "wasm" }>;
+      readonly backendExecution: Extract<GraphwarBackendExecution, { effective: "wasm" }>;
+      readonly generation: number;
+    };
+
+/** Outer task 在入口原子取得的 generation 与最终固定 backend。 */
+export interface GraphwarWorkerBackendSelection {
+  readonly generation: number;
+  readonly promise: Promise<GraphwarWorkerBackendConfiguration>;
+}
+
+/** 默认关闭 WASM 时，所有现有 Worker 都使用同一份 TypeScript 初始化配置。 */
+export function createGraphwarTypescriptWorkerBackendConfiguration(
+  generation: number,
+  fallbackReason?: string,
+): Extract<GraphwarWorkerBackendConfiguration, { backend: { type: "typescript" } }> {
+  assertGraphwarBackendGeneration(generation);
+  const backendExecution: Extract<GraphwarBackendExecution, { effective: "typescript" }> = fallbackReason
+    ? createGraphwarBackendFallbackExecution(fallbackReason)
+    : { effective: "typescript", requested: "typescript" };
+  return Object.freeze({
+    backend: Object.freeze({ type: "typescript" as const }),
+    backendExecution: Object.freeze(backendExecution),
+    generation,
+  });
+}
+
+/** 页面 loader 编译成功后，为 Worker structured clone 绑定权威 module。 */
+export function createGraphwarWasmWorkerBackendConfiguration(
+  generation: number,
+  module: WebAssembly.Module,
+): Extract<GraphwarWorkerBackendConfiguration, { backend: { type: "wasm" } }> {
+  assertGraphwarBackendGeneration(generation);
+  if (!isWebAssemblyModule(module)) {
+    throw new TypeError("Graphwar WASM worker backend requires a WebAssembly.Module");
+  }
+  return Object.freeze({
+    backend: Object.freeze({ module, type: "wasm" as const }),
+    backendExecution: Object.freeze({ effective: "wasm" as const, requested: "wasm" as const }),
+    generation,
+  });
+}
 
 /** Backend 生命周期消息独立于业务 task id 与 result。 */
 export type GraphwarBackendControlMessage =
   | {
       backend: GraphwarWorkerBackendInitialization;
+      backendExecution: GraphwarBackendExecution;
       generation: number;
       role: GraphwarWorkerRole;
       type: "backend-init";
@@ -184,6 +291,9 @@ export type GraphwarBackendControlMessage =
       role: GraphwarWorkerRole;
       type: "wasm-fault";
     };
+
+/** Worker 的入站 control 只有初始化；ready/fault 只从 Worker 返回 parent。 */
+export type GraphwarBackendInitializationMessage = Extract<GraphwarBackendControlMessage, { type: "backend-init" }>;
 
 /** 验证在真实 runtime 边界重建的 backend 上下文。 */
 export function isGraphwarAlgorithmBackendContext(value: unknown): value is GraphwarAlgorithmBackendContext {
@@ -233,6 +343,36 @@ export function graphwarBackendAttemptIdentitiesAreEqual(
     left.backendGeneration === right.backendGeneration &&
     left.outerTaskId === right.outerTaskId
   );
+}
+
+/** Nested Worker 的 session provenance 使用完整字段比较，不接受同 generation 的部分匹配。 */
+export function graphwarWasmSessionIdentitiesAreEqual(
+  left: GraphwarWasmSessionIdentity,
+  right: GraphwarWasmSessionIdentity,
+) {
+  return (
+    left.backendGeneration === right.backendGeneration &&
+    left.nonce === right.nonce &&
+    left.requestId === right.requestId &&
+    left.taskType === right.taskType
+  );
+}
+
+/** Parent Worker 从内部单调 request id 构造不可复用的 nested session 身份。 */
+export function createGraphwarWasmSessionIdentity(
+  attempt: GraphwarBackendAttemptIdentity,
+  requestId: number,
+  taskType: GraphwarWasmSessionIdentity["taskType"],
+): GraphwarWasmSessionIdentity {
+  if (!isNonNegativeSafeInteger(requestId) || requestId >= Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("Graphwar WASM session request id must leave room for a positive nonce");
+  }
+  return {
+    backendGeneration: attempt.backendGeneration,
+    nonce: requestId + 1,
+    requestId,
+    taskType,
+  };
 }
 
 /** 验证业务 envelope，并只把领域 payload 边界委托给调用方。 */
@@ -287,6 +427,14 @@ export function isGraphwarWasmFaultContext(value: unknown): value is GraphwarWas
       !("jobId" in value)
     );
   }
+  if (value.type === "edge-session") {
+    return (
+      value.session.taskType === "one-click-clear" &&
+      value.session.backendGeneration === value.attempt.backendGeneration &&
+      !("shardId" in value) &&
+      !("jobId" in value)
+    );
+  }
   return (
     value.type === "edge-job" &&
     value.session.taskType === "one-click-clear" &&
@@ -307,7 +455,17 @@ export function isGraphwarBackendControlMessage(value: unknown): value is Graphw
     return false;
   }
   if (value.type === "backend-init") {
-    return isGraphwarWorkerBackendInitialization(value.backend) && !("context" in value) && !("fault" in value);
+    if (
+      !isGraphwarWorkerBackendInitialization(value.backend) ||
+      !isGraphwarBackendExecution(value.backendExecution) ||
+      "context" in value ||
+      "fault" in value
+    ) {
+      return false;
+    }
+    return value.backend.type === "wasm"
+      ? value.backendExecution.effective === "wasm"
+      : value.backendExecution.effective === "typescript";
   }
   if (value.type === "backend-ready") {
     return isGraphwarAlgorithmBackendType(value.backend) && !("context" in value) && !("fault" in value);
@@ -321,13 +479,19 @@ export function isGraphwarBackendControlMessage(value: unknown): value is Graphw
     return false;
   }
   const context = value.context;
-  return (
-    context.type === "initialization" ||
-    (context.attempt.backendGeneration === value.generation &&
-      (context.type === "template-shard"
-        ? value.role === "detection-template"
-        : context.type !== "edge-job" || value.role === "one-click-clear-edge"))
-  );
+  if (context.type === "initialization") {
+    return true;
+  }
+  if (context.attempt.backendGeneration !== value.generation) {
+    return false;
+  }
+  if (value.role === "detection-template") {
+    return context.type === "template-shard";
+  }
+  if (value.role === "one-click-clear-edge") {
+    return context.type === "edge-session" || context.type === "edge-job";
+  }
+  return context.type === "task";
 }
 
 function isGraphwarWasmSessionIdentity(value: unknown): value is GraphwarWasmSessionIdentity {

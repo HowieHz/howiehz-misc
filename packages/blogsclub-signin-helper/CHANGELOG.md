@@ -1,5 +1,11 @@
 # blogsclub-signin-helper
 
+## 0.3.2
+
+### Patch Changes
+
+- [`ffd23f3`](https://github.com/HowieHz/howiehz-misc/commit/ffd23f32e333cd6b8ce438f8f814be91c07311d5) Thanks [@HowieHz](https://github.com/HowieHz)! - Fix publishing stable userscripts to the distribution branch.
+
 ## 0.3.1
 
 ### Patch Changes

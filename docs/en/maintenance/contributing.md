@@ -13,7 +13,7 @@ This document is for repository maintainers and code contributors. If you only w
 
 - `docs/`: the VitePress application, including documentation and online tools
 - `packages/compat-finder/`: the compatibility troubleshooting library and CLI published to npm
-- `packages/blogsclub-signin-helper/`: a BlogsClub check-in assistant userscript for [Tampermonkey](https://www.tampermonkey.net), [Violentmonkey](https://violentmonkey.github.io), [Greasemonkey](https://www.greasespot.net), [ScriptCat](https://docs.scriptcat.org), and similar engines
+- `packages/blogsclub-signin-helper/`: a BlogsClub check-in helper userscript for [Tampermonkey](https://www.tampermonkey.net), [Violentmonkey](https://violentmonkey.github.io), [Greasemonkey](https://www.greasespot.net), [ScriptCat](https://docs.scriptcat.org), and similar engines
 - `packages/graphwar-killer-wasm/`: the private AssemblyScript/WASM kernel used by Graphwar Killer
 - `packages/graphwar-agent/`: a Java agent that exposes a local HTTP API for the official Graphwar client
 

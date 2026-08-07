@@ -88,6 +88,20 @@ const EN_COMPAT_FINDER_SIDEBAR: DefaultTheme.SidebarItem[] = [
   },
 ];
 
+const ROOT_BLOGSCLUB_SIGNIN_HELPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "blogsclub-signin-helper",
+    items: [{ text: "介绍", link: "/blogsclub-signin-helper/" }],
+  },
+];
+
+const EN_BLOGSCLUB_SIGNIN_HELPER_SIDEBAR: DefaultTheme.SidebarItem[] = [
+  {
+    text: "blogsclub-signin-helper",
+    items: [{ text: "Introduction", link: "/en/blogsclub-signin-helper/" }],
+  },
+];
+
 type LocaleKey = "root" | "en";
 
 const POST_LABELS: Record<
@@ -444,7 +458,10 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           },
           {
             text: "子项目文档",
-            items: [{ text: "compat-finder", link: "/compat-finder/" }],
+            items: [
+              { text: "compat-finder", link: "/compat-finder/" },
+              { text: "blogsclub-signin-helper", link: "/blogsclub-signin-helper/" },
+            ],
           },
           { text: "文章归档", link: "/posts/" },
           { text: "工具", link: "/tools/" },
@@ -461,6 +478,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         ],
         sidebar: {
           "/compat-finder/": ROOT_COMPAT_FINDER_SIDEBAR,
+          "/blogsclub-signin-helper/": ROOT_BLOGSCLUB_SIGNIN_HELPER_SIDEBAR,
           "/posts/": buildPostSidebar("root"),
           "/tools/": ROOT_TOOLS_SIDEBAR,
           "/maintenance/": ROOT_INFO_SIDEBAR,
@@ -523,7 +541,10 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
           },
           {
             text: "Subproject Docs",
-            items: [{ text: "compat-finder", link: "/en/compat-finder/" }],
+            items: [
+              { text: "compat-finder", link: "/en/compat-finder/" },
+              { text: "blogsclub-signin-helper", link: "/en/blogsclub-signin-helper/" },
+            ],
           },
           { text: "Archive", link: "/en/posts/" },
           { text: "Tools", link: "/en/tools/" },
@@ -540,6 +561,7 @@ const vitePressConfig: UserConfig<DefaultTheme.Config> = defineConfig({
         ],
         sidebar: {
           "/en/compat-finder/": EN_COMPAT_FINDER_SIDEBAR,
+          "/en/blogsclub-signin-helper/": EN_BLOGSCLUB_SIGNIN_HELPER_SIDEBAR,
           "/en/posts/": buildPostSidebar("en"),
           "/en/tools/": EN_TOOLS_SIDEBAR,
           "/en/maintenance/": EN_INFO_SIDEBAR,

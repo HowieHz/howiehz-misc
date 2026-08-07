@@ -2,7 +2,7 @@
   "name": "blogsclub-signin-helper",
   "version": "1.0.0",
   "private": true,
-  "description": "BlogsClub check-in assistant userscript.",
+  "description": "BlogsClub check-in helper userscript.",
   "type": "module",
   "scripts": {
     "build": "vite build",

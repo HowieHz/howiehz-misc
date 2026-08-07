@@ -9,7 +9,7 @@ export default defineConfig({
       entry: "src/main.ts",
       userscript: {
         name: {
-          "": "BlogsClub Check-in Assistant",
+          "": "BlogsClub Check-in Helper",
           zh: "BlogsClub 签到助手",
           "zh-CN": "BlogsClub 签到助手",
           "zh-TW": "BlogsClub 簽到助手",
@@ -24,7 +24,7 @@ export default defineConfig({
         },
         author: "HowieHz",
         license: "MIT",
-        homepageURL: "https://howiehz.top/misc",
+        homepageURL: "https://howiehz.top/misc/blogsclub-signin-helper/",
         supportURL: "https://github.com/HowieHz/howiehz-misc/issues",
         match: ["*://*/*"],
         noframes: true,

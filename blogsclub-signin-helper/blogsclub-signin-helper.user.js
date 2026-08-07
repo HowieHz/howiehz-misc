@@ -4,7 +4,7 @@
 // @name:zh-CN         BlogsClub 签到助手
 // @name:zh-TW         BlogsClub 簽到助手
 // @namespace          https://howiehz.top
-// @version            0.3.2
+// @version            1.0.0
 // @author             HowieHz
 // @description        Checks BlogsClub check-in status in the background (BlogsClub pages by default) and supports manual CAPTCHA verification.
 // @description:zh     默认仅在 BlogsClub 页面后台检查签到状态，并支持手动完成验证码。
@@ -33,7 +33,7 @@
 		window.__BLOGSCLUB_AUTO_SIGNIN__ = true;
 		const API = "https://www.blogsclub.org";
 		const CAPTCHA_ID = "f70029ad5e8b031ff90bd54bce240f14";
-		const DEFAULT_INTERVAL_MS = 10 * 1e3;
+		const DEFAULT_INTERVAL_MS = 1e3;
 		const MIN_INTERVAL_MS = 1;
 		const MAX_INTERVAL_MS = 1440 * 60 * 1e3;
 		const DEFAULT_RUSH_LEAD_SECONDS = 5;

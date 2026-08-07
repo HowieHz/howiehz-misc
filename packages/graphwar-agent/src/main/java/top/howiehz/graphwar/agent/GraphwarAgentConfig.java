@@ -31,6 +31,7 @@ final class GraphwarAgentConfig {
     final int maxRequestHeaderBytes;
     final int port;
     final String token;
+    final boolean isEndlessTurnEnabled;
 
     /** Couples validated values so every module observes the same limits. */
     private GraphwarAgentConfig(
@@ -40,7 +41,8 @@ final class GraphwarAgentConfig {
             int maxRequestBodyBytes,
             int maxFunctionBytes,
             int maxFunctionTokens,
-            String token) {
+            String token,
+            boolean isEndlessTurnEnabled) {
         this.fallbackPortCount = fallbackPortCount;
         this.maxFunctionBytes = maxFunctionBytes;
         this.maxFunctionTokens = maxFunctionTokens;
@@ -48,6 +50,7 @@ final class GraphwarAgentConfig {
         this.maxRequestHeaderBytes = maxRequestHeaderBytes;
         this.port = port;
         this.token = token;
+        this.isEndlessTurnEnabled = isEndlessTurnEnabled;
     }
 
     /** Parses comma-separated javaagent options without accepting unbounded resource values. */
@@ -59,6 +62,7 @@ final class GraphwarAgentConfig {
         int maxFunctionBytes = DEFAULT_MAX_FUNCTION_BYTES;
         int maxFunctionTokens = DEFAULT_MAX_FUNCTION_TOKENS;
         String token = null;
+        boolean isEndlessTurnEnabled = false;
 
         if (agentArgs != null && !agentArgs.trim().isEmpty()) {
             for (String part : agentArgs.split(",")) {
@@ -111,6 +115,8 @@ final class GraphwarAgentConfig {
                                 "token must contain 1 to 4096 visible ASCII characters excluding"
                                         + " comma");
                     }
+                } else if ("endlessTurn".equals(name)) {
+                    isEndlessTurnEnabled = "true".equals(value);
                 }
             }
         }
@@ -125,7 +131,8 @@ final class GraphwarAgentConfig {
                 maxRequestBodyBytes,
                 maxFunctionBytes,
                 maxFunctionTokens,
-                token);
+                token,
+                isEndlessTurnEnabled);
     }
 
     /** Creates default limits around one exact test port. */
@@ -137,7 +144,8 @@ final class GraphwarAgentConfig {
                 DEFAULT_MAX_REQUEST_BODY_BYTES,
                 DEFAULT_MAX_FUNCTION_BYTES,
                 DEFAULT_MAX_FUNCTION_TOKENS,
-                null);
+                null,
+                false);
     }
 
     /** Creates one authenticated test configuration with exact HTTP request limits. */
@@ -154,7 +162,8 @@ final class GraphwarAgentConfig {
                 maxRequestBodyBytes,
                 Math.min(DEFAULT_MAX_FUNCTION_BYTES, maxRequestBodyBytes),
                 DEFAULT_MAX_FUNCTION_TOKENS,
-                token);
+                token,
+                false);
     }
 
     /** Reports whether one Authorization header carries the configured token. */

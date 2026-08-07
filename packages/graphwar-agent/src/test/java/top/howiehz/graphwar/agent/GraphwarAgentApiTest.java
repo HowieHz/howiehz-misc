@@ -39,6 +39,9 @@ public final class GraphwarAgentApiTest {
 
     /** Runs every assertion and exits nonzero when any API contract regresses. */
     public static void main(String[] arguments) throws Exception {
+        testEndlessTurnConfig();
+        testEndlessTurnTransformation();
+        testEndlessTurnFlow();
         testShotJsonParser();
         testLedgerInvariantFailureIsInternalError();
         testStoppedShotExecutorReleasesSlot();
@@ -63,6 +66,150 @@ public final class GraphwarAgentApiTest {
         testAuthenticationAndRequestLimit();
 
         System.out.println("graphwar-agent API tests passed");
+    }
+
+    /** Accepts only the documented exact startup spelling for the opt-in turn mode. */
+    private static void testEndlessTurnConfig() {
+        assertTrue(!GraphwarAgentConfig.parse(null).isEndlessTurnEnabled, "default endless turn");
+        assertTrue(
+                !GraphwarAgentConfig.parse("endlessTurn=TRUE").isEndlessTurnEnabled,
+                "uppercase endless turn");
+        assertTrue(
+                !GraphwarAgentConfig.parse("endlessTurn=false").isEndlessTurnEnabled,
+                "false endless turn");
+        assertTrue(
+                GraphwarAgentConfig.parse("port=18000,endlessTurn=true").isEndlessTurnEnabled,
+                "exact endless turn");
+    }
+
+    /** Redirects only the original post-explosion and inbound-turn call sites. */
+    private static void testEndlessTurnTransformation() throws Exception {
+        GraphwarEndlessTurnController controller =
+                new GraphwarEndlessTurnController(GraphwarAgentConfig.parse("endlessTurn=true"));
+        byte[] original = readClassBytes("/Graphwar/GameData.class");
+        byte[] transformed =
+                controller.transform(
+                        GameData.class.getClassLoader(), "Graphwar/GameData", null, null, original);
+        assertTrue(transformed != null, "endless transformer matches GameData");
+        String symbols = new String(transformed, StandardCharsets.ISO_8859_1);
+        assertContains(symbols, "onPostExplosionNextTurn", "post-explosion redirect");
+        assertContains(symbols, "onNextTurnMessage", "inbound NEXT_TURN redirect");
+        Class<?> transformedGameData =
+                new TransformedClassLoader().define("Graphwar.GameData", transformed);
+        Object transformedGame = transformedGameData.getConstructor().newInstance();
+        transformedGameData.getMethod("setExploding", Boolean.TYPE).invoke(transformedGame, true);
+        transformedGameData.getMethod("getTimeExploding").invoke(transformedGame);
+        assertEquals(
+                Collections.singletonList("ready-next-turn"),
+                transformedGameData.getMethod("getNextTurnCalls").invoke(transformedGame),
+                "transformed post-explosion redirect remains linkable");
+        addTransformedCurrentPlayer(transformedGameData, transformedGame, false);
+        transformedGameData
+                .getMethod("handleMessage", String.class)
+                .invoke(transformedGame, "NEXT_TURN");
+    }
+
+    /** Covers virtual projection, exact ready release, and direct NEXT_TURN wake-up. */
+    private static void testEndlessTurnFlow() throws Exception {
+        GraphwarAgentConfig config = GraphwarAgentConfig.parse("endlessTurn=true");
+        GraphwarEndlessTurnController controller = new GraphwarEndlessTurnController(config);
+        GameData gameData = new GameData();
+        configureEndlessMatch(gameData);
+        Obstacle obstacle = gameData.getObstacle();
+        Graphwar graphwar = new Graphwar(gameData);
+        GraphwarStateReader stateReader =
+                new GraphwarStateReader(config, () -> graphwar, controller);
+
+        GraphwarEndlessTurnController.onPostExplosionNextTurn(gameData);
+        String heldState = stateReader.readStateJson();
+        assertContains(heldState, "\"phase\":\"aiming\"", "endless virtual phase");
+        assertContains(heldState, "\"currentPlayerId\":7", "endless virtual player");
+        assertContains(heldState, "\"remainingTurnMs\":60000", "endless virtual time");
+        String turnToken = extractJsonString(heldState, "turnToken");
+        String gameInstanceId = extractJsonString(heldState, "gameInstanceId");
+        String initialBattleRevision = extractJsonString(heldState, "battleRevision");
+        obstacle.setBlocked(10, 10, true);
+        obstacle.setExplosion(10, 10, 1);
+        String updatedHeldState = stateReader.readStateJson();
+        assertContains(updatedHeldState, "\"phase\":\"aiming\"", "endless updated virtual phase");
+        assertEquals(
+                turnToken,
+                extractJsonString(updatedHeldState, "turnToken"),
+                "endless virtual token survives explosion updates");
+        String battleRevision = extractJsonString(updatedHeldState, "battleRevision");
+        assertTrue(
+                !initialBattleRevision.equals(battleRevision),
+                "endless virtual state uses updated battle revision");
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> submission =
+                    executor.submit(
+                            () -> {
+                                try {
+                                    stateReader.submitShot(
+                                            GraphwarShotRequest.parse(
+                                                    createV3ShotBody(
+                                                            uuidFor(910),
+                                                            gameInstanceId,
+                                                            turnToken,
+                                                            battleRevision,
+                                                            "x",
+                                                            null)),
+                                            () -> {});
+                                } catch (GraphwarStateException error) {
+                                    throw new AssertionError(error);
+                                }
+                            });
+            waitForReadyNextTurn(gameData, "valid endless shot releases ready");
+            assertEquals(
+                    Collections.singletonList("ready-next-turn"),
+                    gameData.getNextTurnCalls(),
+                    "valid endless shot releases one ready");
+            gameData.handleMessage("26");
+            controller.observeNextTurn(gameData);
+            submission.get(1L, TimeUnit.SECONDS);
+            assertEquals(
+                    Collections.singletonList("function:x"),
+                    gameData.getShotCalls(),
+                    "endless shot fires only after next turn");
+        } finally {
+            executor.shutdownNow();
+        }
+
+        GraphwarEndlessTurnController finishedController =
+                new GraphwarEndlessTurnController(config);
+        GameData finishedGame = new GameData();
+        configureEndlessMatch(finishedGame);
+        finishedGame.setGameFinished(true);
+        GraphwarEndlessTurnController.onPostExplosionNextTurn(finishedGame);
+        assertEquals(
+                Collections.singletonList("ready-next-turn"),
+                finishedGame.getNextTurnCalls(),
+                "finished game delegates to original nextTurn");
+
+        GraphwarEndlessTurnController replacementController =
+                new GraphwarEndlessTurnController(config);
+        GameData heldGame = new GameData();
+        configureEndlessMatch(heldGame);
+        GraphwarEndlessTurnController.onPostExplosionNextTurn(heldGame);
+        GraphwarEndlessTurnController.Projection heldProjection =
+                replacementController.project(
+                        heldGame,
+                        heldGame.getObstacle(),
+                        "revision",
+                        heldGame.getCurrentTurnIndex(),
+                        heldGame.getPlayers());
+        assertTrue(heldProjection != null, "replacement test held projection");
+        assertTrue(
+                replacementController.claimAndRelease(
+                        heldGame, heldGame.getObstacle(), heldProjection.turnToken),
+                "replacement test releases ready");
+        heldGame.setGameState(1);
+        assertTrue(
+                !replacementController.awaitRealTurn(
+                        heldGame, heldGame.getObstacle(), heldProjection.turnToken),
+                "terminal match clears waiting evidence");
     }
 
     /** Verifies an impossible full ledger is reported as an internal invariant failure. */
@@ -1411,6 +1558,31 @@ public final class GraphwarAgentApiTest {
         gameData.setRemainingTime(57_000L);
         gameData.setTerrainReversed(true);
         gameData.setTimeTurnStarted(1_000L);
+    }
+
+    /** Builds a remote current turn whose next eligible player is the local human. */
+    private static void configureEndlessMatch(GameData gameData) {
+        gameData.clearPlayers();
+        gameData.addPlayer(new Player(gameData, 8, "Remote", 2, false, true, 2, false));
+        gameData.addPlayer(new Player(gameData, 7, "Local Human", 1, true, false, 2, false));
+        gameData.setObstacle(new Obstacle());
+        gameData.setCurrentTurn(0);
+        gameData.setDrawingFunction(false);
+        gameData.setExploding(true);
+        gameData.setGameMode(0);
+        gameData.setGameState(2);
+        gameData.setRemainingTime(57_000L);
+        gameData.setTimeTurnStarted(1_000L);
+    }
+
+    /** Waits briefly for the claimed shot worker to send its single ready request. */
+    private static void waitForReadyNextTurn(GameData gameData, String message)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1L);
+        while (gameData.getNextTurnCalls().isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(1L);
+        }
+        assertTrue(!gameData.getNextTurnCalls().isEmpty(), message);
     }
 
     /** Extracts one unescaped opaque string field from a JSON response. */

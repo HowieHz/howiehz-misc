@@ -35,6 +35,8 @@ final class GraphwarMethodCallRedirector {
         final String sourceDescriptor;
         final String sourceMethod;
         final int sourceOpcode;
+        final String enclosingMethod;
+        final String enclosingDescriptor;
 
         /** Retains exact source and target symbols used by the class-file matcher. */
         Redirect(
@@ -45,6 +47,28 @@ final class GraphwarMethodCallRedirector {
                 String handlerClass,
                 String handlerMethod,
                 String handlerDescriptor) {
+            this(
+                    sourceOpcode,
+                    sourceClass,
+                    sourceMethod,
+                    sourceDescriptor,
+                    handlerClass,
+                    handlerMethod,
+                    handlerDescriptor,
+                    null,
+                    null);
+        }
+
+        Redirect(
+                int sourceOpcode,
+                String sourceClass,
+                String sourceMethod,
+                String sourceDescriptor,
+                String handlerClass,
+                String handlerMethod,
+                String handlerDescriptor,
+                String enclosingMethod,
+                String enclosingDescriptor) {
             this.handlerClass = handlerClass;
             this.handlerDescriptor = handlerDescriptor;
             this.handlerMethod = handlerMethod;
@@ -52,6 +76,8 @@ final class GraphwarMethodCallRedirector {
             this.sourceDescriptor = sourceDescriptor;
             this.sourceMethod = sourceMethod;
             this.sourceOpcode = sourceOpcode;
+            this.enclosingMethod = enclosingMethod;
+            this.enclosingDescriptor = enclosingDescriptor;
         }
     }
 
@@ -154,6 +180,13 @@ final class GraphwarMethodCallRedirector {
             int methodsCount = readU2(offset);
             offset += 2;
             for (int index = 0; index < methodsCount; index += 1) {
+                int methodNameIndex = readU2(offset + 2);
+                int methodDescriptorIndex = readU2(offset + 4);
+                boolean isEnclosingMethod =
+                        redirect.enclosingMethod == null
+                                || (redirect.enclosingMethod.equals(utf8Values[methodNameIndex])
+                                        && redirect.enclosingDescriptor.equals(
+                                                utf8Values[methodDescriptorIndex]));
                 offset += 6;
                 int attributesCount = readU2(offset);
                 offset += 2;
@@ -163,7 +196,7 @@ final class GraphwarMethodCallRedirector {
                     int attributeNameIndex = readU2(offset);
                     int attributeLength = readU4(offset + 2);
                     int infoOffset = offset + 6;
-                    if ("Code".equals(utf8Values[attributeNameIndex])) {
+                    if (isEnclosingMethod && "Code".equals(utf8Values[attributeNameIndex])) {
                         patchCount +=
                                 patchCodeAttribute(infoOffset, redirect, handlerMethodRefIndex);
                     }

@@ -1,5 +1,11 @@
 # blogsclub-signin-helper
 
+## 1.0.2
+
+### Patch Changes
+
+- [#382](https://github.com/HowieHz/howiehz-misc/pull/382) [`1ed0e06`](https://github.com/HowieHz/howiehz-misc/commit/1ed0e0648efc3e6697990b36ac19bd9d91042738) Thanks [@HowieHz](https://github.com/HowieHz)! - Improve BlogsClub Check-in Helper docs.
+
 ## 1.0.1
 
 ### Patch Changes

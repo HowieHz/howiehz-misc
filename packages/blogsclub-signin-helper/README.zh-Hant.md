@@ -8,11 +8,11 @@ BlogsClub 簽到助手是一個使用者腳本，用於在背景檢查 BlogsClub
 
 ## 功能特色
 
-- 在背景檢查每日簽到狀態；
-- 立即檢查，並在需要時開啟 Geetest 驗證碼；
-- 手動驗證後提交簽到，並顯示今日排名；
-- 可選在伺服器零點前準備驗證碼、零點後提交；
-- 透過 HTTP `Date` 回應標頭估算 BlogsClub 伺服器時間；
+- 在背景檢查每日簽到狀態。
+- 立即檢查，並在需要時開啟 Geetest 驗證碼。
+- 手動驗證後提交簽到，並顯示今日排名。
+- 可選在伺服器零點前準備驗證碼、零點後提交。
+- 透過 HTTP `Date` 回應標頭估算 BlogsClub 伺服器時間。
 - 重用有效工作階段和正在進行的請求，減少不必要的請求。
 - 選單和通知支援 English、简体中文、繁體中文；首次載入時會依照瀏覽器語言偏好選擇並儲存。
 
@@ -22,7 +22,7 @@ BlogsClub 簽到助手是一個使用者腳本，用於在背景檢查 BlogsClub
 
 ## 文件
 
-完整的行為說明、選單設定、網路請求、隱私提示、故障排除和已知限制，請閱讀[簡體中文文件](https://howiehz.top/misc/blogsclub-signin-helper/)或[英文文件](https://howiehz.top/misc/en/blogsclub-signin-helper/)。
+完整文件見 [簡體中文文件](https://howiehz.top/misc/blogsclub-signin-helper/) 或 [英文文件](https://howiehz.top/misc/en/blogsclub-signin-helper/)。
 
 ## 快速開始
 
@@ -61,3 +61,7 @@ pnpm --filter blogsclub-signin-helper preview
 ```
 
 建置使用者腳本後，在本機啟動伺服器提供產生的 `dist/` 產物。
+
+## 授權
+
+本專案依 [MIT License](../../LICENSE) 發布。

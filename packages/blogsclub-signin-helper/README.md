@@ -22,7 +22,7 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 
 ## Documentation
 
-For full behavior, settings, network activity, privacy notes, troubleshooting, and limitations, see the [documentation](https://howiehz.top/misc/en/blogsclub-signin-helper/).
+For full documentation, visit the [BlogsClub Check-in Helper documentation](https://howiehz.top/misc/en/blogsclub-signin-helper/).
 
 ## Quick Start
 
@@ -61,3 +61,7 @@ pnpm --filter blogsclub-signin-helper preview
 ```
 
 Builds the userscript and serves the generated `dist/` bundle locally.
+
+## License
+
+This project is licensed under the [MIT License](../../LICENSE).

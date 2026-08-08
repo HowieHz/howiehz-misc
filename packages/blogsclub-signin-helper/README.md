@@ -22,15 +22,15 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 
 ## Documentation
 
-For full behavior, settings, network activity, privacy notes, troubleshooting, and limitations, visit [howiehz.top/misc/en/blogsclub-signin-helper](https://howiehz.top/misc/en/blogsclub-signin-helper/).
+For full behavior, settings, network activity, privacy notes, troubleshooting, and limitations, see the [documentation](https://howiehz.top/misc/en/blogsclub-signin-helper/).
 
 ## Quick Start
 
 1. Install a compatible userscript manager.
-2. Open [BlogsClub Check-in Helper on Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper) and install it.
+2. [Install the userscript directly from GitHub](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js) or [install it from Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper).
 3. Open `https://www.blogsclub.org/` or another BlogsClub page.
-4. Choose `BlogsClub 账号：未设置` from the userscript manager menu and enter your email and password.
-5. Choose `立即检查/签到` to check immediately. The script opens Geetest when today's check-in is still missing.
+4. Choose `BlogsClub account: Not configured` from the userscript manager menu and enter your email and password.
+5. Choose `Check now / check in` to check immediately. The script opens Geetest when today's check-in is still missing.
 
 By default, automatic status checks run only on BlogsClub pages; manual checks are available on any matched page. The password is stored in the userscript manager's local storage and is sent only to the BlogsClub login endpoint.
 

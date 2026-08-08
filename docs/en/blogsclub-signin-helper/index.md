@@ -25,29 +25,29 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 ## Getting Started
 
 1. Install a compatible userscript manager.
-2. Open [BlogsClub Check-in Helper on Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper) and install it.
+2. [Install the userscript directly from GitHub](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js) or [install it from Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper).
 3. Open `https://www.blogsclub.org/` or another BlogsClub page.
-4. Open the userscript manager menu and choose `BlogsClub 账号：未设置`.
+4. Open the userscript manager menu and choose `BlogsClub account: Not configured`.
 5. Enter your BlogsClub email address and password.
-6. The account status initially shows `已保存` (Saved). After a successful status check or login, it shows `已登录` (Logged in).
-7. Choose `立即检查/签到` to check immediately.
+6. The account status initially shows `Saved`. After a successful status check or login, it shows `Logged in`.
+7. Choose `Check now / check in` to check immediately.
 
 By default, automatic status checks run only on BlogsClub pages. Manual `Check now / check in` actions are available on any matched page.
 
 ## Menu and Settings
 
-| Menu item                               | Default    | What it controls                                                                                                               |
-| --------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `立即检查/签到`                         | —          | Check now. If you have not checked in, open the CAPTCHA and allow a manual check-in.                                           |
-| `BlogsClub 账号：...`                   | `未设置`   | Save or update the email address and password.                                                                                 |
-| `检查周期：10000 毫秒`                  | 10 seconds | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours. |
-| `仅在 BlogsClub 页面自动检查状态：启用` | Enabled    | Restrict background polling and Rush Check-in to BlogsClub pages; manual checks are unrestricted.                              |
-| `可签到时自动验证码弹窗：启用`          | Enabled    | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
-| `零点抢签到模式：启用`                  | Enabled    | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
-| `抢签到提前加载验证码：5 秒`            | 5 seconds  | Set how long before server midnight to start preparing the CAPTCHA; from 1 to 60 seconds.                                      |
-| `抢签到提交延迟：500 毫秒`              | 500 ms     | Delay the first submission after server midnight; from 0 to 60000 ms.                                                          |
-| `抢签到提交重试次数：50 次`             | 50 retries | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                            |
-| `抢签到提交重试间隔：200 毫秒`          | 200 ms     | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                |
+| Menu item                                                  | Default          | What it controls                                                                                                               |
+| ---------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `Check now / check in`                                     | —                | Check now. If you have not checked in, open the CAPTCHA and allow a manual check-in.                                           |
+| `BlogsClub account: ...`                                   | `Not configured` | Save or update the email address and password.                                                                                 |
+| `Check interval: 1000 ms`                                  | 1 second         | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours. |
+| `Automatic status checks only on BlogsClub pages: Enabled` | Enabled          | Restrict background polling and Rush Check-in to BlogsClub pages; manual checks are unrestricted.                              |
+| `Auto CAPTCHA popup when check-in is available: Enabled`   | Enabled          | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
+| `Rush Check-in mode: Enabled`                              | Enabled          | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
+| `Rush Check-in CAPTCHA lead time: 5 seconds`               | 5 seconds        | Set how long before server midnight to start preparing the CAPTCHA; from 1 to 60 seconds.                                      |
+| `Rush Check-in submission delay: 500 ms`                   | 500 ms           | Delay the first submission after server midnight; from 0 to 60000 ms.                                                          |
+| `Rush Check-in submission retries: 50`                     | 50 retries       | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                            |
+| `Rush Check-in retry interval: 200 ms`                     | 200 ms           | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                |
 
 A high retry count combined with a short interval can send many concurrent requests in a short time. Set it according to the site's rate limits.
 
@@ -57,10 +57,10 @@ The last menu item, `🌐 Switch language`, opens one input box: enter `1` for E
 
 ### Account Status Labels
 
-- `未设置` (Not configured): no complete email/password pair is stored.
-- `已保存` (Saved): credentials are stored locally, but the password has not necessarily been verified.
-- `已登录` (Logged in): the latest status check or login succeeded.
-- `登录失败` (Login failed): the latest login-required request failed. Common causes include a wrong password, an expired session, or a network error.
+- `Not configured`: no complete email/password pair is stored.
+- `Saved`: credentials are stored locally, but the password has not necessarily been verified.
+- `Logged in`: the latest status check or login succeeded.
+- `Login failed`: the latest login-required request failed. Common causes include a wrong password, an expired session, or a network error.
 
 The password is stored in the userscript manager's local storage. It is not sent to the CAPTCHA provider; password login requests go only to the BlogsClub login endpoint.
 
@@ -78,11 +78,11 @@ The next polling timer is scheduled after the previous check finishes. A slow re
 
 ### Manual Check
 
-Clicking `立即检查/签到` immediately shows `检查签到状态中……` (Checking check-in status…).
+Clicking `Check now / check in` immediately shows `Checking check-in status…`.
 
-- If the account is marked `已登录`, the script reuses or sends `signinStatus` instead of logging in every time.
+- If the account is marked `Logged in`, the script reuses or sends `signinStatus` instead of logging in every time.
 - If the session is invalid, it logs in and checks the status.
-- If credentials were just saved or the account is marked `登录失败`, it validates the saved email and password.
+- If credentials were just saved or the account is marked `Login failed`, it validates the saved email and password.
 - If you have not checked in, it opens the CAPTCHA.
 - After you complete the challenge, it submits the check-in immediately.
 
@@ -153,9 +153,9 @@ Requests are non-anonymous and use the BlogsClub session cookies. Before uninsta
 
 ## Troubleshooting
 
-### The status stays at“已保存”
+### The status stays at “Saved”
 
-`已保存` only means the credentials were written locally; it does not mean the password was verified. Click `立即检查/签到` and check whether the status becomes `已登录` or `登录失败`.
+`Saved` only means the credentials were written locally; it does not mean the password was verified. Click `Check now / check in` and check whether the status becomes `Logged in` or `Login failed`.
 
 ### No CAPTCHA appears
 

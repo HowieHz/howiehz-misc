@@ -10,12 +10,12 @@ if (!pnpmCliPath) {
 }
 
 // The root runner builds the shared WASM once, so the WASM package and docs run unit-only scripts below.
-const testSuites = [
-  pnpmTask("compat-finder", "--filter", "compat-finder", "test"),
+const compatFinderSuite = pnpmTask("compat-finder", "--filter", "compat-finder", "test");
+const docsSuite = pnpmTask("Graphwar Killer", "--filter", "docs", "test:unit");
+const nonVitestSuites = [
   pnpmTask("Graphwar Agent OpenAPI", "--filter", "graphwar-agent", "openapi:test"),
   pnpmTask("Graphwar Agent", "--filter", "graphwar-agent", "test"),
   pnpmTask("Graphwar Killer WASM", "--filter", "graphwar-killer-wasm", "test:unit"),
-  pnpmTask("Graphwar Killer", "--filter", "docs", "test:unit"),
 ];
 
 async function main() {
@@ -24,8 +24,16 @@ async function main() {
     throw new Error("Graphwar Killer WASM build failed");
   }
 
-  stdout.write(`[test] Running ${testSuites.map((suite) => suite.name).join(", ")} in parallel\n`);
-  const results = await Promise.all(testSuites.map(run));
+  stdout.write(
+    `[test] Running ${compatFinderSuite.name} and ${nonVitestSuites.map((suite) => suite.name).join(", ")} in parallel\n`,
+  );
+  const nonVitestResultsPromise = Promise.all(nonVitestSuites.map(run));
+  const compatFinderResult = await run(compatFinderSuite);
+
+  // Vitest manages its own worker pool; keep the two Vitest suites from oversubscribing low-core CI runners.
+  stdout.write(`[test] Running ${docsSuite.name} after ${compatFinderSuite.name}\n`);
+  const docsResult = await run(docsSuite);
+  const results = [compatFinderResult, docsResult, ...(await nonVitestResultsPromise)];
   const failedSuites = results.filter((result) => !result.isSuccessful).map((result) => result.name);
   if (failedSuites.length > 0) {
     throw new Error(`Failed test suites: ${failedSuites.join(", ")}`);

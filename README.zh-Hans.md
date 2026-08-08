@@ -8,10 +8,14 @@
 
 - 兼容性问题排查器：
   - [compat-finder](packages/compat-finder/)：库、命令行工具和智能体技能
+  - [文档](docs/compat-finder/)
   - [在线版](docs/tools/compatibility-test/)
 - [天干地支计算器](docs/tools/ganzhi/)
-- [Graphwar 杀手](docs/tools/graphwar-killer/)：Graphwar 函数生成器
-- [BlogsClub 签到助手](docs/blogsclub-signin-helper/)：用于后台检查 BlogsClub 每日签到并辅助完成签到的用户脚本
+- [Graphwar 杀手](docs/tools/graphwar-killer/)：在线 Graphwar 函数生成器与模拟器
+- [Graphwar Agent](packages/graphwar-agent/)：面向 Graphwar 官方客户端的 Java Agent
+- BlogsClub 签到助手：
+  - [blogsclub-signin-helper](packages/blogsclub-signin-helper/)：用于后台检查 BlogsClub 每日签到并辅助完成签到的用户脚本
+  - [文档](docs/blogsclub-signin-helper/)
 
 ## 项目状态
 

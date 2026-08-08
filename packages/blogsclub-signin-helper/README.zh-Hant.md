@@ -26,7 +26,7 @@ BlogsClub 簽到助手是一個使用者腳本，用於在背景檢查 BlogsClub
 
 ## 快速開始
 
-1. 安裝相容的使用者腳本管理器。
+1. 安裝支援的腳本引擎。
 2. [從 GitHub 直鏈安裝使用者腳本](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js)，或[從 Greasy Fork 安裝](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper)。
 3. 開啟 `https://www.blogsclub.org/` 或其他 BlogsClub 頁面。
 4. 在使用者腳本管理器選單中選擇 `BlogsClub 帳號：未設定`，輸入電子郵件和密碼。

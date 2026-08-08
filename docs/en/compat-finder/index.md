@@ -8,6 +8,8 @@ publish: false
 
 It helps you find one or more incompatible targets with fewer rounds of testing.
 
+Source: [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
+
 ## Features
 
 - **Zero runtime dependencies**: keeps installs lightweight and reduces supply-chain risk.

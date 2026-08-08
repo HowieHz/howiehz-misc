@@ -26,7 +26,7 @@ For full documentation, visit the [BlogsClub Check-in Helper documentation](http
 
 ## Quick Start
 
-1. Install a compatible userscript manager.
+1. Install a supported script engine.
 2. [Install the userscript directly from GitHub](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js) or [install it from Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper).
 3. Open `https://www.blogsclub.org/` or another BlogsClub page.
 4. Choose `BlogsClub account: Not configured` from the userscript manager menu and enter your email and password.

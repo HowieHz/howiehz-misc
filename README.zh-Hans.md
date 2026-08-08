@@ -11,6 +11,7 @@
   - [在线版](docs/tools/compatibility-test/)
 - [天干地支计算器](docs/tools/ganzhi/)
 - [Graphwar 杀手](docs/tools/graphwar-killer/)：Graphwar 函数生成器
+- [BlogsClub 签到助手](docs/blogsclub-signin-helper/)：用于后台检查 BlogsClub 每日签到并辅助完成签到的用户脚本
 
 ## 项目状态
 

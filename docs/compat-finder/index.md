@@ -8,6 +8,8 @@ publish: false
 
 它帮助你用更少的测试轮次找出一个或多个不兼容目标。
 
+开源地址：[HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
+
 ## 功能特点
 
 - **零运行时依赖**：安装更轻量，也能降低供应链风险。

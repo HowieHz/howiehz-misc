@@ -1,6 +1,6 @@
 # HowieHz Misc
 
-**English** | [简体中文](./README.zh.md)
+**English** | [简体中文](./README.zh-Hans.md)
 
 A personal misc site for things that do not belong on the main site.
 
@@ -11,6 +11,7 @@ A personal misc site for things that do not belong on the main site.
   - [Online tool](docs/en/tools/compatibility-test/)
 - [Ganzhi calculator (Chinese)](docs/tools/ganzhi/)
 - [Graphwar Killer](docs/en/tools/graphwar-killer/): Graphwar function generator
+- [BlogsClub Check-in Helper](docs/en/blogsclub-signin-helper/): userscript for checking BlogsClub daily check-ins and helping complete them
 
 ## Project Status
 

@@ -26,7 +26,7 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 
 ## 快速开始
 
-1. 安装兼容的用户脚本管理器。
+1. 安装支持的脚本引擎。
 2. [从 GitHub 直链安装用户脚本](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js)，或[从 Greasy Fork 安装](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper)。
 3. 打开 `https://www.blogsclub.org/` 或其他 BlogsClub 页面。
 4. 在用户脚本管理器菜单中选择 `BlogsClub 账号：未设置`，输入邮箱和密码。

@@ -6,9 +6,9 @@ publish: false
 
 BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每日签到状态，在需要时提醒你，并在你完成 Geetest 验证码后提交签到。
 
-开源地址：[HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
-
 脚本不会自动识别、绕过或代替你完成验证码，验证码必须由你手动完成。
+
+开源地址：[HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
 
 ## 功能特点
 

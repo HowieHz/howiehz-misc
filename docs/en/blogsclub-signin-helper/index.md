@@ -6,9 +6,9 @@ publish: false
 
 BlogsClub Check-in Helper is a userscript for checking your BlogsClub daily check-in status, reminding you when action is needed, and submitting the check-in after you complete the Geetest challenge.
 
-Source: [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
-
 The script does not solve, bypass, or automate the CAPTCHA. You must complete the challenge yourself.
+
+Source: [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
 
 ## Features
 

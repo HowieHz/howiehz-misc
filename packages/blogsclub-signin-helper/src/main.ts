@@ -33,6 +33,37 @@ interface LoginCaptchaResult {
   request: LoginCaptchaRequest;
 }
 
+/** 一次签到状态响应签发的提交授权，绑定账号身份和获取时间。 */
+interface SigninAuthorization {
+  credentials: LoginCredentials;
+  signToken: string;
+  statusStartedAt: number;
+}
+
+/** 签到状态响应及其请求身份，避免把响应绑定到后来变更的账号。 */
+interface SigninStatusEvidence {
+  response: ApiResponse;
+  credentials: LoginCredentials | null;
+  startedAt: number;
+}
+
+/** 普通验证码只在签发授权的当日使用。 */
+interface RegularSigninCaptchaCandidate {
+  kind: "regular";
+  authorization: SigninAuthorization;
+}
+
+/** Rush 验证码授权与产生它的目标零点和流程代号原子传递。 */
+interface RushSigninCaptchaCandidate {
+  kind: "rush";
+  authorization: SigninAuthorization;
+  flowGeneration: number;
+  submitAt: number;
+  targetMidnight: number;
+}
+
+type SigninCaptchaCandidate = RegularSigninCaptchaCandidate | RushSigninCaptchaCandidate;
+
 /** 发送 BlogsClub 请求所需的 GM_xmlhttpRequest 选项。 */
 interface RequestOptions {
   method: string;
@@ -49,10 +80,14 @@ interface ApiResponse {
   msg?: string;
   data?: unknown;
   signin?: boolean;
+  sign_token?: string;
 }
 
-/** 可供并发调用方复用的签到状态请求及其服务端起始时间。 */
-type SharedStatusPromise = Promise<ApiResponse> & { startedAt: number };
+/** 可供并发调用方复用的签到状态请求及其账号身份和服务端起始时间。 */
+type SharedStatusPromise = Promise<ApiResponse> & {
+  credentials: LoginCredentials | null;
+  startedAt: number;
+};
 
 if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   window.__BLOGSCLUB_AUTO_SIGNIN__ = true;
@@ -158,6 +193,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       loginSessionExpired: "The login session is no longer valid.",
       captchaNotLoaded: "The CAPTCHA component is not loaded.",
       captchaLoadFailed: "The CAPTCHA component failed to load.",
+      loginCaptchaOpened: "The login CAPTCHA is open. Complete it to sign in to BlogsClub.",
+      signinCaptchaOpened: "The check-in CAPTCHA is open. Complete it to check in today.",
+      signinTokenMissing: "The current check-in token is missing. Check the status again.",
       signinSuccess: "Check-in succeeded",
       signinSuccessWithRanking: "{message}; {rank}",
       signinFailed: "Check-in failed.",
@@ -236,6 +274,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       loginSessionExpired: "登录状态失效",
       captchaNotLoaded: "验证码组件未加载",
       captchaLoadFailed: "验证码组件加载失败",
+      loginCaptchaOpened: "登录验证码已打开，请完成验证以登录 BlogsClub。",
+      signinCaptchaOpened: "签到验证码已打开，请完成验证以完成今日签到。",
+      signinTokenMissing: "未获取到本次签到令牌，请重新检查签到状态。",
       signinSuccess: "签到成功",
       signinSuccessWithRanking: "{message},{rank}",
       signinFailed: "签到失败",
@@ -313,6 +354,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       loginSessionExpired: "登入工作階段已失效",
       captchaNotLoaded: "驗證碼元件未載入",
       captchaLoadFailed: "驗證碼元件載入失敗",
+      loginCaptchaOpened: "登入驗證碼已開啟，請完成驗證以登入 BlogsClub。",
+      signinCaptchaOpened: "簽到驗證碼已開啟，請完成驗證以完成今日簽到。",
+      signinTokenMissing: "未取得本次簽到權杖，請重新檢查簽到狀態。",
       signinSuccess: "簽到成功",
       signinSuccessWithRanking: "{message},{rank}",
       signinFailed: "簽到失敗",
@@ -443,13 +487,35 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   /**
+   * 读取一组可直接用于请求的完整登录凭据。
+   *
+   * @returns {object | null} 完整凭据；配置不完整时返回 null。
+   */
+  function loginCredentials(): LoginCredentials | null {
+    const { email, password } = credentials();
+    return email && password ? { email, password } : null;
+  }
+
+  /**
+   * 比较两次请求是否属于同一组登录凭据。
+   *
+   * @param {object | null} left 第一组凭据。
+   * @param {object | null} right 第二组凭据。
+   * @returns {boolean} 两组凭据是否相同。
+   */
+  function isSameLoginCredentials(left: LoginCredentials | null, right: LoginCredentials | null) {
+    return left === null || right === null
+      ? left === right
+      : left.email === right.email && left.password === right.password;
+  }
+
+  /**
    * 判断是否已保存完整 BlogsClub 登录凭据。
    *
    * @returns {boolean} 邮箱和密码是否都存在。
    */
   function hasCredentials() {
-    const { email, password } = credentials();
-    return Boolean(email && password);
+    return loginCredentials() !== null;
   }
 
   /**
@@ -469,6 +535,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     }
     GM_setValue(KEYS.credentials, { email: email.trim(), password });
     GM_setValue(KEYS.accountStatus, "已保存");
+    if (activeSigninCaptchaCandidate) discardSigninCaptchaCandidate(activeSigninCaptchaCandidate);
     registerMenus();
     notify(t("accountSaved"), t("configTitle"));
     if (rushModeEnabled()) {
@@ -833,14 +900,14 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       return;
     }
     GM_setValue(KEYS.language, selected);
-    const hadVisibleCaptcha = hasVisibleCaptcha();
+    const isCaptchaVisibleBeforeLanguageChange = hasVisibleCaptcha();
     captchaGeneration += 1;
     captcha?.reset?.();
     captcha = null;
     registerMenus();
     notify(t("languageChanged", { language: languageName(selected) }), t("configTitle"));
-    if (hadVisibleCaptcha) {
-      openCaptchaWindow(isRushCaptchaPending, rushCaptchaGeneration);
+    if (isCaptchaVisibleBeforeLanguageChange && activeSigninCaptchaCandidate) {
+      openCaptchaWindow(activeSigninCaptchaCandidate);
     }
   }
 
@@ -1046,9 +1113,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {Promise<void>} 登录成功或抛出错误。
    */
   function login() {
-    const saved = credentials();
-    if (!saved.email || !saved.password) return Promise.reject(new Error(t("accountRequired")));
-    const currentCredentials = { email: saved.email, password: saved.password };
+    const currentCredentials = loginCredentials();
+    if (!currentCredentials) return Promise.reject(new Error(t("accountRequired")));
     if (
       loginCandidate &&
       loginCandidate.credentials.email === currentCredentials.email &&
@@ -1174,7 +1240,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {Promise<object>} 包含 signin 字段的接口响应。
    */
   function sharedSigninStatus(shouldForceLogin = false) {
-    if (signinStatusPromise && (!shouldForceLogin || isSigninStatusLoginForced)) {
+    const currentCredentials = loginCredentials();
+    if (
+      signinStatusPromise &&
+      isSameLoginCredentials(signinStatusPromise.credentials, currentCredentials) &&
+      (!shouldForceLogin || isSigninStatusLoginForced)
+    ) {
       return signinStatusPromise;
     }
     const startedAt = serverNow();
@@ -1188,9 +1259,42 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     }) as SharedStatusPromise;
     // 共享调用方必须使用最初请求的时间，不能用各自 await 前的时间覆盖它。
     shared.startedAt = startedAt;
+    shared.credentials = currentCredentials;
     signinStatusPromise = shared;
     isSigninStatusLoginForced = shouldForceLogin;
     return shared;
+  }
+
+  /**
+   * 将外部签到状态响应与发起请求时的账号身份绑定。
+   *
+   * @param {object} response 签到状态接口响应。
+   * @param {object} statusRequest 产生该响应的共享请求。
+   * @returns {object} 可供后续验证码流程消费的状态证据。
+   */
+  function signinStatusEvidence(response: ApiResponse, statusRequest: SharedStatusPromise): SigninStatusEvidence {
+    return {
+      response,
+      credentials: statusRequest.credentials,
+      startedAt: statusRequest.startedAt,
+    };
+  }
+
+  /**
+   * 从未签到状态构造一次服务端签发的提交授权。
+   *
+   * @param {object} evidence 签到状态响应及其请求身份。
+   * @returns {object | null} 当前账号可使用的授权；账号已变化时返回 null。
+   */
+  function signinAuthorization(evidence: SigninStatusEvidence): SigninAuthorization | null {
+    const signToken = evidence.response.sign_token;
+    if (typeof signToken !== "string" || !signToken) throw new Error(t("signinTokenMissing"));
+    if (!evidence.credentials || !isSameLoginCredentials(evidence.credentials, loginCredentials())) return null;
+    return {
+      credentials: evidence.credentials,
+      signToken,
+      statusStartedAt: evidence.startedAt,
+    };
   }
 
   // Geetest 加载和人工验证。
@@ -1198,10 +1302,77 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   let captchaGeneration = 0;
   let captchaLoadPromise = null;
   let activeLoginCaptcha: LoginCaptchaRequest | null = null;
+  let activeSigninCaptchaCandidate: SigninCaptchaCandidate | null = null;
   let isCaptchaOpening = false;
   let isSigning = false;
   let signinSuccessSerial = 0;
   let lastSigninSuccessAt = 0;
+
+  /**
+   * 判断签到授权是否仍属于当前保存的账号。
+   *
+   * @param {object} authorization 待检查的签到授权。
+   * @returns {boolean} 授权账号是否仍为当前账号。
+   */
+  function isSigninAuthorizationCurrent(authorization: SigninAuthorization) {
+    return isSameLoginCredentials(authorization.credentials, loginCredentials());
+  }
+
+  /**
+   * 判断普通授权是否仍处于获取它的本地自然日。
+   *
+   * @param {object} authorization 待检查的签到授权。
+   * @returns {boolean} 当前时间是否仍属于授权签发日。
+   */
+  function isSigninAuthorizationDateCurrent(authorization: SigninAuthorization) {
+    return new Date(authorization.statusStartedAt).toDateString() === new Date(serverNow()).toDateString();
+  }
+
+  /**
+   * 判断验证码候选是否仍属于当前账号、日期和 Rush 轮次。
+   *
+   * @param {object} candidate 待检查的验证码候选。
+   * @returns {boolean} 候选是否仍可显示和消费。
+   */
+  function isSigninCaptchaCandidateCurrent(candidate: SigninCaptchaCandidate) {
+    if (!isSigninAuthorizationCurrent(candidate.authorization)) return false;
+    if (candidate.kind === "regular") return isSigninAuthorizationDateCurrent(candidate.authorization);
+    return (
+      candidate.flowGeneration === rushFlowGeneration &&
+      candidate.submitAt === rushSubmitAt &&
+      candidate.targetMidnight === rushTargetMidnight &&
+      isRushCaptchaPending &&
+      rushModeEnabled() &&
+      (!isBlogsClubAutoCheckOnlyEnabled() || isBlogsClubPage())
+    );
+  }
+
+  /**
+   * 丢弃一个仍处于活动状态的签到验证码候选。
+   *
+   * @param {object} candidate 要丢弃的验证码候选。
+   * @returns {void}
+   */
+  function discardSigninCaptchaCandidate(candidate: SigninCaptchaCandidate) {
+    if (activeSigninCaptchaCandidate !== candidate) return;
+    activeSigninCaptchaCandidate = null;
+    captchaGeneration += 1;
+    captcha?.reset?.();
+    captcha = null;
+  }
+
+  /**
+   * 当前候选失配时回到状态查询，绝不把旧授权用于新账号或新日期。
+   *
+   * @param {object} candidate 已失配的验证码候选。
+   * @returns {void}
+   */
+  function refreshSigninCaptchaCandidate(candidate: SigninCaptchaCandidate) {
+    if (activeSigninCaptchaCandidate !== candidate) return;
+    discardSigninCaptchaCandidate(candidate);
+    notify(t("checkingStatus"));
+    setTimeout(() => void check({ shouldForceCaptcha: true, isManual: true }), 0);
+  }
 
   /**
    * 判断当前页面是否已有可见的 Geetest 弹窗。
@@ -1290,6 +1461,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           instance.onReady(() => {
             if (activeLoginCaptcha === request) {
               request.isShown = true;
+              notify(t("loginCaptchaOpened"), t("configTitle"));
               instance.showCaptcha();
             }
           });
@@ -1351,19 +1523,27 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 初始化并打开人工 Geetest 验证码。
    *
+   * @param {object} candidate 由状态响应构造的验证码候选。
    * @returns {Promise<void>} 验证窗口处理完成。
    */
-  async function openCaptcha() {
-    if (isSigning || isCaptchaOpening || hasVisibleCaptcha()) return;
+  async function openCaptcha(candidate: SigninCaptchaCandidate) {
+    if (
+      isSigning ||
+      isCaptchaOpening ||
+      hasVisibleCaptcha() ||
+      activeSigninCaptchaCandidate !== candidate ||
+      !isSigninCaptchaCandidateCurrent(candidate)
+    )
+      return;
     const generation = captchaGeneration;
-    const isRushCaptcha = rushCaptchaGeneration !== null;
     isCaptchaOpening = true;
     try {
       await loadCaptcha();
-      if (generation !== captchaGeneration) return;
-      // 加载期间可能已关闭或重排 rush；旧流程不能在等待结束后再显示验证码。
-      if (rushCaptchaGeneration !== null && (rushCaptchaGeneration !== rushFlowGeneration || !isRushCaptchaPending))
+      if (generation !== captchaGeneration || activeSigninCaptchaCandidate !== candidate) return;
+      if (!isSigninCaptchaCandidateCurrent(candidate)) {
+        refreshSigninCaptchaCandidate(candidate);
         return;
+      }
       if (!captcha) {
         const init = geetestInit();
         if (!init) throw new Error(t("captchaNotLoaded"));
@@ -1375,31 +1555,37 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
                 .onReady(() => resolve(instance))
                 .onError(reject)
                 .onSuccess(() => {
-                  if (generation === captchaGeneration) handleCaptchaSuccess(instance.getValidate());
+                  if (generation === captchaGeneration && activeSigninCaptchaCandidate) {
+                    handleCaptchaSuccess(instance.getValidate(), activeSigninCaptchaCandidate);
+                  }
                 });
             },
           );
         });
-        if (generation !== captchaGeneration) {
+        if (generation !== captchaGeneration || activeSigninCaptchaCandidate !== candidate) {
           instance.reset();
           return;
         }
         captcha = instance;
       }
-      // 初始化回调本身也可能跨过取消边界，再次确认验证码仍归当前 rush。
-      if (rushCaptchaGeneration !== null && (rushCaptchaGeneration !== rushFlowGeneration || !isRushCaptchaPending))
+      if (!isSigninCaptchaCandidateCurrent(candidate)) {
+        refreshSigninCaptchaCandidate(candidate);
         return;
+      }
+      notify(t(candidate.kind === "rush" ? "rushCaptchaOpened" : "signinCaptchaOpened"));
       captcha.showCaptcha();
     } catch (error) {
       if (generation !== captchaGeneration) return;
       // Geetest 可能已插入弹窗后才回调异常，不能因此重复弹错。
       if (!hasVisibleCaptcha()) notify(error.message || t("captchaLoadFailed"));
     } finally {
+      const currentCandidate = activeSigninCaptchaCandidate;
       const shouldReopen =
-        generation !== captchaGeneration &&
-        (isRushCaptchaPending || (!isRushCaptcha && rushPreparationPromise === null));
+        currentCandidate !== null &&
+        isSigninCaptchaCandidateCurrent(currentCandidate) &&
+        (generation !== captchaGeneration || currentCandidate !== candidate);
       isCaptchaOpening = false;
-      if (shouldReopen) openCaptchaWindow(isRushCaptchaPending, rushCaptchaGeneration);
+      if (shouldReopen) openCaptchaWindow(currentCandidate);
     }
   }
 
@@ -1407,10 +1593,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * 提交一次验证码签到请求。
    *
    * @param {object} validation Geetest v4 或 v3 验证结果。
+   * @param {object} authorization 产生本次验证码的签到授权。
    * @returns {Promise<object>} 签到接口响应。
    */
-  function submitSignin(validation) {
+  function submitSignin(validation, authorization: SigninAuthorization) {
     return profile("signin", {
+      sign_token: authorization.signToken,
       verify_bind_token_sign: JSON.stringify({ ...validation, captcha_id: CAPTCHA_ID }),
     });
   }
@@ -1435,14 +1623,15 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * 提交验证码结果完成签到。
    *
    * @param {object} validation Geetest v4 或 v3 验证结果。
+   * @param {object} authorization 产生本次验证码的签到授权。
    * @returns {Promise<void>} 签到请求完成。
    */
-  async function sign(validation) {
+  async function sign(validation, authorization: SigninAuthorization) {
     if (isSigning || !validation) return;
     isSigning = true;
     const submittedAt = serverNow();
     try {
-      const result = await submitSignin(validation);
+      const result = await submitSignin(validation, authorization);
       if (result.code !== 1) throw new Error(result.msg || t("signinFailed"));
       await finishSignSuccess(result, submittedAt);
     } catch (error) {
@@ -1452,7 +1641,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       isSigning = false;
       // 普通提交占用验证码期间 rush 可能已完成准备；释放占用后补开当前验证码。
       if (isRushCaptchaPending) {
-        openCaptchaWindow(true, rushCaptchaGeneration);
+        const candidate = activeSigninCaptchaCandidate;
+        if (candidate?.kind === "rush") openCaptchaWindow(candidate);
       }
     }
   }
@@ -1513,7 +1703,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * @returns {void}
    */
   function clearRushFlow() {
-    const hadRushSubmission = isRushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null;
+    const hasRushSubmission = isRushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null;
     if (rushSubmitTimer !== null) clearTimeout(rushSubmitTimer);
     if (rushSubmitState) rushSubmitState.finished = true;
     rushSubmitTimer = null;
@@ -1524,8 +1714,10 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     rushPreparationPromise = null;
     rushPreparingGeneration = 0;
     rushPreparingTargetMidnight = 0;
-    if (hadRushSubmission) {
-      // 取消时重置 rush 验证码，迟到的 onSuccess 会因保留的归属代号被丢弃。
+    const activeCandidate = activeSigninCaptchaCandidate;
+    if (activeCandidate?.kind === "rush") discardSigninCaptchaCandidate(activeCandidate);
+    if (hasRushSubmission) {
+      // 取消时重置 rush 验证码，迟到的 onSuccess 会因代号或验证码世代不匹配被丢弃。
       captcha?.reset?.();
     }
   }
@@ -1576,12 +1768,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function finishRushSubmit(state, result) {
     // 旧轮次的并发响应不能停止当前轮次的定时器或覆盖其结果。
     if (rushSubmitState !== state || state.finished) return;
-    const ownsTarget = rushTargetMidnight === state.targetMidnight;
+    const isTargetOwned = rushTargetMidnight === state.candidate.targetMidnight;
     state.finished = true;
     rushSubmitState = null;
     if (rushSubmitTimer !== null) clearTimeout(rushSubmitTimer);
     rushSubmitTimer = null;
-    if (ownsTarget) {
+    if (isTargetOwned) {
       rushSubmitAt = 0;
       rushTargetMidnight = 0;
     }
@@ -1608,17 +1800,22 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * 按固定间隔发起抢签到提交，不等待前一个请求返回。
    *
    * @param {object} validation Geetest 验证结果。
-   * @param {number} flowGeneration 当前 rush 流程代号。
-   * @param {number} targetMidnight 本轮服务端零点时间戳。
+   * @param {object} candidate 产生本次验证结果的 Rush 候选。
    * @returns {void}
    */
-  function startRushSubmit(validation, flowGeneration, targetMidnight) {
-    if (!validation || flowGeneration !== rushFlowGeneration || rushSubmitState !== null) return;
+  function startRushSubmit(validation, candidate: RushSigninCaptchaCandidate) {
+    if (
+      !validation ||
+      candidate.flowGeneration !== rushFlowGeneration ||
+      candidate.targetMidnight !== rushTargetMidnight ||
+      !isSigninAuthorizationCurrent(candidate.authorization) ||
+      rushSubmitState !== null
+    )
+      return;
     const state = {
+      candidate,
       totalAttempts: rushSubmitRetries() + 1,
       intervalMs: rushSubmitIntervalMs(),
-      flowGeneration,
-      targetMidnight,
       firstSubmittedAt: serverNow(),
       sent: 0,
       pending: 0,
@@ -1627,13 +1824,18 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     };
     rushSubmitState = state;
 
-    const isCurrent = () => rushSubmitState === state && !state.finished && state.flowGeneration === rushFlowGeneration;
+    const isCurrent = () =>
+      rushSubmitState === state &&
+      !state.finished &&
+      state.candidate.flowGeneration === rushFlowGeneration &&
+      state.candidate.targetMidnight === rushTargetMidnight &&
+      isSigninAuthorizationCurrent(state.candidate.authorization);
     const submit = () => {
       if (!isCurrent()) return;
       state.sent += 1;
       state.pending += 1;
       Promise.resolve()
-        .then(() => submitSignin(validation))
+        .then(() => submitSignin(validation, state.candidate.authorization))
         .then(
           (result) => {
             state.pending -= 1;
@@ -1713,6 +1915,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         const statusRequest = sharedSigninStatus(accountStatus() !== "已登录");
         const statusStartedAt = statusRequest.startedAt;
         const result = await statusRequest;
+        const evidence = signinStatusEvidence(result, statusRequest);
         if (
           flowGeneration !== rushFlowGeneration ||
           !hasCredentials() ||
@@ -1736,6 +1939,8 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           rushTargetMidnight = 0;
           return;
         }
+        const authorization = signinAuthorization(evidence);
+        if (!authorization) return;
         const captchaError = await captchaReady;
         if (captchaError) throw captchaError;
         if (
@@ -1750,8 +1955,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         }
         rushCaptchaGeneration = flowGeneration;
         isRushCaptchaPending = true;
-        notify(t("rushCaptchaOpened"));
-        openCaptchaWindow(true, flowGeneration);
+        openCaptchaWindow({
+          kind: "rush",
+          authorization,
+          flowGeneration,
+          submitAt,
+          targetMidnight,
+        });
       } catch (error) {
         if (
           flowGeneration !== rushFlowGeneration ||
@@ -1837,48 +2047,43 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    * 根据抢签到模式决定立即开始提交或等到服务端零点后开始提交。
    *
    * @param {object} validation Geetest 验证结果。
+   * @param {object} candidate 产生验证结果的签到候选。
    * @returns {void}
    */
-  function handleCaptchaSuccess(validation) {
-    if (!validation) return;
-    const flowGeneration = rushCaptchaGeneration;
-    if (flowGeneration === null) {
-      sign(validation);
+  function handleCaptchaSuccess(validation, candidate: SigninCaptchaCandidate) {
+    if (!validation || activeSigninCaptchaCandidate !== candidate) return;
+    if (!isSigninCaptchaCandidateCurrent(candidate)) {
+      refreshSigninCaptchaCandidate(candidate);
+      return;
+    }
+    activeSigninCaptchaCandidate = null;
+    if (candidate.kind === "regular") {
+      sign(validation, candidate.authorization);
       return;
     }
     // 已取消、已换日或已排队的旧验证码回调不能降级为普通签到。
-    if (
-      flowGeneration !== rushFlowGeneration ||
-      !isRushCaptchaPending ||
-      rushSubmitState !== null ||
-      rushSubmitTimer !== null ||
-      !rushModeEnabled() ||
-      (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
-    )
-      return;
-    const submitAt = rushSubmitAt;
-    const targetMidnight = rushTargetMidnight;
-    if (!submitAt || !targetMidnight) return;
+    if (rushSubmitState !== null || rushSubmitTimer !== null) return;
     isRushCaptchaPending = false;
-    if (serverNow() >= submitAt) {
+    if (serverNow() >= candidate.submitAt) {
       rushSubmitAt = 0;
-      startRushSubmit(validation, flowGeneration, targetMidnight);
+      startRushSubmit(validation, candidate);
       return;
     }
-    const delay = submitAt - serverNow();
+    const delay = candidate.submitAt - serverNow();
     notify(t("captchaReady", { delay: formatDuration(delay) }));
     const timer = setTimeout(() => {
       if (rushSubmitTimer === timer) rushSubmitTimer = null;
       if (
-        flowGeneration !== rushFlowGeneration ||
-        rushCaptchaGeneration !== flowGeneration ||
-        rushTargetMidnight !== targetMidnight ||
+        candidate.flowGeneration !== rushFlowGeneration ||
+        rushCaptchaGeneration !== candidate.flowGeneration ||
+        rushTargetMidnight !== candidate.targetMidnight ||
+        !isSigninAuthorizationCurrent(candidate.authorization) ||
         !rushModeEnabled() ||
         (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
       )
         return;
       rushSubmitAt = 0;
-      startRushSubmit(validation, flowGeneration, targetMidnight);
+      startRushSubmit(validation, candidate);
     }, delay);
     rushSubmitTimer = timer;
   }
@@ -1913,12 +2118,30 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     if (!isManual && isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage()) {
       return Promise.resolve();
     }
+    const activeCandidate = activeSigninCaptchaCandidate;
+    if (activeCandidate) {
+      if (isSigninCaptchaCandidateCurrent(activeCandidate)) {
+        if (shouldForceCaptcha || autoPopupEnabled()) openCaptchaWindow(activeCandidate);
+        return Promise.resolve();
+      }
+      discardSigninCaptchaCandidate(activeCandidate);
+    }
+    // 状态接口会签发本次提交 token；验证码和 Rush 提交存活期间不能用后台轮询刷新它。
+    if (
+      isSigning ||
+      rushPreparationPromise !== null ||
+      isRushCaptchaPending ||
+      rushSubmitTimer !== null ||
+      rushSubmitState !== null
+    ) {
+      return Promise.resolve();
+    }
     if (checkPromise) {
       return checkPromise.then((state) => {
         if (shouldForceCaptcha && state?.error) {
           notify(state.error.message || t("checkFailed"));
-        } else if (shouldForceCaptcha && state?.result && !state.stale) {
-          applyCheckResult(state.result, shouldForceCaptcha, state.elapsedMs, state.statusStartedAt);
+        } else if (shouldForceCaptcha && state?.evidence && !state.stale) {
+          applyCheckResult(state.evidence, shouldForceCaptcha, state.elapsedMs);
         }
         return state;
       });
@@ -1926,31 +2149,29 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     const run = (async () => {
       const startedAt = performance.now();
       const successSerialAtStart = signinSuccessSerial;
-      let statusStartedAt = serverNow();
       try {
         const statusRequest = sharedSigninStatus(accountStatus() !== "已登录");
-        statusStartedAt = statusRequest.startedAt;
+        const statusStartedAt = statusRequest.startedAt;
         const result = await statusRequest;
+        const evidence = signinStatusEvidence(result, statusRequest);
         const elapsedMs = performance.now() - startedAt;
         if (!result.signin && signinSuccessSerial !== successSerialAtStart && lastSigninSuccessAt >= statusStartedAt) {
           // 旧状态响应不能在已确认成功后重新打开验证码。
           return {
-            result,
+            evidence,
             elapsedMs,
-            statusStartedAt,
             stale: true,
             error: null,
           };
         }
-        applyCheckResult(result, shouldForceCaptcha, elapsedMs, statusStartedAt);
-        return { result, elapsedMs, statusStartedAt, error: null };
+        applyCheckResult(evidence, shouldForceCaptcha, elapsedMs);
+        return { evidence, elapsedMs, error: null };
       } catch (error) {
         setAccountStatus(hasCredentials() ? "登录失败" : "未设置");
         if (shouldForceCaptcha) notify(error.message || t("checkFailed"));
         return {
-          result: null,
+          evidence: null,
           elapsedMs: performance.now() - startedAt,
-          statusStartedAt,
           error,
         };
       }
@@ -1966,13 +2187,18 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   /**
    * 处理一次签到状态结果。
    *
-   * @param {object} result 接口响应。
+   * @param {object} evidence 接口响应及其请求身份。
    * @param {boolean} shouldForceCaptcha 是否强制打开验证码流程。
    * @param {number} elapsedMs 检查耗时。
-   * @param {number} statusStartedAt 状态请求开始时的服务端时间。
    * @returns {void}
    */
-  function applyCheckResult(result, shouldForceCaptcha, elapsedMs, statusStartedAt = serverNow()) {
+  function applyCheckResult(evidence: SigninStatusEvidence, shouldForceCaptcha, elapsedMs) {
+    const { response: result, startedAt: statusStartedAt } = evidence;
+    if (!isSameLoginCredentials(evidence.credentials, loginCredentials())) {
+      notify(t("checkingStatus"));
+      setTimeout(() => void check({ shouldForceCaptcha: true, isManual: true }), 0);
+      return;
+    }
     setAccountStatus("已登录");
     if (result.signin) {
       stopRushForKnownSignin(statusStartedAt);
@@ -1983,25 +2209,47 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     }
     notifyNeedSign(shouldForceCaptcha, elapsedMs);
     if (shouldForceCaptcha || autoPopupEnabled()) {
-      openCaptchaWindow();
+      let authorization: SigninAuthorization | null;
+      try {
+        authorization = signinAuthorization(evidence);
+      } catch (error) {
+        if (shouldForceCaptcha) notify(error.message || t("signinTokenMissing"));
+        return;
+      }
+      if (!authorization) {
+        notify(t("checkingStatus"));
+        setTimeout(() => void check({ shouldForceCaptcha: true, isManual: true }), 0);
+        return;
+      }
+      openCaptchaWindow({ kind: "regular", authorization });
     }
   }
 
   /**
    * 在当前页面最多打开一个验证码窗口。
    *
-   * @param {boolean} [isRush=false] 是否由 rush 准备流程调用。. Default is `false`
-   * @param {number | null} [flowGeneration=null] Rush 流程代号。. Default is `null`
+   * @param {object} candidate 由状态响应构造的验证码候选。
    * @returns {void}
    */
-  function openCaptchaWindow(isRush = false, flowGeneration = null) {
+  function openCaptchaWindow(candidate: SigninCaptchaCandidate) {
+    if (!isSigninCaptchaCandidateCurrent(candidate)) {
+      refreshSigninCaptchaCandidate(candidate);
+      return;
+    }
+    const isRush = candidate.kind === "rush";
     // rush 准备期间普通流程让位，避免两个异步回调争抢同一个验证码实例。
     const canOpen = isRush
-      ? flowGeneration === rushFlowGeneration && rushCaptchaGeneration === flowGeneration && isRushCaptchaPending
+      ? rushCaptchaGeneration === candidate.flowGeneration
       : rushPreparationPromise === null && !isRushCaptchaPending;
     if (rushSubmitTimer === null && rushSubmitState === null && canOpen && !hasVisibleCaptcha()) {
+      if (activeSigninCaptchaCandidate && activeSigninCaptchaCandidate !== candidate) {
+        captchaGeneration += 1;
+        captcha?.reset?.();
+        captcha = null;
+      }
+      activeSigninCaptchaCandidate = candidate;
       if (!isRush) rushCaptchaGeneration = null;
-      openCaptcha();
+      openCaptcha(candidate);
     }
   }
 

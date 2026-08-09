@@ -30,7 +30,7 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 2. [从 GitHub 直链安装用户脚本](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js)，或[从 Greasy Fork 安装](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper)。
 3. 打开 `https://www.blogsclub.org/` 或其他 BlogsClub 页面。
 4. 在用户脚本管理器菜单中选择 `BlogsClub 账号：未设置`，输入邮箱和密码。
-5. 按提示手动完成登录 Geetest 安全校验，然后选择 `立即检查/签到` 立即检查；如果当天还未签到，脚本会再次打开 Geetest 验证码。
+5. 按提示手动完成登录 Geetest 安全校验，然后选择 `立即检查/签到` 立即检查；每次弹出 Geetest 前，通知会说明它用于登录、普通签到还是抢签到。
 
 默认只在 BlogsClub 页面自动检查状态；手动执行 `立即检查/签到` 不受页面限制。密码保存在用户脚本管理器的本地存储中，只发送到 BlogsClub 登录接口。
 

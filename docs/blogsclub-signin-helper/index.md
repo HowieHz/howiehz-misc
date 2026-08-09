@@ -36,6 +36,8 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 
 默认配置只在 BlogsClub 页面自动检查状态；`立即检查/签到` 不受该限制，可在其他匹配页面手动执行。
 
+每次实际弹出 Geetest 前，脚本都会通知本次验证码用于登录、普通签到还是零点抢签到。
+
 ## 菜单与配置
 
 | 菜单项                                  | 默认值   | 作用                                                                                      |
@@ -76,6 +78,8 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 
 后台发现已签到时通常不弹通知。后台发现未签到时，每个自然日最多通知一次；如果开启自动验证码弹窗，会同时打开验证码。
 
+验证码或抢签到提交持有当前 `signinStatus` 签发的签到 token 时，后台轮询会暂停，避免后续状态请求刷新这份提交凭据。
+
 轮询计时器在上一轮检查完成后再安排下一轮，因此网络请求较慢时，下一轮时间会相应后移。把周期设得过短会增加请求数量，也可能触发站点限流。
 
 ### 手动检查
@@ -98,9 +102,9 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 
 1. 请求 BlogsClub 登录页，读取 HTTP `Date`，估算服务端与本机的时钟差。
 2. 根据校准后的时间安排下一次服务端零点。
-3. 按“抢签到提前加载验证码”配置的时间（默认零点前 5 秒），同时启动 Geetest 组件加载和 `signinStatus` 检查。
+3. 按“抢签到提前加载验证码”配置的时间（默认零点前 5 秒），同时启动 Geetest 组件加载和 `signinStatus` 检查，并保存响应签发的签到 token。
 4. 检查结果确认登录流程后，显示验证码。零点前的状态属于前一天时，不会用它跳过新一天的签到。
-5. 用户在零点前完成验证码时，脚本暂存验证结果。
+5. 用户在零点前完成验证码时，脚本将验证结果与本轮签到 token 一起暂存。
 6. 到达校准后的服务端零点后按“抢签到提交延迟”配置发送第一次 `action=signin`。
 7. 尚未收到成功响应时，按“抢签到提交重试间隔”继续发送，最多重试配置的次数；不等待前一个请求返回，任一次响应确认签到成功后立即停止后续重试。
 8. 如果用户完成验证码时已经过了目标提交时间，则立即开始第一次提交，不再等待精确时刻。
@@ -119,8 +123,8 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 | --------------------------------------------------- | ------------------------------------------------- |
 | `GET https://www.blogsclub.org/login.html`          | 获取登录 token，并读取 HTTP `Date` 进行时钟校准。 |
 | `POST /index.php/getLogin`                          | 使用保存的邮箱、密码和 Geetest 安全校验结果登录。 |
-| `POST /index.php/getProfile`, `action=signinStatus` | 查询当日签到状态。                                |
-| `POST /index.php/getProfile`, `action=signin`       | 提交 Geetest 验证结果并签到。                     |
+| `POST /index.php/getProfile`, `action=signinStatus` | 查询当日签到状态并获取本次签到 token。            |
+| `POST /index.php/getProfile`, `action=signin`       | 提交签到 token 和 Geetest 验证结果并签到。        |
 | `POST /index.php/getProfile`, `action=signinRank`   | 查询今日签到排名数据。                            |
 | `GET /usercenter.html`                              | 读取当前用户 `blog_id`，用于匹配排名。            |
 

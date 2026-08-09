@@ -36,6 +36,8 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 
 By default, automatic status checks run only on BlogsClub pages. Manual `Check now / check in` actions are available on any matched page.
 
+Immediately before Geetest opens, a notification identifies whether the CAPTCHA is for login, normal check-in, or Rush Check-in.
+
 ## Menu and Settings
 
 | Menu item                                                  | Default          | What it controls                                                                                                               |
@@ -76,6 +78,8 @@ The script calls the check-in status endpoint at the configured interval. With a
 
 When polling finds that you have already checked in, it normally stays quiet. When it finds that you have not checked in, it sends at most one background notification per local calendar day. If automatic CAPTCHA popups are enabled, it also opens the challenge.
 
+While a CAPTCHA or Rush submission holds the check-in token issued by its `signinStatus` response, background polling pauses so a later status request cannot refresh that submission credential.
+
 The next polling timer is scheduled after the previous check finishes. A slow request therefore pushes the next cycle back. Very short intervals create more traffic and may run into site rate limits.
 
 ### Manual Check
@@ -98,9 +102,9 @@ The flow is:
 
 1. Request the BlogsClub login page and read its HTTP `Date` header to estimate the server clock offset.
 2. Schedule the next server midnight using that calibrated clock.
-3. At the configured lead time (five seconds by default) before server midnight, start loading the Geetest component and run `signinStatus` in parallel.
+3. At the configured lead time (five seconds by default) before server midnight, start loading the Geetest component, run `signinStatus` in parallel, and retain the check-in token issued by the response.
 4. After the status/login preparation completes, show the CAPTCHA. A status result received before midnight belongs to the previous day and is not used to skip the new day's check-in.
-5. If you finish the CAPTCHA before midnight, keep the validation result in memory.
+5. If you finish the CAPTCHA before midnight, keep its validation result together with this Rush attempt's check-in token.
 6. At the configured submission delay after calibrated server midnight, send the first `action=signin` request.
 7. While no success response has arrived, start retries at the configured interval, up to the configured retry count. Do not wait for the previous request; stop scheduling retries as soon as any response confirms a successful check-in.
 8. If you finish after the target submission time, start the first submission immediately instead of waiting for an exact timestamp.
@@ -119,8 +123,8 @@ The script uses these BlogsClub endpoints:
 | --------------------------------------------------- | ----------------------------------------------------------------- |
 | `GET https://www.blogsclub.org/login.html`          | Fetch the login token and read HTTP `Date` for clock calibration. |
 | `POST /index.php/getLogin`                          | Log in with the saved email, password, and Geetest validation.    |
-| `POST /index.php/getProfile`, `action=signinStatus` | Check today's check-in status.                                    |
-| `POST /index.php/getProfile`, `action=signin`       | Submit the Geetest validation and check in.                       |
+| `POST /index.php/getProfile`, `action=signinStatus` | Check today's status and obtain the current check-in token.       |
+| `POST /index.php/getProfile`, `action=signin`       | Submit the check-in token and Geetest validation.                 |
 | `POST /index.php/getProfile`, `action=signinRank`   | Fetch today's ranking data.                                       |
 | `GET /usercenter.html`                              | Read the current user's `blog_id` for ranking matching.           |
 

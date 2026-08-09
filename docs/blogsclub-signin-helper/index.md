@@ -30,7 +30,7 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 2. [从 GitHub 直链安装用户脚本](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js)，或[从 Greasy Fork 安装](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper)。
 3. 打开 `https://www.blogsclub.org/` 或其他 BlogsClub 页面。
 4. 打开用户脚本管理器菜单，选择 `BlogsClub 账号：未设置`。
-5. 输入 BlogsClub 邮箱和密码。
+5. 输入 BlogsClub 邮箱和密码，并按提示手动完成登录 Geetest 安全校验。
 6. 账号状态先显示 `已保存`；完成一次成功的状态检查或登录后显示 `已登录`。
 7. 需要立即检查时，选择 `立即检查/签到`。
 
@@ -62,7 +62,7 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 - `未设置`：没有完整保存邮箱和密码。
 - `已保存`：凭据已写入用户脚本管理器本地存储，但尚未代表密码验证成功。
 - `已登录`：最近一次状态检查或登录成功。
-- `登录失败`：最近一次需要登录的请求失败，常见原因是密码错误、会话失效或网络问题。
+- `登录失败`：最近一次需要登录的请求失败，常见原因是密码错误、未完成安全校验、会话失效或网络问题。
 
 密码只保存到用户脚本管理器的本地存储中。脚本不会把密码发送到验证码服务；密码登录请求只发送到 BlogsClub 登录接口。
 
@@ -118,7 +118,7 @@ BlogsClub 签到助手是一个用户脚本，用于后台检查 BlogsClub 每�
 | 请求                                                | 用途                                              |
 | --------------------------------------------------- | ------------------------------------------------- |
 | `GET https://www.blogsclub.org/login.html`          | 获取登录 token，并读取 HTTP `Date` 进行时钟校准。 |
-| `POST /index.php/getLogin`                          | 使用保存的邮箱和密码登录。                        |
+| `POST /index.php/getLogin`                          | 使用保存的邮箱、密码和 Geetest 安全校验结果登录。 |
 | `POST /index.php/getProfile`, `action=signinStatus` | 查询当日签到状态。                                |
 | `POST /index.php/getProfile`, `action=signin`       | 提交 Geetest 验证结果并签到。                     |
 | `POST /index.php/getProfile`, `action=signinRank`   | 查询今日签到排名数据。                            |

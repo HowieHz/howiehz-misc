@@ -30,7 +30,7 @@ The userscript supports [Tampermonkey](https://www.tampermonkey.net), [Violentmo
 2. [Install the userscript directly from GitHub](https://github.com/HowieHz/howiehz-misc/raw/refs/heads/dist-userscript/blogsclub-signin-helper/blogsclub-signin-helper.user.js) or [install it from Greasy Fork](https://greasyfork.org/scripts/590073-blogsclub-check-in-helper).
 3. Open `https://www.blogsclub.org/` or another BlogsClub page.
 4. Open the userscript manager menu and choose `BlogsClub account: Not configured`.
-5. Enter your BlogsClub email address and password.
+5. Enter your BlogsClub email address and password, then complete the manual Geetest security check when prompted.
 6. The account status initially shows `Saved`. After a successful status check or login, it shows `Logged in`.
 7. Choose `Check now / check in` to check immediately.
 
@@ -62,7 +62,7 @@ The last menu item, `🌐 Switch language`, opens one input box: enter `1` for E
 - `Not configured`: no complete email/password pair is stored.
 - `Saved`: credentials are stored locally, but the password has not necessarily been verified.
 - `Logged in`: the latest status check or login succeeded.
-- `Login failed`: the latest login-required request failed. Common causes include a wrong password, an expired session, or a network error.
+- `Login failed`: the latest login-required request failed. Common causes include a wrong password, an incomplete security check, an expired session, or a network error.
 
 The password is stored in the userscript manager's local storage. It is not sent to the CAPTCHA provider; password login requests go only to the BlogsClub login endpoint.
 
@@ -118,7 +118,7 @@ The script uses these BlogsClub endpoints:
 | Request                                             | Purpose                                                           |
 | --------------------------------------------------- | ----------------------------------------------------------------- |
 | `GET https://www.blogsclub.org/login.html`          | Fetch the login token and read HTTP `Date` for clock calibration. |
-| `POST /index.php/getLogin`                          | Log in with the saved email and password.                         |
+| `POST /index.php/getLogin`                          | Log in with the saved email, password, and Geetest validation.    |
 | `POST /index.php/getProfile`, `action=signinStatus` | Check today's check-in status.                                    |
 | `POST /index.php/getProfile`, `action=signin`       | Submit the Geetest validation and check in.                       |
 | `POST /index.php/getProfile`, `action=signinRank`   | Fetch today's ranking data.                                       |

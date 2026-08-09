@@ -6,6 +6,33 @@ interface Credentials {
   password?: string;
 }
 
+/** 已通过本地配置检查、可用于一次登录请求的凭据。 */
+interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+/** 按凭据身份复用的进行中登录流程。 */
+interface LoginCandidate {
+  credentials: LoginCredentials;
+  promise: Promise<void>;
+}
+
+/** 登录验证码当前请求及其所属 Geetest 实例。 */
+interface LoginCaptchaRequest {
+  instance: CaptchaInstance | null;
+  reject: (reason?: unknown) => void;
+  isResolved: boolean;
+  isShown: boolean;
+  closeTimer: number | null;
+}
+
+/** 登录验证码产生的结果和请求身份，避免清理新一轮验证码。 */
+interface LoginCaptchaResult {
+  validation: Record<string, unknown>;
+  request: LoginCaptchaRequest;
+}
+
 /** 发送 BlogsClub 请求所需的 GM_xmlhttpRequest 选项。 */
 interface RequestOptions {
   method: string;
@@ -31,7 +58,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   window.__BLOGSCLUB_AUTO_SIGNIN__ = true;
 
   const API = "https://www.blogsclub.org"; // BlogsClub 接口和页面请求的根地址。
-  const CAPTCHA_ID = "f70029ad5e8b031ff90bd54bce240f14"; // BlogsClub 签到使用的 Geetest 验证码 ID。
+  const CAPTCHA_ID = "f70029ad5e8b031ff90bd54bce240f14"; // BlogsClub 登录和签到使用的 Geetest 验证码 ID。
   const DEFAULT_INTERVAL_MS = 1000; // 后台状态检查的默认周期：1 秒。
   const MIN_INTERVAL_MS = 1; // 检查周期允许的最小值：1 毫秒。
   const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000; // 检查周期允许的最大值：24 小时。
@@ -454,9 +481,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         notify(t("loginSuccess"), t("configTitle"));
         check();
       })
-      .catch(() => {
+      .catch((error) => {
         setAccountStatus("登录失败");
-        notify(t("loginFailed"), t("configTitle"));
+        notify(error?.message || t("loginFailed"), t("configTitle"));
       });
   }
 
@@ -905,7 +932,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   // 网络请求与 BlogsClub 接口。
-  let loginPromise = null;
+  let loginCandidate: LoginCandidate | null = null;
   let loginPagePromise = null;
   let signinStatusPromise = null;
   let isSigninStatusLoginForced = false;
@@ -1018,20 +1045,63 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    *
    * @returns {Promise<void>} 登录成功或抛出错误。
    */
-  async function login() {
-    const { email, password } = credentials();
-    if (!hasCredentials()) throw new Error(t("accountRequired"));
+  function login() {
+    const saved = credentials();
+    if (!saved.email || !saved.password) return Promise.reject(new Error(t("accountRequired")));
+    const currentCredentials = { email: saved.email, password: saved.password };
+    if (
+      loginCandidate &&
+      loginCandidate.credentials.email === currentCredentials.email &&
+      loginCandidate.credentials.password === currentCredentials.password
+    ) {
+      return loginCandidate.promise;
+    }
+    const promise = performLogin(currentCredentials);
+    const shared = promise.finally(() => {
+      if (loginCandidate?.promise === shared) loginCandidate = null;
+    });
+    loginCandidate = { credentials: currentCredentials, promise: shared };
+    return shared;
+  }
+
+  /**
+   * 使用固定的一组凭据完成一次 BlogsClub 登录。
+   *
+   * @param {object} loginCredentials 本次登录使用的完整凭据。
+   * @returns {Promise<void>} 登录成功或抛出错误。
+   */
+  async function performLogin(loginCredentials: LoginCredentials) {
+    const { email, password } = loginCredentials;
 
     const page = await loginPage();
     const token = page.match(/window\.bcToken\s*=\s*["']([^"']+)["']/)?.[1];
     if (!token) throw new Error(t("loginTokenMissing"));
+    const captchaResult = await loginCaptchaValidation();
 
-    const result = await request({
-      method: "POST",
-      url: `${API}/index.php/getLogin`,
-      data: form({ type: "password", email, password, token }),
-    });
-    if (result.code !== 1) throw new Error(result.msg || t("loginFailed"));
+    try {
+      const currentCredentials = credentials();
+      if (currentCredentials.email !== email || currentCredentials.password !== password) {
+        throw new Error(t("loginFailed"));
+      }
+      const result = await request({
+        method: "POST",
+        url: `${API}/index.php/getLogin`,
+        data: form({
+          type: "password",
+          email,
+          password,
+          token,
+          verify_token: JSON.stringify({ ...captchaResult.validation, captcha_id: CAPTCHA_ID }),
+        }),
+      });
+      if (result.code !== 1) throw new Error(result.msg || t("loginFailed"));
+      const latestCredentials = credentials();
+      if (latestCredentials.email !== email || latestCredentials.password !== password) {
+        throw new Error(t("loginFailed"));
+      }
+    } finally {
+      resetLoginCaptcha(captchaResult.request);
+    }
   }
 
   /**
@@ -1091,12 +1161,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         // Retry with saved credentials below.
       }
     }
-    if (!loginPromise) {
-      loginPromise = login().finally(() => {
-        loginPromise = null;
-      });
-    }
-    await loginPromise;
+    await login();
     result = await profile("signinStatus");
     if (result.code !== 1) throw new Error(result.msg || t("loginSessionExpired"));
     return result;
@@ -1132,6 +1197,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   let captcha = null;
   let captchaGeneration = 0;
   let captchaLoadPromise = null;
+  let activeLoginCaptcha: LoginCaptchaRequest | null = null;
   let isCaptchaOpening = false;
   let isSigning = false;
   let signinSuccessSerial = 0;
@@ -1196,6 +1262,90 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       captchaLoadPromise = null;
     });
     return captchaLoadPromise;
+  }
+
+  /**
+   * 获取一次用于 BlogsClub 登录的人工 Geetest 结果。
+   *
+   * @returns {Promise<object>} Geetest v4 验证结果及其请求身份。
+   */
+  function loginCaptchaValidation() {
+    cancelLoginCaptcha();
+    captchaGeneration += 1;
+    captcha?.reset?.();
+    captcha = null;
+    return loadCaptcha().then(() => {
+      const init = geetestInit();
+      if (!init) throw new Error(t("captchaNotLoaded"));
+      let request: LoginCaptchaRequest | null = null;
+      const resultPromise = new Promise<LoginCaptchaResult>((resolve, reject) => {
+        request = { instance: null, reject, isResolved: false, isShown: false, closeTimer: null };
+        activeLoginCaptcha = request;
+        init({ captchaId: CAPTCHA_ID, product: "bind", language: captchaLanguage(), riskType: "slide" }, (instance) => {
+          if (!request || activeLoginCaptcha !== request) {
+            instance.reset();
+            return;
+          }
+          request.instance = instance;
+          instance.onReady(() => {
+            if (activeLoginCaptcha === request) {
+              request.isShown = true;
+              instance.showCaptcha();
+            }
+          });
+          instance.onClose?.(() => reject(new Error(t("loginFailed"))));
+          instance.onError((error) => reject(error instanceof Error ? error : new Error(t("captchaLoadFailed"))));
+          instance.onSuccess(() => {
+            const validation = instance.getValidate();
+            if (!validation) {
+              reject(new Error(t("captchaLoadFailed")));
+              return;
+            }
+            request.isResolved = true;
+            resolve({ validation, request });
+          });
+          request.closeTimer = window.setInterval(() => {
+            if (activeLoginCaptcha === request && request.isShown && !request.isResolved && !hasVisibleCaptcha()) {
+              reject(new Error(t("loginFailed")));
+            }
+          }, 250);
+        });
+      });
+      return resultPromise.finally(() => {
+        if (!request) return;
+        if (request.closeTimer !== null) window.clearInterval(request.closeTimer);
+        if (!request.isResolved) {
+          if (activeLoginCaptcha === request) activeLoginCaptcha = null;
+          request.instance?.reset();
+        }
+      });
+    });
+  }
+
+  /**
+   * 取消并清理当前登录验证码；请求身份不匹配时不影响新一轮验证码。
+   *
+   * @param {object} request 要清理的登录验证码请求。
+   * @returns {void}
+   */
+  function resetLoginCaptcha(request: LoginCaptchaRequest) {
+    if (activeLoginCaptcha === request) activeLoginCaptcha = null;
+    if (request.closeTimer !== null) window.clearInterval(request.closeTimer);
+    request.instance?.reset();
+  }
+
+  /**
+   * 使旧登录验证码失败，避免账号切换后继续消费旧验证结果。
+   *
+   * @returns {void}
+   */
+  function cancelLoginCaptcha() {
+    const request = activeLoginCaptcha;
+    if (!request) return;
+    activeLoginCaptcha = null;
+    if (request.closeTimer !== null) window.clearInterval(request.closeTimer);
+    request.reject(new Error(t("loginFailed")));
+    request.instance?.reset();
   }
 
   /**

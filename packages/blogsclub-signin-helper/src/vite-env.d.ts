@@ -10,6 +10,7 @@ interface Window {
 
 interface CaptchaInstance {
   onReady(callback: () => void): CaptchaInstance;
+  onClose?: (callback: () => void) => CaptchaInstance;
   onError(callback: (error: unknown) => void): CaptchaInstance;
   onSuccess(callback: () => void): CaptchaInstance;
   getValidate(): Record<string, unknown>;

@@ -1,9 +1,9 @@
 {
-  "fileSize": 110652,
-  "md5": "56d62461737e56a32ea7cec1fba755c8",
-  "sha256": "b763e54c157e4ea0428f8fd92a73517ab5a96013590545eb311847c02344e5d1",
+  "fileSize": 110649,
+  "md5": "64e064b15795fe74c0719d415434cca2",
+  "sha256": "0ed01f95f49ba87bdf40d9bba4023670e8ea8ce644d91c1d11496526832dec40",
   "version": "2.1.0",
-  "sourceCommit": "7d1b02d9b167d9e443c699b20d98250779620b5e",
-  "sourceCommitShort": "7d1b02d9b167",
-  "sourceCommitTime": "2026-08-08T06:16:24+08:00"
+  "sourceCommit": "2ba809b070f169abdb272a86926c9f8af9da7e4a",
+  "sourceCommitShort": "2ba809b070f1",
+  "sourceCommitTime": "2026-08-10T07:44:50+08:00"
 }

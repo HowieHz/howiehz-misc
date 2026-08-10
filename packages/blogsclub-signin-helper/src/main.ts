@@ -1598,7 +1598,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    */
   function submitSignin(validation, authorization: SigninAuthorization) {
     return profile("signin", {
-      sign_token: authorization.signToken,
+      security_token: authorization.signToken,
       verify_bind_token_sign: JSON.stringify({ ...validation, captcha_id: CAPTCHA_ID }),
     });
   }

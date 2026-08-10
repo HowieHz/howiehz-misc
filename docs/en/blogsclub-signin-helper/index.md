@@ -40,18 +40,20 @@ Immediately before Geetest opens, a notification identifies whether the CAPTCHA 
 
 ## Menu and Settings
 
-| Menu item                                                  | Default          | What it controls                                                                                                               |
-| ---------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `Check now / check in`                                     | —                | Check now. If you have not checked in, open the CAPTCHA and allow a manual check-in.                                           |
-| `BlogsClub account: ...`                                   | `Not configured` | Save or update the email address and password.                                                                                 |
-| `Check interval: 1000 ms`                                  | 1 second         | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours. |
-| `Automatic status checks only on BlogsClub pages: Enabled` | Enabled          | Restrict background polling and Rush Check-in to BlogsClub pages; manual checks are unrestricted.                              |
-| `Auto CAPTCHA popup when check-in is available: Enabled`   | Enabled          | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                |
-| `Rush Check-in mode: Enabled`                              | Enabled          | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                    |
-| `Rush Check-in CAPTCHA lead time: 5 seconds`               | 5 seconds        | Set how long before server midnight to start preparing the CAPTCHA; from 1 to 60 seconds.                                      |
-| `Rush Check-in submission delay: 500 ms`                   | 500 ms           | Delay the first submission after server midnight; from 0 to 60000 ms.                                                          |
-| `Rush Check-in submission retries: 50`                     | 50 retries       | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                            |
-| `Rush Check-in retry interval: 200 ms`                     | 200 ms           | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                |
+| Menu item                                                  | Default          | What it controls                                                                                                                                       |
+| ---------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Check now / check in`                                     | —                | Check now. If you have not checked in, open the CAPTCHA and allow a manual check-in.                                                                   |
+| `BlogsClub account: ...`                                   | `Not configured` | Save or update the email address and password.                                                                                                         |
+| `Check interval: 1000 ms`                                  | 1 second         | Background polling interval: how long to wait after one check request finishes before sending the next, from 1 ms to 24 hours.                         |
+| `Pause automatic checks after today's check-in: Enabled`   | Enabled          | Pause normal polling after today's check-in is confirmed, then resume after server midnight.                                                           |
+| `Automatic status checks only on BlogsClub pages: Enabled` | Enabled          | Restrict background polling and Rush Check-in to BlogsClub pages; manual checks are unrestricted.                                                      |
+| `Auto CAPTCHA popup when check-in is available: Enabled`   | Enabled          | In normal mode, automatically open the CAPTCHA when polling finds that you have not checked in.                                                        |
+| `Rush Check-in mode: Enabled`                              | Enabled          | Prepare the CAPTCHA before midnight and submit after the server's midnight.                                                                            |
+| `Rush Check-in CAPTCHA lead time: 10 seconds`              | 10 seconds       | Set how long before server midnight to open the CAPTCHA and fetch a fresh check-in token; from 1 to 60 seconds.                                        |
+| `Rush Check-in login check lead time: 60 seconds`          | 60 seconds       | Check the session before opening the CAPTCHA and allow time for login verification; from 1 to 300 seconds, no later than the CAPTCHA preparation time. |
+| `Rush Check-in submission delay: 500 ms`                   | 500 ms           | Delay the first submission after server midnight; from 0 to 60000 ms.                                                                                  |
+| `Rush Check-in submission retries: 50`                     | 50 retries       | Maximum retries while no success response has arrived; from 0 to JavaScript's maximum safe integer.                                                    |
+| `Rush Check-in retry interval: 200 ms`                     | 200 ms           | Start each retry at this interval without waiting for the previous request; from 1 to 60000 ms.                                                        |
 
 A high retry count combined with a short interval can send many concurrent requests in a short time. Set it according to the site's rate limits.
 
@@ -78,7 +80,7 @@ The script calls the check-in status endpoint at the configured interval. With a
 
 When polling finds that you have already checked in, it normally stays quiet. When it finds that you have not checked in, it sends at most one background notification per local calendar day. If automatic CAPTCHA popups are enabled, it also opens the challenge.
 
-While a CAPTCHA or Rush submission holds the check-in token issued by its `signinStatus` response, background polling pauses so a later status request cannot refresh that submission credential.
+After today's check-in is confirmed, normal polling pauses until server midnight by default; disable “Pause automatic checks after today's check-in” to keep continuous polling. While a CAPTCHA or Rush submission holds the check-in token issued by its `signinStatus` response, background polling also pauses so a later status request cannot refresh that submission credential.
 
 The next polling timer is scheduled after the previous check finishes. A slow request therefore pushes the next cycle back. Very short intervals create more traffic and may run into site rate limits.
 
@@ -102,12 +104,13 @@ The flow is:
 
 1. Request the BlogsClub login page and read its HTTP `Date` header to estimate the server clock offset.
 2. Schedule the next server midnight using that calibrated clock.
-3. At the configured lead time (five seconds by default) before server midnight, start loading the Geetest component, run `signinStatus` in parallel, and retain the check-in token issued by the response.
-4. After the status/login preparation completes, show the CAPTCHA. A status result received before midnight belongs to the previous day and is not used to skip the new day's check-in.
-5. If you finish the CAPTCHA before midnight, keep its validation result together with this Rush attempt's check-in token.
-6. At the configured submission delay after calibrated server midnight, send the first `action=signin` request.
-7. While no success response has arrived, start retries at the configured interval, up to the configured retry count. Do not wait for the previous request; stop scheduling retries as soon as any response confirms a successful check-in.
-8. If you finish after the target submission time, start the first submission immediately instead of waiting for an exact timestamp.
+3. At the configured login-check lead time (60 seconds by default) before server midnight, calibrate the clock and confirm the login session; if it is invalid, complete login verification early.
+4. At the configured CAPTCHA lead time (10 seconds by default), request `signinStatus` again for a fresh token and load the Geetest component.
+5. After the status/login preparation completes, show the CAPTCHA. A status result received before midnight belongs to the previous day and is not used to skip the new day's check-in.
+6. If you finish the CAPTCHA before midnight, keep its validation result together with this Rush attempt's check-in token.
+7. At the configured submission delay after calibrated server midnight, send the first `action=signin` request.
+8. While no success response has arrived, start retries at the configured interval, up to the configured retry count. Do not wait for the previous request; stop scheduling retries as soon as any response confirms a successful check-in.
+9. If you finish after the target submission time, start the first submission immediately instead of waiting for an exact timestamp.
 
 The timer checks whether the calibrated server time has reached the target. Browser throttling, system sleep, or network delay does not require the timer to fire at one exact millisecond.
 

@@ -97,9 +97,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   const DEFAULT_INTERVAL_MS = 1000; // 后台状态检查的默认周期：1 秒。
   const MIN_INTERVAL_MS = 1; // 检查周期允许的最小值：1 毫秒。
   const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000; // 检查周期允许的最大值：24 小时。
-  const DEFAULT_RUSH_LEAD_SECONDS = 5; // 默认在服务端零点前 5 秒打开验证码。
+  const DEFAULT_RUSH_LEAD_SECONDS = 10; // 默认在服务端零点前 10 秒打开验证码。
   const MIN_RUSH_LEAD_SECONDS = 1; // 验证码提前加载允许的最小值：1 秒。
   const MAX_RUSH_LEAD_SECONDS = 60; // 验证码提前加载允许的最大值：60 秒。
+  const DEFAULT_RUSH_SESSION_LEAD_SECONDS = 60; // 默认在服务端零点前 60 秒预检查登录状态。
+  const MIN_RUSH_SESSION_LEAD_SECONDS = 1; // 登录状态预检查允许的最小提前秒数：1 秒。
+  const MAX_RUSH_SESSION_LEAD_SECONDS = 5 * 60; // 登录状态预检查允许的最大提前秒数：5 分钟。
   const DEFAULT_RUSH_SUBMIT_DELAY_MS = 500; // 默认在服务端零点后 500 毫秒提交。
   const MIN_RUSH_SUBMIT_DELAY_MS = 0; // 提交延迟允许为 0，表示零点立即提交。
   const MAX_RUSH_SUBMIT_DELAY_MS = 60 * 1000; // 提交延迟允许的最大值：60 秒。
@@ -115,10 +118,12 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     accountStatus: "blogsclub-auto-signin-account-status",
     language: "blogsclub-auto-signin-language",
     interval: "blogsclub-auto-signin-interval-ms",
+    signinPollingPause: "blogsclub-auto-signin-polling-pause",
     blogsClubAutoCheckOnly: "blogsclub-auto-signin-blogsclub-only",
     autoPopup: "blogsclub-auto-signin-auto-popup",
     rushMode: "blogsclub-auto-signin-rush-mode",
     rushLeadSeconds: "blogsclub-auto-signin-rush-lead-seconds",
+    rushSessionLeadSeconds: "blogsclub-auto-signin-rush-session-lead-seconds",
     rushSubmitDelayMs: "blogsclub-auto-signin-rush-submit-delay-ms",
     rushSubmitRetries: "blogsclub-auto-signin-rush-submit-retries",
     rushSubmitIntervalMs: "blogsclub-auto-signin-rush-submit-interval-ms",
@@ -142,11 +147,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       languageTraditionalChinese: "繁體中文",
       checkNowMenu: "Check now / check in",
       intervalMenu: "Check interval: {value} ms",
+      signinPollingPauseMenu: "Pause automatic checks after today's check-in: {state}",
       accountMenu: "BlogsClub account: {status}",
       blogsClubAutoCheckOnlyMenu: "Automatic status checks only on BlogsClub pages: {state}",
       autoPopupMenu: "Auto CAPTCHA popup when check-in is available: {state}",
       rushModeMenu: "Rush Check-in mode: {state}",
       rushLeadMenu: "Rush Check-in CAPTCHA lead time: {value} seconds",
+      rushSessionLeadMenu: "Rush Check-in login check lead time: {value} seconds",
       rushSubmitDelayMenu: "Rush Check-in submission delay: {value} ms",
       rushSubmitRetriesMenu: "Rush Check-in submission retries: {value}",
       rushSubmitIntervalMenu: "Rush Check-in retry interval: {value} ms",
@@ -164,9 +171,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       intervalPrompt: "Check interval (milliseconds, {min}-{max})",
       invalidInterval: "Enter an integer from {min} to {max}.",
       intervalSaved: "Check interval set to {value} ms.",
+      signinPollingPauseChanged: "Automatic checks after today's check-in {state}.",
       rushLeadPrompt: "Rush Check-in CAPTCHA lead time (seconds, {min}-{max})",
       invalidRushLead: "Enter an integer number of seconds from {min} to {max}.",
       rushLeadSaved: "Rush Check-in CAPTCHA lead time set to {value} seconds.",
+      rushSessionLeadPrompt: "Rush Check-in login check lead time (seconds, {min}-{max})",
+      invalidRushSessionLead: "Enter an integer number of seconds from {min} to {max}.",
+      rushSessionLeadSaved: "Rush Check-in login check lead time set to {value} seconds.",
       rushSubmitDelayPrompt: "Rush Check-in submission delay (milliseconds, {min}-{max})",
       invalidRushSubmitDelay: "Enter an integer number of milliseconds from {min} to {max}.",
       rushSubmitDelaySaved: "Rush Check-in submission delay set to {value} ms.",
@@ -223,11 +234,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       languageTraditionalChinese: "繁體中文",
       checkNowMenu: "立即检查/签到",
       intervalMenu: "检查周期：{value} 毫秒",
+      signinPollingPauseMenu: "今日签到后暂停自动检查：{state}",
       accountMenu: "BlogsClub 账号：{status}",
       blogsClubAutoCheckOnlyMenu: "仅在 BlogsClub 页面自动检查状态：{state}",
       autoPopupMenu: "可签到时自动验证码弹窗：{state}",
       rushModeMenu: "零点抢签到模式：{state}",
       rushLeadMenu: "抢签到提前加载验证码：{value} 秒",
+      rushSessionLeadMenu: "抢签到登录状态预检查：提前 {value} 秒",
       rushSubmitDelayMenu: "抢签到提交延迟：{value} 毫秒",
       rushSubmitRetriesMenu: "抢签到提交重试次数：{value} 次",
       rushSubmitIntervalMenu: "抢签到提交重试间隔：{value} 毫秒",
@@ -245,9 +258,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       intervalPrompt: "检查周期（毫秒，{min}～{max}）",
       invalidInterval: "请输入 {min}～{max} 的整数。",
       intervalSaved: "检查周期已设置为 {value} 毫秒。",
+      signinPollingPauseChanged: "今日签到后暂停自动检查已{state}。",
       rushLeadPrompt: "抢签到提前加载验证码时间（秒，{min}～{max}）",
       invalidRushLead: "请输入 {min}～{max} 的整数秒数。",
       rushLeadSaved: "抢签到提前加载验证码时间已设置为 {value} 秒。",
+      rushSessionLeadPrompt: "抢签到登录状态预检查提前时间（秒，{min}～{max}）",
+      invalidRushSessionLead: "请输入 {min}～{max} 的整数秒数。",
+      rushSessionLeadSaved: "抢签到登录状态预检查提前时间已设置为 {value} 秒。",
       rushSubmitDelayPrompt: "抢签到提交延迟（毫秒，{min}～{max}）",
       invalidRushSubmitDelay: "请输入 {min}～{max} 的整数毫秒数。",
       rushSubmitDelaySaved: "抢签到提交延迟已设置为 {value} 毫秒。",
@@ -303,11 +320,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       languageTraditionalChinese: "繁體中文",
       checkNowMenu: "立即檢查/簽到",
       intervalMenu: "檢查週期：{value} 毫秒",
+      signinPollingPauseMenu: "今日簽到後暫停自動檢查：{state}",
       accountMenu: "BlogsClub 帳號：{status}",
       blogsClubAutoCheckOnlyMenu: "僅在 BlogsClub 頁面自動檢查狀態：{state}",
       autoPopupMenu: "可簽到時自動彈出驗證碼：{state}",
       rushModeMenu: "零點搶簽到模式：{state}",
       rushLeadMenu: "搶簽到提前載入驗證碼：{value} 秒",
+      rushSessionLeadMenu: "搶簽到登入狀態預檢查：提前 {value} 秒",
       rushSubmitDelayMenu: "搶簽到提交延遲：{value} 毫秒",
       rushSubmitRetriesMenu: "搶簽到提交重試次數：{value} 次",
       rushSubmitIntervalMenu: "搶簽到提交重試間隔：{value} 毫秒",
@@ -325,9 +344,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       intervalPrompt: "檢查週期（毫秒，{min}～{max}）",
       invalidInterval: "請輸入 {min}～{max} 的整數。",
       intervalSaved: "檢查週期已設定為 {value} 毫秒。",
+      signinPollingPauseChanged: "今日簽到後暫停自動檢查已{state}。",
       rushLeadPrompt: "搶簽到提前載入驗證碼時間（秒，{min}～{max}）",
       invalidRushLead: "請輸入 {min}～{max} 的整數秒數。",
       rushLeadSaved: "搶簽到提前載入驗證碼時間已設定為 {value} 秒。",
+      rushSessionLeadPrompt: "搶簽到登入狀態預檢查提前時間（秒，{min}～{max}）",
+      invalidRushSessionLead: "請輸入 {min}～{max} 的整數秒數。",
+      rushSessionLeadSaved: "搶簽到登入狀態預檢查提前時間已設定為 {value} 秒。",
       rushSubmitDelayPrompt: "搶簽到提交延遲（毫秒，{min}～{max}）",
       invalidRushSubmitDelay: "請輸入 {min}～{max} 的整數毫秒數。",
       rushSubmitDelaySaved: "搶簽到提交延遲已設定為 {value} 毫秒。",
@@ -535,6 +558,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     }
     GM_setValue(KEYS.credentials, { email: email.trim(), password });
     GM_setValue(KEYS.accountStatus, "已保存");
+    knownSigninDate = "";
     if (activeSigninCaptchaCandidate) discardSigninCaptchaCandidate(activeSigninCaptchaCandidate);
     registerMenus();
     notify(t("accountSaved"), t("configTitle"));
@@ -567,6 +591,15 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   /**
+   * 判断今天签到成功后是否暂停普通状态检查。
+   *
+   * @returns {boolean} 是否启用签到后暂停。
+   */
+  function isSigninPollingPauseEnabled() {
+    return GM_getValue<boolean>(KEYS.signinPollingPause, true) === true;
+  }
+
+  /**
    * 通过菜单配置轮询周期，单位为毫秒。
    *
    * @returns {void}
@@ -583,6 +616,19 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     registerMenus();
     notify(t("intervalSaved", { value }), t("configTitle"));
     check();
+  }
+
+  /**
+   * 切换今日签到后的普通状态检查暂停。
+   *
+   * @returns {void}
+   */
+  function toggleSigninPollingPause() {
+    const isEnabled = !isSigninPollingPauseEnabled();
+    GM_setValue(KEYS.signinPollingPause, isEnabled);
+    registerMenus();
+    notify(t("signinPollingPauseChanged", { state: isEnabled ? t("enabled") : t("disabled") }), t("configTitle"));
+    scheduleChecks(0);
   }
 
   /**
@@ -613,6 +659,19 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     return Number.isSafeInteger(value) && value >= MIN_RUSH_LEAD_SECONDS && value <= MAX_RUSH_LEAD_SECONDS
       ? value
       : DEFAULT_RUSH_LEAD_SECONDS;
+  }
+
+  /**
+   * 读取抢签到登录状态预检查的提前秒数。
+   *
+   * @returns {number} 合法的预检查提前秒数；非法值使用默认值。
+   */
+  function rushSessionLeadSeconds() {
+    const value = Number(GM_getValue(KEYS.rushSessionLeadSeconds, DEFAULT_RUSH_SESSION_LEAD_SECONDS));
+    const minimum = Math.max(MIN_RUSH_SESSION_LEAD_SECONDS, rushLeadSeconds());
+    return Number.isSafeInteger(value) && value >= minimum && value <= MAX_RUSH_SESSION_LEAD_SECONDS
+      ? value
+      : DEFAULT_RUSH_SESSION_LEAD_SECONDS;
   }
 
   /**
@@ -702,6 +761,14 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     registerMenu("interval", t("intervalMenu", { value: intervalMs() }), configureInterval);
   }
 
+  function registerSigninPollingPauseMenu() {
+    registerMenu(
+      "signinPollingPause",
+      t("signinPollingPauseMenu", { state: t(isSigninPollingPauseEnabled() ? "enabled" : "disabled") }),
+      toggleSigninPollingPause,
+    );
+  }
+
   function registerCheckMenu() {
     registerMenu("check", t("checkNowMenu"), () => {
       notify(t("checkingStatus"));
@@ -766,6 +833,14 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     registerMenu("rushLead", t("rushLeadMenu", { value: rushLeadSeconds() }), configureRushLead);
   }
 
+  function registerRushSessionLeadMenu() {
+    registerMenu(
+      "rushSessionLead",
+      t("rushSessionLeadMenu", { value: rushSessionLeadSeconds() }),
+      configureRushSessionLead,
+    );
+  }
+
   /**
    * 通过菜单配置抢签到提前加载验证码时间，单位为秒。
    *
@@ -785,6 +860,38 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     GM_setValue(KEYS.rushLeadSeconds, value);
     registerMenus();
     notify(t("rushLeadSaved", { value }), t("configTitle"));
+    if (rushModeEnabled()) restartRushCheck();
+  }
+
+  /**
+   * 通过菜单配置抢签到登录状态预检查时间，单位为秒。
+   *
+   * @returns {void}
+   */
+  function configureRushSessionLead() {
+    const minimum = Math.max(MIN_RUSH_SESSION_LEAD_SECONDS, rushLeadSeconds());
+    const input = prompt(
+      t("rushSessionLeadPrompt", {
+        min: minimum,
+        max: MAX_RUSH_SESSION_LEAD_SECONDS,
+      }),
+      String(rushSessionLeadSeconds()),
+    );
+    if (input === null) return;
+    const value = Number(input.trim());
+    if (!Number.isSafeInteger(value) || value < minimum || value > MAX_RUSH_SESSION_LEAD_SECONDS) {
+      notify(
+        t("invalidRushSessionLead", {
+          min: minimum,
+          max: MAX_RUSH_SESSION_LEAD_SECONDS,
+        }),
+        t("configTitle"),
+      );
+      return;
+    }
+    GM_setValue(KEYS.rushSessionLeadSeconds, value);
+    registerMenus();
+    notify(t("rushSessionLeadSaved", { value }), t("configTitle"));
     if (rushModeEnabled()) restartRushCheck();
   }
 
@@ -879,11 +986,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   function registerMenus() {
     registerCheckMenu();
     registerIntervalMenu();
+    registerSigninPollingPauseMenu();
     registerAccountMenu();
     registerBlogsClubAutoCheckOnlyMenu();
     registerAutoPopupMenu();
     registerRushModeMenu();
     registerRushLeadMenu();
+    registerRushSessionLeadMenu();
     registerRushSubmitDelayMenu();
     registerRushSubmitRetriesMenu();
     registerRushSubmitIntervalMenu();
@@ -1612,6 +1721,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   async function finishSignSuccess(result, submittedAt = serverNow()) {
     signinSuccessSerial += 1;
     lastSigninSuccessAt = submittedAt;
+    rememberSignin(submittedAt);
     stopRushForKnownSignin(submittedAt);
     // 提交已确认成功；先释放当前验证码，避免慢排名请求重置后续验证码。
     captcha?.reset?.();
@@ -1649,6 +1759,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
 
   // 零点抢签到排程与提交流程。
   let rushTimer = null;
+  let rushCaptchaTimer = null;
   let rushSubmitTimer = null;
   // 用对象身份隔离并发回包，旧轮次不能影响新轮次的重试定时器。
   let rushSubmitState = null;
@@ -1657,6 +1768,9 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   let rushCaptchaGeneration = null;
   let rushSubmitAt = 0;
   let rushTargetMidnight = 0;
+  let rushSessionCheckPromise = null;
+  let rushSessionCheckingGeneration = 0;
+  let rushSessionCheckingTargetMidnight = 0;
   let rushPreparationPromise = null;
   let rushPreparingGeneration = 0;
   let rushPreparingTargetMidnight = 0;
@@ -1704,13 +1818,18 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    */
   function clearRushFlow() {
     const hasRushSubmission = isRushCaptchaPending || rushSubmitTimer !== null || rushSubmitState !== null;
+    if (rushCaptchaTimer !== null) clearTimeout(rushCaptchaTimer);
     if (rushSubmitTimer !== null) clearTimeout(rushSubmitTimer);
     if (rushSubmitState) rushSubmitState.finished = true;
     rushSubmitTimer = null;
+    rushCaptchaTimer = null;
     rushSubmitState = null;
     isRushCaptchaPending = false;
     rushSubmitAt = 0;
     rushTargetMidnight = 0;
+    rushSessionCheckPromise = null;
+    rushSessionCheckingGeneration = 0;
+    rushSessionCheckingTargetMidnight = 0;
     rushPreparationPromise = null;
     rushPreparingGeneration = 0;
     rushPreparingTargetMidnight = 0;
@@ -1720,6 +1839,11 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       // 取消时重置 rush 验证码，迟到的 onSuccess 会因代号或验证码世代不匹配被丢弃。
       captcha?.reset?.();
     }
+  }
+
+  /** Rush 预检查窗口仍在占用签到状态授权。 */
+  function isRushPreparationActive() {
+    return rushSessionCheckPromise !== null || rushCaptchaTimer !== null || rushPreparationPromise !== null;
   }
 
   /**
@@ -1871,6 +1995,66 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
   }
 
   /**
+   * 提前检查抢签到所需的登录状态，但不消费签到授权。
+   *
+   * @param {number} targetMidnight 本轮服务端零点时间戳。
+   * @param {number} flowGeneration 本轮 rush 流程代号。
+   * @returns {Promise<void>} 登录状态检查完成。
+   */
+  async function prepareRushSession(targetMidnight, flowGeneration) {
+    if (
+      flowGeneration !== rushFlowGeneration ||
+      !hasCredentials() ||
+      !rushModeEnabled() ||
+      (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage()) ||
+      (rushSessionCheckPromise &&
+        rushSessionCheckingGeneration === flowGeneration &&
+        rushSessionCheckingTargetMidnight === targetMidnight)
+    ) {
+      return;
+    }
+    const checking = (async () => {
+      try {
+        await calibrateServerClock();
+        const statusRequest = sharedSigninStatus(accountStatus() !== "已登录");
+        const result = await statusRequest;
+        if (
+          flowGeneration !== rushFlowGeneration ||
+          !hasCredentials() ||
+          !rushModeEnabled() ||
+          (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
+        ) {
+          return;
+        }
+        setAccountStatus("已登录");
+        if (result.signin && serverDateKey(statusRequest.startedAt) === serverDateKey()) {
+          rememberSignin(statusRequest.startedAt);
+        }
+      } catch (error) {
+        if (
+          flowGeneration !== rushFlowGeneration ||
+          !hasCredentials() ||
+          !rushModeEnabled() ||
+          (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
+        ) {
+          return;
+        }
+        notify(t("rushPrepareFailed", { error: error.message || t("checkFailed") }));
+      }
+    })().finally(() => {
+      if (rushSessionCheckPromise === checking) {
+        rushSessionCheckPromise = null;
+        rushSessionCheckingGeneration = 0;
+        rushSessionCheckingTargetMidnight = 0;
+      }
+    });
+    rushSessionCheckPromise = checking;
+    rushSessionCheckingGeneration = flowGeneration;
+    rushSessionCheckingTargetMidnight = targetMidnight;
+    return rushSessionCheckPromise;
+  }
+
+  /**
    * 在零点前准备验证码；验证码完成后由 handleCaptchaSuccess 延迟提交并重试。
    *
    * @param {number} submitAt 零点后提交的服务端时间戳。
@@ -2017,6 +2201,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     const targetMidnight = nextServerMidnight();
     const submitAt = targetMidnight + rushSubmitDelayMs();
     const prepareAt = targetMidnight - rushLeadSeconds() * 1000;
+    const sessionAt = targetMidnight - Math.max(rushSessionLeadSeconds(), rushLeadSeconds()) * 1000;
     rushTimer = setTimeout(
       () => {
         if (
@@ -2028,7 +2213,26 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
         )
           return;
         rushTimer = null;
-        prepareRushCaptcha(submitAt, targetMidnight, flowGeneration);
+        if (activeSigninCaptchaCandidate?.kind === "regular") {
+          discardSigninCaptchaCandidate(activeSigninCaptchaCandidate);
+        }
+        prepareRushSession(targetMidnight, flowGeneration);
+        const timer = setTimeout(
+          () => {
+            if (rushCaptchaTimer === timer) rushCaptchaTimer = null;
+            if (
+              scheduleGeneration !== rushScheduleGeneration ||
+              flowGeneration !== rushFlowGeneration ||
+              !hasCredentials() ||
+              !rushModeEnabled() ||
+              (isBlogsClubAutoCheckOnlyEnabled() && !isBlogsClubPage())
+            )
+              return;
+            prepareRushCaptcha(submitAt, targetMidnight, flowGeneration);
+          },
+          Math.max(0, prepareAt - serverNow()),
+        );
+        rushCaptchaTimer = timer;
         // 等本次零点过去后再计算下一天，避免在准备点反复创建 0ms 定时器。
         rushTimer = setTimeout(
           () => {
@@ -2039,7 +2243,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
           Math.max(1, submitAt + 100 - serverNow()),
         );
       },
-      Math.max(0, prepareAt - serverNow()),
+      Math.max(0, sessionAt - serverNow()),
     );
   }
 
@@ -2090,6 +2294,24 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
 
   // 轮询、通知和验证码窗口调度。
   let checkPromise = null;
+  let signinCheckTimer = null;
+  let knownSigninDate = "";
+
+  function serverDateKey(timestamp = serverNow()) {
+    return new Date(timestamp).toDateString();
+  }
+
+  function rememberSignin(timestamp) {
+    knownSigninDate = serverDateKey(timestamp);
+  }
+
+  function isSigninKnownToday() {
+    return knownSigninDate === serverDateKey();
+  }
+
+  function signinPollingWakeDelay() {
+    return Math.max(1, nextServerMidnight() + 1000 - serverNow());
+  }
 
   /**
    * 后台轮询每个自然日最多通知一次未签到状态；手动检查每次通知。
@@ -2126,10 +2348,13 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
       }
       discardSigninCaptchaCandidate(activeCandidate);
     }
-    // 状态接口会签发本次提交 token；验证码和 Rush 提交存活期间不能用后台轮询刷新它。
+    if (!isManual && isSigninPollingPauseEnabled() && isSigninKnownToday()) {
+      return Promise.resolve();
+    }
+    // 状态接口会签发本次提交 token；Rush 预检查到验证码准备完成前也不能刷新它。
     if (
       isSigning ||
-      rushPreparationPromise !== null ||
+      isRushPreparationActive() ||
       isRushCaptchaPending ||
       rushSubmitTimer !== null ||
       rushSubmitState !== null
@@ -2201,6 +2426,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     }
     setAccountStatus("已登录");
     if (result.signin) {
+      rememberSignin(statusStartedAt);
       stopRushForKnownSignin(statusStartedAt);
       if (shouldForceCaptcha) {
         notify(t("alreadySigned", { duration: formatDuration(elapsedMs) }));
@@ -2240,7 +2466,7 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
     // rush 准备期间普通流程让位，避免两个异步回调争抢同一个验证码实例。
     const canOpen = isRush
       ? rushCaptchaGeneration === candidate.flowGeneration
-      : rushPreparationPromise === null && !isRushCaptchaPending;
+      : !isRushPreparationActive() && !isRushCaptchaPending;
     if (rushSubmitTimer === null && rushSubmitState === null && canOpen && !hasVisibleCaptcha()) {
       if (activeSigninCaptchaCandidate && activeSigninCaptchaCandidate !== candidate) {
         captchaGeneration += 1;
@@ -2261,11 +2487,17 @@ if (window.top === window && !window.__BLOGSCLUB_AUTO_SIGNIN__) {
    *
    * @returns {void}
    */
-  function scheduleChecks() {
-    setTimeout(async () => {
+  function scheduleChecks(delay = intervalMs()) {
+    if (signinCheckTimer !== null) clearTimeout(signinCheckTimer);
+    signinCheckTimer = setTimeout(async () => {
+      signinCheckTimer = null;
+      if (isSigninPollingPauseEnabled() && isSigninKnownToday()) {
+        scheduleChecks(signinPollingWakeDelay());
+        return;
+      }
       await check();
-      scheduleChecks();
-    }, intervalMs());
+      scheduleChecks(isSigninPollingPauseEnabled() && isSigninKnownToday() ? signinPollingWakeDelay() : intervalMs());
+    }, delay);
   }
 
   scheduleChecks();

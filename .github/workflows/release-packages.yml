@@ -16,7 +16,7 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      has-changesets: ${{ steps.changesets.outputs.hasChangesets }}
+      has-changesets: ${{ steps.changesets.outputs.has-changesets }}
       has-release-packages: ${{ steps.release-packages.outputs.has_packages }}
       package-directories-json: ${{ steps.release-packages.outputs.package_directories_json }}
       has-release-userscripts: ${{ steps.release-packages.outputs.has_userscripts }}
@@ -46,15 +46,16 @@ jobs:
         id: changesets
         uses: changesets/action@22ccf9aa43179fe9e27dc62e575971d28cce197c # https://github.com/changesets/action/releases/tag/v2.0.0
         with:
-          version: pnpm changeset:version
-          title: "release: update package versions"
-          commit: "release: update package versions"
+          github-token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
+          version-script: pnpm changeset:version
+          pr-title: "release: update package versions"
+          commit-message: "release: update package versions"
         env:
           GITHUB_TOKEN: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
 
       - name: Resolve packages to publish
         id: release-packages
-        if: steps.changesets.outputs.hasChangesets == 'false'
+        if: steps.changesets.outputs.has-changesets == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/resolve-release-packages.js

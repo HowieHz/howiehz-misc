@@ -100,5 +100,10 @@ export default defineConfig(
       sourceType: "module",
     },
   },
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", ignoreRestSiblings: true }],
+    },
+  },
   ...oxlint.buildFromOxlintConfigFile("./.oxlintrc.json"),
 );

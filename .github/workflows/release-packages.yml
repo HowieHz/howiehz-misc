@@ -44,7 +44,7 @@ jobs:
 
       - name: Create or update release pull request
         id: changesets
-        uses: changesets/action@198f833dd7d863100ea6e28967bc9a9fdefadb0a # https://github.com/changesets/action/releases/tag/v2.1.0
+        uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # https://github.com/changesets/action/releases/tag/v2.1.1
         with:
           github-token: ${{ secrets.PR_WORKFLOW_TOKEN || github.token }}
           version-script: pnpm changeset:version

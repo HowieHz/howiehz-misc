@@ -24,16 +24,16 @@
     "@shikijs/vitepress-twoslash": "^4.4.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.11.2",
+    "happy-dom": "^20.11.6",
     "lightningcss": "^1.33.0",
     "markdown-it-mathjax3": "^4.3.2",
     "pagefind": "^1.5.2",
-    "vite": "^8.2.1",
+    "vite": "^8.2.2",
     "vitepress": "2.0.0-alpha.19",
     "vitepress-plugin-group-icons": "^1.7.6",
     "vitepress-plugin-pagefind": "^0.4.24",
     "vitepress-plugin-rss": "^0.4.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=24"

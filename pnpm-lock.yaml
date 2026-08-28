@@ -24,8 +24,8 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.9.1)
       '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
+        specifier: ^26.4.0
+        version: 26.4.0
       '@typescript-eslint/parser':
         specifier: ^8.68.0
         version: 8.68.0(eslint@10.9.1)(supports-color@10.2.2)(typescript@6.0.3)
@@ -146,10 +146,10 @@ importers:
         version: 1.5.2
       vite:
         specifier: ^8.2.2
-        version: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+        version: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
       vitepress:
         specifier: 2.0.0-alpha.19
-        version: 2.0.0-alpha.19(@types/node@26.2.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
+        version: 2.0.0-alpha.19(@types/node@26.4.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
       vitepress-plugin-group-icons:
         specifier: ^1.7.6
         version: 1.7.6(vite@8.2.2)
@@ -161,13 +161,13 @@ importers:
         version: 0.4.4(vitepress@2.0.0-alpha.19)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.2.0)(happy-dom@20.11.6)(vite@8.2.2)
+        version: 4.1.11(@types/node@26.4.0)(happy-dom@20.11.6)(vite@8.2.2)
 
   packages/blogsclub-signin-helper:
     devDependencies:
       vite:
         specifier: ^8.2.2
-        version: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+        version: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
       vite-plugin-monkey:
         specifier: ^8.0.0
         version: 8.1.0(postcss@8.5.26)(vite@8.2.2)
@@ -178,8 +178,8 @@ importers:
         specifier: ^0.18.5
         version: 0.18.5
       '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
+        specifier: ^26.4.0
+        version: 26.4.0
       publint:
         specifier: ^0.3.24
         version: 0.3.24
@@ -188,7 +188,7 @@ importers:
         version: 0.22.14(@arethetypeswrong/core@0.18.5)(@volar/typescript@2.4.28)(publint@0.3.24)(typescript@6.0.3)(vue-tsc@3.3.11)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.2.0)(happy-dom@20.11.6)(vite@8.2.2)
+        version: 4.1.11(@types/node@26.4.0)(happy-dom@20.11.6)(vite@8.2.2)
 
   packages/graphwar-agent:
     devDependencies:
@@ -1523,8 +1523,8 @@ packages:
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
-  '@types/node@26.2.0':
-    resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
+  '@types/node@26.4.0':
+    resolution: {integrity: sha512-faiGnoIrLH/V8cibOMEAZ8pMw6oXqSukl29ra4mN8GdaB2ZewzeaLj+INpV5N+Z1eKWzY+IzaIZH2EIR6YZRNQ==}
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -4822,7 +4822,7 @@ snapshots:
     dependencies:
       '@vueuse/core': 14.4.0(vue@3.5.41)
       less: 4.6.7
-      vitepress: 2.0.0-alpha.19(@types/node@26.2.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
+      vitepress: 2.0.0-alpha.19(@types/node@26.4.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
       vue: 3.5.41(typescript@6.0.3)
 
   '@one-ini/wasm@0.1.1': {}
@@ -5334,7 +5334,7 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
-  '@types/node@26.2.0':
+  '@types/node@26.4.0':
     dependencies:
       undici-types: 8.3.0
 
@@ -5350,7 +5350,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.4.0
 
   '@typescript-eslint/eslint-plugin@8.68.0(@typescript-eslint/parser@8.68.0)(eslint@10.9.1)(supports-color@10.2.2)(typescript@6.0.3)':
     dependencies:
@@ -5527,7 +5527,7 @@ snapshots:
   '@vitejs/plugin-vue@6.0.8(vite@8.2.2)(vue@3.5.41)':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
       vue: 3.5.41(typescript@6.0.3)
 
   '@vitest/expect@4.1.11':
@@ -5545,7 +5545,7 @@ snapshots:
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -5897,7 +5897,7 @@ snapshots:
 
   buffer-image-size@0.6.4:
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.4.0
 
   bundle-name@4.1.0:
     dependencies:
@@ -6445,7 +6445,7 @@ snapshots:
 
   happy-dom@20.11.6:
     dependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.4.0
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.1
       buffer-image-size: 0.6.4
@@ -8040,11 +8040,11 @@ snapshots:
       rollup: 4.62.4
       systemjs: 6.15.1
     optionalDependencies:
-      vite: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
     transitivePeerDependencies:
       - postcss
 
-  vite@8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0):
+  vite@8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
@@ -8052,7 +8052,7 @@ snapshots:
       rolldown: 1.2.5
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.4.0
       fsevents: 2.3.3
       less: 4.6.7
       yaml: 2.9.0
@@ -8063,7 +8063,7 @@ snapshots:
       '@iconify-json/vscode-icons': 1.2.67
       '@iconify/utils': 3.1.4
     optionalDependencies:
-      vite: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
 
   vitepress-plugin-pagefind@0.4.24(pagefind@1.5.2)(vitepress@2.0.0-alpha.19)(vue@3.5.41):
     dependencies:
@@ -8071,7 +8071,7 @@ snapshots:
       '@vueuse/core': 14.4.0(vue@3.5.41)
       javascript-stringify: 2.1.0
       pagefind: 1.5.2
-      vitepress: 2.0.0-alpha.19(@types/node@26.2.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
+      vitepress: 2.0.0-alpha.19(@types/node@26.4.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
       vue: 3.5.41(typescript@6.0.3)
 
   vitepress-plugin-rss@0.4.4(vitepress@2.0.0-alpha.19):
@@ -8080,9 +8080,9 @@ snapshots:
       feed: 5.2.1
       markdown-it-container: 4.0.0
       sharp: 0.34.5
-      vitepress: 2.0.0-alpha.19(@types/node@26.2.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
+      vitepress: 2.0.0-alpha.19(@types/node@26.4.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0)
 
-  vitepress@2.0.0-alpha.19(@types/node@26.2.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0):
+  vitepress@2.0.0-alpha.19(@types/node@26.4.0)(less@4.6.7)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(typescript@6.0.3)(yaml@2.9.0):
     dependencies:
       '@docsearch/css': 4.7.0
       '@docsearch/js': 4.7.0
@@ -8101,7 +8101,7 @@ snapshots:
       mark.js: 8.11.1
       minisearch: 7.2.0
       shiki: 4.4.2
-      vite: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
       vue: 3.5.41(typescript@6.0.3)
     optionalDependencies:
       markdown-it-mathjax3: 4.3.2
@@ -8132,7 +8132,7 @@ snapshots:
       - universal-cookie
       - yaml
 
-  vitest@4.1.11(@types/node@26.2.0)(happy-dom@20.11.6)(vite@8.2.2):
+  vitest@4.1.11(@types/node@26.4.0)(happy-dom@20.11.6)(vite@8.2.2):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(vite@8.2.2)
@@ -8152,10 +8152,10 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.2.2(@types/node@26.2.0)(less@4.6.7)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(less@4.6.7)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 26.2.0
+      '@types/node': 26.4.0
       happy-dom: 20.11.6
     transitivePeerDependencies:
       - msw

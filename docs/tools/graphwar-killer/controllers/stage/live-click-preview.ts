@@ -69,7 +69,6 @@ interface GraphwarLiveClickPreviewOptions {
   simulator: {
     formulaText: ReadonlyRef<string>;
     launchAngleRadians: ReadonlyRef<number | undefined>;
-    shouldParseDerivativeAsY: ReadonlyRef<boolean>;
     shouldSkipUnknownCharacters: ReadonlyRef<boolean>;
   };
   /** 士兵吸附目标规则应由页面的目标选择 Module 统一提供。 */
@@ -507,7 +506,6 @@ export function useGraphwarLiveClickPreview(
           ? {}
           : { launchAngleRadians: options.simulator.launchAngleRadians.value }),
         parser: {
-          shouldParseDerivativeAsY: options.simulator.shouldParseDerivativeAsY.value,
           shouldSkipUnknownCharacters: options.simulator.shouldSkipUnknownCharacters.value,
         },
         type: "expression",

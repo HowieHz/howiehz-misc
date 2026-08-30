@@ -144,8 +144,6 @@ interface GraphwarTrajectoryResultOptions {
     formulaText: ReadonlyRef<string>;
     /** 用户输入的二阶发射角，单位为度。 */
     launchAngleText: ReadonlyRef<string>;
-    /** 是否把导数 token 解析为 y。 */
-    shouldParseDerivativeAsY: ReadonlyRef<boolean>;
     /** 页面统一的数字解析策略。 */
     parseNumber: (value: string) => number | undefined;
     /** 是否跳过未知字符。 */
@@ -555,7 +553,6 @@ export function useGraphwarTrajectoryResult(
           ? {}
           : { launchAngleRadians: simulatorLaunchAngleRadians.value }),
         parser: {
-          shouldParseDerivativeAsY: options.simulator.shouldParseDerivativeAsY.value,
           shouldSkipUnknownCharacters: options.simulator.shouldSkipUnknownCharacters.value,
         },
         soldierCenter,

@@ -1060,8 +1060,6 @@ export const graphwarKillerLocale = {
       modeTitle: "Generate a function or simulate an existing one",
       overflowProtection: "Overflow protection",
       overflowProtectionTitle: "Use a stable formula when Step derivative terms may overflow",
-      parseDerivativeAsY: "y' -> y",
-      parseDerivativeAsYTitle: "Match Graphwar's behavior of parsing y' as y",
       pathfinding: {
         heading: "Pathfinding",
         managedModeSettings: "Managed mode settings",

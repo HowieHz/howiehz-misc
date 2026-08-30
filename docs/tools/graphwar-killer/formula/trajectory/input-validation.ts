@@ -46,11 +46,7 @@ export function isGraphwarTrajectoryCollisionSettings(value: unknown): value is 
 
 /** Worker Adapter 共用的 expression parser option 校验。 */
 export function isGraphwarTrajectoryExpressionParserOptions(value: unknown): value is GraphwarExpressionParserOptions {
-  return (
-    isRecord(value) &&
-    typeof value.shouldParseDerivativeAsY === "boolean" &&
-    typeof value.shouldSkipUnknownCharacters === "boolean"
-  );
+  return isRecord(value) && typeof value.shouldSkipUnknownCharacters === "boolean";
 }
 
 /** Worker Adapter 共用的 12 Formula Mode 设置校验。 */

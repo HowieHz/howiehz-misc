@@ -106,34 +106,24 @@ describe("Graphwar canonical expression programs", () => {
     ).toBe(0.125);
   });
 
-  it("preserves both parser options without folding them into VM opcodes", () => {
+  it("always parses y' as a derivative and honors unknown-character handling", () => {
     expect(
       createGraphwarExpressionEvaluator("y'", {
-        shouldParseDerivativeAsY: false,
         shouldSkipUnknownCharacters: false,
       })?.(1, 2, 3),
     ).toBe(3);
     expect(
       createGraphwarExpressionEvaluator("y'", {
-        shouldParseDerivativeAsY: true,
-        shouldSkipUnknownCharacters: false,
-      }),
-    ).toBeUndefined();
-    expect(
-      createGraphwarExpressionEvaluator("y'", {
-        shouldParseDerivativeAsY: true,
         shouldSkipUnknownCharacters: true,
       })?.(1, 2, 3),
-    ).toBe(2);
+    ).toBe(3);
     expect(
       createGraphwarExpressionEvaluator("x?", {
-        shouldParseDerivativeAsY: false,
         shouldSkipUnknownCharacters: true,
       })?.(4, 0, 0),
     ).toBe(4);
     expect(
       createGraphwarExpressionEvaluator("x?", {
-        shouldParseDerivativeAsY: false,
         shouldSkipUnknownCharacters: false,
       }),
     ).toBeUndefined();

@@ -417,7 +417,6 @@ const isFormulaStepGlitchSupported = computed(
 const isFormulaUsingSteepness = computed(() => formulaModeContract.value.formulaSettings.type !== "standard");
 const isAdvancedSettingsVisible = ref(false);
 const shouldSimulatorSkipUnknownCharacters = ref(true);
-const shouldSimulatorParseDerivativeAsY = ref(true);
 const obstacleMinAreaText = ref(String(graphwarToolDefaults.obstacleMinArea));
 const maximumSoldierCountText = ref(String(graphwarToolDefaults.maximumSoldierCount));
 const soldierTemplateCandidateTopRatioText = ref(String(graphwarToolDefaults.soldierTemplateCandidateTopRatio));
@@ -1312,7 +1311,6 @@ const {
   simulator: {
     formulaText: simulatorFormulaText,
     launchAngleText: simulatorLaunchAngleText,
-    shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY,
     parseNumber: parseFiniteNumber,
     shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters,
   },
@@ -1684,7 +1682,6 @@ const {
   simulator: {
     formulaText: simulatorFormulaText,
     launchAngleRadians: simulatorLaunchAngleRadians,
-    shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY,
     shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters,
   },
   target: {
@@ -2185,7 +2182,6 @@ const advancedSettingsPanel = computed<GraphwarAdvancedSettingsPanelModel>(() =>
             : undefined,
   },
   simulator: {
-    shouldParseDerivativeAsY: shouldSimulatorParseDerivativeAsY.value,
     shouldSkipUnknownCharacters: shouldSimulatorSkipUnknownCharacters.value,
   },
   isSolverSettingsVisible: toolWorkflowMode.value === "solver",
@@ -5323,9 +5319,6 @@ function undoLastPoint() {
       :locale="locale"
       :panel="advancedSettingsPanel"
       @toggle-wasm-acceleration="toggleWasmAcceleration"
-      @toggle-simulator-parse-derivative-as-y="
-        !isGraphwarManagedModeEnabled && (shouldSimulatorParseDerivativeAsY = !shouldSimulatorParseDerivativeAsY)
-      "
       @toggle-simulator-skip-unknown-characters="
         !isGraphwarManagedModeEnabled && (shouldSimulatorSkipUnknownCharacters = !shouldSimulatorSkipUnknownCharacters)
       "

@@ -917,8 +917,6 @@ export const graphwarKillerLocale = {
       modeTitle: "选择生成可复制函数，或输入已有函数模拟轨迹",
       overflowProtection: "防溢出",
       overflowProtectionTitle: "阶跃导数项可能溢出时自动改用稳定公式",
-      parseDerivativeAsY: "y' -> y",
-      parseDerivativeAsYTitle: "Graphwar 存在解析缺陷：由于正则表达式顺序，会将 y' 解析为 y",
       pathfinding: {
         heading: "寻路设定",
         managedModeSettings: "托管模式设定",

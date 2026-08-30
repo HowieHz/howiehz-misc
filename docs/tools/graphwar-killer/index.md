@@ -29,7 +29,7 @@ const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/$
 | 优先级与结合性 | 由低到高为 `+ = -（二元） < -（一元） < * < / < ^`。二元 `-` 表示加上一元负号，因此 `1-2` 和 `1+-2` 都按 `1+(-2)` 计算。重复的同一二元运算符按右结合解析，如 `1+2+3` 为 `1+(2+3)`，`1/2/3` 为 `1/(2/3)` |
 | 函数           | `sqrt()`、`log()`、`ln()`、`abs()`、`sin()`（别名 `sen()`）、`cos()`、`tan()`（别名 `tg()`）、`exp()`；`log` 以 10 为底，`ln` 以 `e` 为底                                                               |
 | 常量           | `e`、`pi`                                                                                                                                                                                               |
-| 兼容行为       | 默认按 Graphwar 原版规则将 `y'` 视为 `y`，并跳过未知字符；可在“高级设定”中关闭                                                                                                                          |
+| 兼容行为       | 默认跳过未知字符                                                                                                                                                                                        |
 
 ## 使用说明 {#graphwar-killer-instructions}
 

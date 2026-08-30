@@ -17,8 +17,6 @@ export interface GraphwarAdvancedSettingsBounds {
 export interface GraphwarAdvancedSettingsSimulator {
   /** 模拟器解析时是否忽略未知字符。 */
   shouldSkipUnknownCharacters: boolean;
-  /** 模拟器解析时是否把导数表达式当作 y 处理。 */
-  shouldParseDerivativeAsY: boolean;
 }
 
 /** 高级设置面板使用的截图识别选项。 */

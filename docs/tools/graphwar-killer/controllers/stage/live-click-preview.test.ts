@@ -491,7 +491,6 @@ function createOptions() {
     simulator: {
       formulaText: ref(""),
       launchAngleRadians: ref<number>(),
-      shouldParseDerivativeAsY: ref(true),
       shouldSkipUnknownCharacters: ref(true),
     },
     target: {

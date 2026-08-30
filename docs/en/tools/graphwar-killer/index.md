@@ -29,7 +29,7 @@ const graphwarAgentSourceUrl = `https://github.com/HowieHz/howiehz-misc/commit/$
 | Precedence and associativity | From lowest to highest: `+ = - (binary) < - (unary) < * < / < ^`. Binary `-` means adding a unary negative, so `1-2` and `1+-2` both evaluate as `1+(-2)`. Repeated binary operators are right-associative: `1+2+3` is `1+(2+3)`, and `1/2/3` is `1/(2/3)` |
 | Functions                    | `sqrt()`, `log()`, `ln()`, `abs()`, `sin()` (alias `sen()`), `cos()`, `tan()` (alias `tg()`), and `exp()`; `log` is base 10, while `ln` is base `e`                                                                                                        |
 | Constants                    | `e` and `pi`                                                                                                                                                                                                                                               |
-| Compatibility                | By default, Graphwar compatibility treats `y'` as `y` and skips unknown characters; both options can be turned off under Advanced settings                                                                                                                 |
+| Compatibility                | Unknown characters are skipped by default                                                                                                                                                                                                                  |
 
 ## How to Use {#graphwar-killer-instructions}
 

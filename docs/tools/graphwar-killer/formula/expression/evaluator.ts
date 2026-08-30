@@ -11,8 +11,6 @@ import type { GraphwarExpressionProgram } from "./program";
 export interface GraphwarExpressionParserOptions {
   /** 是否跳过 Graphwar 表达式中无法识别的字符。 */
   shouldSkipUnknownCharacters: boolean;
-  /** 是否复刻原版 token 正则顺序，把 y' 当作 y 后再处理剩余 apostrophe。 */
-  shouldParseDerivativeAsY: boolean;
 }
 
 /** Graphwar 原版 PolishNotationFunction 使用的简单数值 token。 */
@@ -106,7 +104,6 @@ export function parseGraphwarExpressionProgram(
 function tokenizeGraphwarExpression(
   expression: string,
   parserOptions: GraphwarExpressionParserOptions = {
-    shouldParseDerivativeAsY: false,
     shouldSkipUnknownCharacters: false,
   },
 ): GraphwarExpressionToken[] | undefined {
@@ -128,7 +125,7 @@ function tokenizeGraphwarExpression(
       continue;
     }
 
-    const token = readGraphwarExpressionToken(rest, parserOptions);
+    const token = readGraphwarExpressionToken(rest);
     if (!token) {
       if (parserOptions.shouldSkipUnknownCharacters) {
         index += 1;
@@ -143,12 +140,9 @@ function tokenizeGraphwarExpression(
   return insertGraphwarImplicitMultiplications(tokens);
 }
 
-/** 读取当前位置的 Graphwar 表达式 token，保留原版函数名和 y' 解析差异开关。 */
-function readGraphwarExpressionToken(
-  rest: string,
-  parserOptions: GraphwarExpressionParserOptions,
-): { length: number; token: GraphwarExpressionToken } | undefined {
-  if (!parserOptions.shouldParseDerivativeAsY && rest.startsWith("y'")) {
+/** 读取当前位置的 Graphwar 表达式 token，始终优先识别 y' 导数变量。 */
+function readGraphwarExpressionToken(rest: string): { length: number; token: GraphwarExpressionToken } | undefined {
+  if (rest.startsWith("y'")) {
     return { length: 2, token: { type: GraphwarExpressionTokenType.DY } };
   }
 

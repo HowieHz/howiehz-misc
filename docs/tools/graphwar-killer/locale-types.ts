@@ -562,8 +562,6 @@ export interface GraphwarKillerLocale {
       modeTitle: string;
       overflowProtection: string;
       overflowProtectionTitle: string;
-      parseDerivativeAsY: string;
-      parseDerivativeAsYTitle: string;
       pathfinding: {
         heading: string;
         managedModeSettings: string;

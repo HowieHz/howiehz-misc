@@ -48,7 +48,7 @@ describe("AdvancedPanel", () => {
         templateMatchingWorkerCountText: "2",
       },
       runtime: { canToggle: true, isEnabled: false, state: "off" },
-      simulator: { shouldParseDerivativeAsY: true, shouldSkipUnknownCharacters: true },
+      simulator: { shouldSkipUnknownCharacters: true },
       isSolverSettingsVisible: true,
     };
     const wrapper = mount(AdvancedPanel, { props: { locale: graphwarKillerLocale, panel } });
@@ -205,7 +205,6 @@ describe("AdvancedPanel", () => {
     expect(wasmToggle.attributes("disabled")).toBeDefined();
     for (const [id, title] of [
       ["graphwar-killer-skip-unknown-characters", graphwarKillerLocale.ui.settings.skipUnknownCharactersTitle],
-      ["graphwar-killer-parse-derivative-as-y", graphwarKillerLocale.ui.settings.parseDerivativeAsYTitle],
     ]) {
       const control = wrapper.get(`#${id}`);
       expect(control.attributes("disabled")).toBeDefined();

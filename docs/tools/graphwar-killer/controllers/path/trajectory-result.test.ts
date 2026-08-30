@@ -563,7 +563,6 @@ function createControllerState() {
     simulator: {
       formulaText: ref(""),
       launchAngleText: ref(""),
-      shouldParseDerivativeAsY: ref(true),
       parseNumber: Number,
       shouldSkipUnknownCharacters: ref(true),
     },

@@ -15,7 +15,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   toggleWasmAcceleration: [];
-  toggleSimulatorParseDerivativeAsY: [];
   toggleSimulatorSkipUnknownCharacters: [];
   updateAgentObstacleSimulationToleranceText: [value: string];
   updateAgentRoutePlanningToleranceText: [value: string];
@@ -245,15 +244,6 @@ const wasmStatusMarker = computed(() => {
               :state="panel.canInteract ? 'normal' : 'busy'"
               :title="locale.ui.settings.skipUnknownCharactersTitle"
               @toggle="emit('toggleSimulatorSkipUnknownCharacters')"
-            />
-            <ToggleField
-              id="graphwar-killer-parse-derivative-as-y"
-              :checked="panel.simulator.shouldParseDerivativeAsY"
-              :label="locale.ui.settings.parseDerivativeAsY"
-              :reason="panel.temporaryDisabledReason"
-              :state="panel.canInteract ? 'normal' : 'busy'"
-              :title="locale.ui.settings.parseDerivativeAsYTitle"
-              @toggle="emit('toggleSimulatorParseDerivativeAsY')"
             />
           </div>
         </div>

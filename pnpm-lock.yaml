@@ -193,8 +193,8 @@ importers:
   packages/graphwar-agent:
     devDependencies:
       '@redocly/cli':
-        specifier: ^2.49.0
-        version: 2.49.0
+        specifier: ^2.49.1
+        version: 2.49.1
 
   packages/graphwar-killer-wasm:
     devDependencies:
@@ -1053,8 +1053,8 @@ packages:
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
 
-  '@redocly/cli@2.49.0':
-    resolution: {integrity: sha512-87UuARXYrPIiHhd/UriamL4BApuPgB0E91coBtoPG6PK4giTwiuo3dI4RoyMGhsC7TwgAnL8PJuhCwGymgwbVA==}
+  '@redocly/cli@2.49.1':
+    resolution: {integrity: sha512-8/7uAXm5ryOTyrXwh1MCYLD/91lY5WsoXPAmMSCxBc2dmh9O7TU77HntL/tUkV9M83wmwx3GP4EMYryDidostQ==}
     engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
     hasBin: true
 
@@ -4938,7 +4938,7 @@ snapshots:
     dependencies:
       quansync: 1.0.0
 
-  '@redocly/cli@2.49.0': {}
+  '@redocly/cli@2.49.1': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.5':
     optional: true

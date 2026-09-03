@@ -24,7 +24,7 @@
     "@shikijs/vitepress-twoslash": "^4.4.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
-    "happy-dom": "^20.12.0",
+    "happy-dom": "^20.13.2",
     "lightningcss": "^1.33.0",
     "markdown-it-mathjax3": "^4.3.2",
     "pagefind": "^1.5.2",

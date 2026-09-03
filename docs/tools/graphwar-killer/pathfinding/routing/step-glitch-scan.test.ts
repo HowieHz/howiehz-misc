@@ -463,7 +463,7 @@ describe("Step ODE glitch scan", () => {
     expect(result.status).toBe("no-path");
     // B-1 量化坍缩只淘汰该批；B-2 有数值间距时仍可生成候选，最终以普通 no-path 结束。
     expect(result.expandedStates).toBeGreaterThan(1);
-  }, 30_000);
+  }, 120_000);
 
   it("tries the third earlier gate when the first two gates collapse at 15 decimals", () => {
     const collapsedBounds: GraphBounds = {

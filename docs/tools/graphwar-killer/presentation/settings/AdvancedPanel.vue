@@ -197,7 +197,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.bounds.minXAriaLabel"
                 :title="locale.ui.settings.bounds.minXTitle"
-              />
+              >
             </label>
             <label :title="locale.ui.settings.bounds.maxXTitle">
               +x
@@ -207,7 +207,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.bounds.maxXAriaLabel"
                 :title="locale.ui.settings.bounds.maxXTitle"
-              />
+              >
             </label>
             <label :title="locale.ui.settings.bounds.minYTitle">
               -y
@@ -217,7 +217,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.bounds.minYAriaLabel"
                 :title="locale.ui.settings.bounds.minYTitle"
-              />
+              >
             </label>
             <label :title="locale.ui.settings.bounds.maxYTitle">
               +y
@@ -227,7 +227,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.bounds.maxYAriaLabel"
                 :title="locale.ui.settings.bounds.maxYTitle"
-              />
+              >
             </label>
           </div>
         </div>
@@ -267,7 +267,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.recognition.maximumSoldierCountAriaLabel"
                 :title="locale.ui.settings.recognition.maximumSoldierCountTitle"
-              />
+              >
             </label>
             <label
               class="graphwar-killer__detection-setting-label"
@@ -283,7 +283,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.recognition.candidateTopRatioAriaLabel"
                 :title="locale.ui.settings.recognition.candidateTopRatioTitle"
-              />
+              >
             </label>
             <label
               class="graphwar-killer__detection-setting-label"
@@ -298,7 +298,7 @@ const wasmStatusMarker = computed(() => {
                 autocomplete="off"
                 :aria-label="locale.ui.settings.recognition.templateMatchingWorkerCountAriaLabel"
                 :title="locale.ui.settings.recognition.templateMatchingWorkerCountTitle"
-              />
+              >
             </label>
             <label
               class="graphwar-killer__detection-setting-label"
@@ -312,7 +312,7 @@ const wasmStatusMarker = computed(() => {
                 :max="panel.recognition.obstacleMaximumArea"
                 :aria-label="locale.ui.detection.minObstacleAreaAriaLabel"
                 :title="locale.ui.detection.minObstacleAreaTitle"
-              />
+              >
               <span>px²</span>
             </label>
           </div>
@@ -342,7 +342,7 @@ const wasmStatusMarker = computed(() => {
                     inputmode="decimal"
                     :aria-label="`${locale.ui.pathfinding.obstacleExpansionDetectionMode}: ${locale.ui.pathfinding.routePlanningToleranceAriaLabel}`"
                     :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-                  />
+                  >
                   <span>{{ locale.ui.pathfinding.unit }}</span>
                 </label>
                 <label
@@ -355,7 +355,7 @@ const wasmStatusMarker = computed(() => {
                     inputmode="decimal"
                     :aria-label="`${locale.ui.pathfinding.obstacleExpansionDetectionMode}: ${locale.ui.pathfinding.simulationToleranceAriaLabel}`"
                     :title="locale.ui.pathfinding.simulationToleranceTitle"
-                  />
+                  >
                   <span>{{ locale.ui.pathfinding.unit }}</span>
                 </label>
               </div>
@@ -371,7 +371,7 @@ const wasmStatusMarker = computed(() => {
                     inputmode="decimal"
                     :aria-label="`${locale.ui.pathfinding.obstacleExpansionAgentMode}: ${locale.ui.pathfinding.routePlanningToleranceAriaLabel}`"
                     :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-                  />
+                  >
                   <span>{{ locale.ui.pathfinding.unit }}</span>
                 </label>
                 <label
@@ -384,7 +384,7 @@ const wasmStatusMarker = computed(() => {
                     inputmode="decimal"
                     :aria-label="`${locale.ui.pathfinding.obstacleExpansionAgentMode}: ${locale.ui.pathfinding.simulationToleranceAriaLabel}`"
                     :title="locale.ui.pathfinding.simulationToleranceTitle"
-                  />
+                  >
                   <span>{{ locale.ui.pathfinding.unit }}</span>
                 </label>
               </div>
@@ -400,7 +400,7 @@ const wasmStatusMarker = computed(() => {
                     inputmode="decimal"
                     :aria-label="`${locale.ui.settings.stepGlitchMode}: ${locale.ui.pathfinding.routePlanningToleranceAriaLabel}`"
                     :title="locale.ui.pathfinding.routePlanningToleranceTitle"
-                  />
+                  >
                   <span>{{ locale.ui.pathfinding.unit }}</span>
                 </label>
                 <label
@@ -413,7 +413,7 @@ const wasmStatusMarker = computed(() => {
                     inputmode="decimal"
                     :aria-label="`${locale.ui.settings.stepGlitchMode}: ${locale.ui.pathfinding.simulationToleranceAriaLabel}`"
                     :title="locale.ui.pathfinding.simulationToleranceTitle"
-                  />
+                  >
                   <span>{{ locale.ui.pathfinding.unit }}</span>
                 </label>
               </div>
@@ -439,7 +439,7 @@ const wasmStatusMarker = computed(() => {
                   autocomplete="off"
                   :aria-label="locale.ui.settings.pathfinding.managedShotReserveAriaLabel"
                   :title="locale.ui.settings.pathfinding.managedShotReserveTitle"
-                />
+                >
                 <span>s</span>
               </label>
               <label
@@ -456,7 +456,7 @@ const wasmStatusMarker = computed(() => {
                   autocomplete="off"
                   :aria-label="locale.ui.settings.pathfinding.managedPollIntervalAriaLabel"
                   :title="locale.ui.settings.pathfinding.managedPollIntervalTitle"
-                />
+                >
                 <span>s</span>
               </label>
             </div>
@@ -474,7 +474,7 @@ const wasmStatusMarker = computed(() => {
               autocomplete="off"
               :aria-label="locale.ui.settings.pathfinding.workerCountAriaLabel"
               :title="locale.ui.settings.pathfinding.workerCountTitle"
-            />
+            >
           </label>
           <label
             v-if="panel.pathfinding.isOneClickClearDeleteCheckRadiusVisible"
@@ -489,7 +489,7 @@ const wasmStatusMarker = computed(() => {
               step="0.1"
               :aria-label="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusAriaLabel"
               :title="locale.ui.pathfinding.oneClickClearDeleteCheckRadiusTitle"
-            />
+            >
             <span>{{ locale.ui.pathfinding.unit }}</span>
           </label>
         </div>
@@ -513,7 +513,7 @@ const wasmStatusMarker = computed(() => {
               autocomplete="off"
               :aria-label="locale.ui.settings.actionBar.liveClickPreviewWorkerCountAriaLabel"
               :title="locale.ui.settings.actionBar.liveClickPreviewWorkerCountTitle"
-            />
+            >
           </label>
         </div>
       </div>

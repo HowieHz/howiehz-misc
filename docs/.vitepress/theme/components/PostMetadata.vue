@@ -112,8 +112,7 @@ function buildReference(label: string, url: string, archives?: { type: string; u
               :href="contributor.link"
               target="_blank"
               rel="noreferrer"
-              >{{ contributor.label }}</a
-            >
+            >{{ contributor.label }}</a>
           </template>
           <template v-else>
             <span>{{ contributor.label }}</span>
@@ -121,7 +120,7 @@ function buildReference(label: string, url: string, archives?: { type: string; u
           <span
             v-if="index < contributors.length - 1"
             aria-hidden="true"
-            >,
+          >,
           </span>
         </li>
       </ul>
@@ -140,8 +139,7 @@ function buildReference(label: string, url: string, archives?: { type: string; u
             :href="reference.url"
             target="_blank"
             rel="noreferrer"
-            >{{ reference.label }}</a
-          >
+          >{{ reference.label }}</a>
           <a
             v-for="archive in reference.archives"
             :key="archive.type"
@@ -149,12 +147,11 @@ function buildReference(label: string, url: string, archives?: { type: string; u
             target="_blank"
             rel="noreferrer"
             class="archive-link"
-            >[{{ archive.type.toUpperCase() }}]</a
-          >
+          >[{{ archive.type.toUpperCase() }}]</a>
           <span
             v-if="index < references.length - 1"
             aria-hidden="true"
-            >,
+          >,
           </span>
         </li>
       </ul>

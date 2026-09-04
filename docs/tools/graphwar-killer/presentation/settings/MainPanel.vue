@@ -270,7 +270,7 @@ const activeToolWorkflowHint = computed(
                 :aria-label="locale.ui.settings.decimalPlacesAriaLabel"
                 :disabled="!panel.canInteract"
                 :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.settings.decimalPlacesTitle)"
-              />
+              >
             </label>
             <label
               v-if="panel.isSteepnessVisible"
@@ -285,7 +285,7 @@ const activeToolWorkflowHint = computed(
                 :aria-label="locale.ui.settings.steepnessAriaLabel"
                 :disabled="!panel.canInteract"
                 :title="prependControlTitle(panel.temporaryDisabledReason, locale.ui.settings.steepnessTitle)"
-              />
+              >
             </label>
             <ToggleField
               v-if="panel.algorithmMode === 'step'"

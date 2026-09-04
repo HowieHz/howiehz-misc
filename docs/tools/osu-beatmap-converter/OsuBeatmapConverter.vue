@@ -1001,7 +1001,7 @@ function formatFileSize(bytes: number): string {
         type="file"
         :disabled="isConverting"
         @change="addSelectedFiles"
-      />
+      >
       <label
         class="mania-converter__drop-zone"
         :class="{ 'mania-converter__drop-zone--active': isDropTarget }"
@@ -1163,7 +1163,7 @@ function formatFileSize(bytes: number): string {
               step="1"
               type="number"
               :disabled="keys === 1"
-            />
+            >
           </label>
           <label class="mania-converter__setting">
             <span>{{ text.maximumJackNotes }}</span>
@@ -1173,7 +1173,7 @@ function formatFileSize(bytes: number): string {
               step="1"
               type="number"
               :disabled="keys === 1"
-            />
+            >
           </label>
         </div>
       </fieldset>

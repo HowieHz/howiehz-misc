@@ -15,8 +15,7 @@ defineProps<{
     <span
       class="graphwar-killer-control-reason__icon"
       aria-hidden="true"
-      >!</span
-    >
+    >!</span>
     {{ message }}
   </p>
 </template>

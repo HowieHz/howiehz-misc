@@ -7,7 +7,7 @@
     "build": "vitepress build .",
     "preview": "pnpm run build && vitepress preview .",
     "test": "pnpm --filter graphwar-killer-wasm build && pnpm run test:unit",
-    "test:unit": "vitest run tools/graphwar-killer tools/osu-beatmap-converter",
+    "test:unit": "pnpm --filter osu-beatmap-converter build && vitest run tools/graphwar-killer tools/osu-beatmap-converter",
     "watch": "vitepress dev ."
   },
   "dependencies": {

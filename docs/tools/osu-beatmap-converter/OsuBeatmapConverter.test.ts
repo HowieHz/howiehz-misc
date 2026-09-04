@@ -350,7 +350,7 @@ describe("OsuBeatmapConverter", () => {
     expect(wrapper.findAll(".mania-converter__stats dd")[0].text()).toBe("120");
   });
 
-  it("drags from the visible minimum-width navigator capsule without first recentering it", async () => {
+  it("drags from the visible minimum-size navigator circle without first recentering it", async () => {
     const wrapper = mount(OsuBeatmapConverter, { props: { language: "en" } });
     const file = new File([sourceWithLongRange], "long.osu", { type: "text/plain" });
 
@@ -364,7 +364,7 @@ describe("OsuBeatmapConverter", () => {
       value: () => ({ left: 0, width: 100 }),
     });
 
-    // The actual four-measure range is eight pixels wide, but CSS keeps the visible capsule at 14 pixels.
+    // The actual four-measure range is eight pixels wide, but CSS keeps the visible window at 28 pixels.
     await navigator.trigger("pointerdown", { clientX: 10, pointerId: 1 });
     expect(Number(navigator.attributes("aria-valuenow"))).toBe(0);
     await navigator.trigger("pointermove", { clientX: 20, pointerId: 1 });

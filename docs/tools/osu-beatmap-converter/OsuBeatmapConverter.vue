@@ -242,6 +242,8 @@ interface Mania2kPreset {
 
 const PREVIEW_MEASURE_COUNT = 4;
 const PREVIEW_NOTE_LIMIT = 600;
+/** Match the navigator window's inner height so narrow ranges stay circular instead of becoming ellipses. */
+const PREVIEW_NAVIGATOR_MIN_WINDOW_WIDTH = 28;
 const MANIA_2K_PRESETS = [
   { id: "default", minimumJackTimeInterval: 200, maximumNumberOfJackNotes: 1 },
   { id: "single_lane", minimumJackTimeInterval: 0, maximumNumberOfJackNotes: 1_000_000 },
@@ -862,7 +864,10 @@ function startPreviewNavigatorDrag(event: PointerEvent) {
   }
   const rangeDuration = preview.rangeEnd - preview.rangeStart;
   const windowLeft = ((currentPreviewWindowStart.value - preview.rangeStart) / rangeDuration) * position.width;
-  const windowWidth = Math.max((preview.windowDuration / rangeDuration) * position.width, 14);
+  const windowWidth = Math.max(
+    (preview.windowDuration / rangeDuration) * position.width,
+    PREVIEW_NAVIGATOR_MIN_WINDOW_WIDTH,
+  );
   const isViewportHit = position.x >= windowLeft && position.x <= Math.min(windowLeft + windowWidth, position.width);
   previewNavigatorPointerOffset = isViewportHit ? position.x - windowLeft : windowWidth / 2;
   setPreviewWindowStart(
@@ -1961,7 +1966,7 @@ function formatFileSize(bytes: number): string {
   box-shadow: 0 2px 8px rgb(15 23 42 / 18%);
   box-sizing: border-box;
   cursor: grab;
-  min-width: 14px;
+  min-width: 28px;
   pointer-events: auto;
   position: absolute;
   top: 3px;

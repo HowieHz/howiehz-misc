@@ -206,7 +206,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
           :title="locale.ui.actions.magnifierZoomTitle"
           @input="handleMagnifierZoomInput"
-        >
+        />
         <input
           type="number"
           :value="panel.magnifierZoom.text"
@@ -217,7 +217,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
           :aria-label="locale.ui.actions.magnifierZoomAriaLabel"
           :title="locale.ui.actions.magnifierZoomTitle"
           @input="handleMagnifierZoomInput"
-        >
+        />
         <span>x</span>
       </label>
     </div>
@@ -330,7 +330,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
             :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
             :title="locale.ui.actions.obstacleBrushDiameterTitle"
             @input="handleObstacleBrushDiameterInput"
-          >
+          />
           <input
             type="number"
             :value="panel.obstacleBrushDiameter.text"
@@ -342,7 +342,7 @@ function handleObstacleBrushDiameterInput(event: Event) {
             :aria-label="locale.ui.actions.obstacleBrushDiameterAriaLabel"
             :title="locale.ui.actions.obstacleBrushDiameterTitle"
             @input="handleObstacleBrushDiameterInput"
-          >
+          />
           <span>{{ locale.ui.pathfinding.unit }}</span>
         </label>
       </div>

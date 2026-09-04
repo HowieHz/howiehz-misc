@@ -13,6 +13,7 @@ This document is for repository maintainers and code contributors. If you only w
 
 - `docs/`: the VitePress application, including documentation and online tools
 - `packages/compat-finder/`: the compatibility troubleshooting library and CLI published to npm
+- `packages/osu-beatmap-converter/`: the private osu! beatmap conversion core used by the docs tool, with no publishing surface
 - `packages/blogsclub-signin-helper/`: a BlogsClub check-in helper userscript published as a GitHub Release `.user.js` asset and synchronized to Greasy Fork
 - `packages/graphwar-killer-wasm/`: the private AssemblyScript/WASM kernel used by Graphwar Killer
 - `packages/graphwar-agent/`: a Java agent that exposes a local HTTP API for the official Graphwar client
@@ -22,6 +23,7 @@ Workspace relationships:
 ```text
 docs
 ├── depends on compat-finder
+├── depends on osu-beatmap-converter
 └── depends on graphwar-killer-wasm
 
 graphwar-agent
@@ -67,6 +69,7 @@ All three commands first build the required workspace dependencies; development 
 Run package scripts with `pnpm --filter PACKAGE SCRIPT`, for example `pnpm --filter compat-finder test`. Available scripts:
 
 - `compat-finder`: `cli`, `build`, `watch`, `test`
+- `osu-beatmap-converter`: `build`, `watch`, `test`
 - `blogsclub-signin-helper`: `build`, `dev`, `watch`, `preview`
 - `graphwar-killer-wasm`: `build`, `watch`, `test`
 - `graphwar-agent`: `build`, `openapi:test`, `test`

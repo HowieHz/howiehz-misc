@@ -64,7 +64,8 @@ const controlTitle = computed(() =>
           class="graphwar-killer-toggle-field__label-prefix"
           role="img"
           :title="labelPrefix.title"
-        >{{ labelPrefix.text }}</span>
+          >{{ labelPrefix.text }}</span
+        >
         <span>{{ label }}</span>
       </span>
       <span

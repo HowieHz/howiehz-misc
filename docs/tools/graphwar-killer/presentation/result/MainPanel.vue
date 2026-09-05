@@ -249,7 +249,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         :aria-label="locale.ui.result.formulaInputAriaLabel"
         :title="locale.ui.result.formulaInputTitle"
         :disabled="!result.canInteract"
-      >
+      />
     </div>
     <div
       v-if="result.isSimulatorLaunchAngleInputVisible"
@@ -266,7 +266,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
         :aria-label="locale.ui.result.launchAngleAriaLabel"
         :title="locale.ui.result.launchAngleTitle"
         :disabled="!result.canInteract"
-      >
+      />
     </div>
     <p
       v-if="result.secondOrderAngleHint"
@@ -324,7 +324,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
             @focus="result.canEditPointCoordinates && emit('startPointCoordinateEdit', row.index, 'x')"
             @blur="result.canEditPointCoordinates && emit('finishPointCoordinateEdit')"
             @input="result.canEditPointCoordinates && handlePointCoordinateInput(row.index, 'x', $event)"
-          >
+          />
           <input
             class="graphwar-killer__point-coordinate-input"
             :value="row.y.text"
@@ -337,7 +337,7 @@ function handlePointCoordinateInput(index: number, axis: GraphwarResultPanelCoor
             @focus="result.canEditPointCoordinates && emit('startPointCoordinateEdit', row.index, 'y')"
             @blur="result.canEditPointCoordinates && emit('finishPointCoordinateEdit')"
             @input="result.canEditPointCoordinates && handlePointCoordinateInput(row.index, 'y', $event)"
-          >
+          />
         </div>
       </div>
     </PanelDetails>

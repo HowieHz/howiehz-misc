@@ -147,7 +147,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
         alt=""
         draggable="false"
         @load="emit('imageLoad')"
-      >
+      />
       <div
         v-else
         class="graphwar-killer__placeholder"
@@ -187,7 +187,7 @@ function setImageElement(element: Element | ComponentPublicInstance | null) {
             :src="panel.imageUrl"
             alt=""
             draggable="false"
-          >
+          />
           <GraphwarStageOverlay
             key-prefix="magnifier-"
             :clip-path-id="panel.stage.magnifierClipPathId"

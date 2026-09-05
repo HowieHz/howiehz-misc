@@ -372,6 +372,30 @@ describe("OsuBeatmapConverter", () => {
     await navigator.trigger("pointerup", { pointerId: 1 });
   });
 
+  it("keeps the minimum-size navigator thumb inside the track at the right edge", async () => {
+    const wrapper = mount(OsuBeatmapConverter, { props: { language: "en" } });
+    const file = new File([sourceWithLongRange], "long.osu", { type: "text/plain" });
+
+    selectFiles(wrapper.get<HTMLInputElement>(".mania-converter__file-input").element, [file]);
+    await wrapper.get(".mania-converter__file-input").trigger("change");
+    await vi.waitFor(() => expect(wrapper.find(".mania-converter__preview-navigator").exists()).toBe(true));
+
+    const navigator = wrapper.get(".mania-converter__preview-navigator");
+    await navigator.trigger("keydown", { key: "End" });
+
+    const windowStyle = navigator.get(".mania-converter__navigator-window").attributes("style");
+    expect(windowStyle).toContain("--mania-converter-navigator-window-left: 84%");
+    expect(windowStyle).toContain("--mania-converter-navigator-window-width: 16%");
+
+    Object.defineProperty(navigator.element, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, width: 100 }),
+    });
+    await navigator.trigger("pointerdown", { clientX: 80, pointerId: 1 });
+    expect(Number(navigator.attributes("aria-valuenow"))).toBe(Number(navigator.attributes("aria-valuemax")));
+    await navigator.trigger("pointerup", { pointerId: 1 });
+  });
+
   it("keeps preview selection stable and disables downloads during a second conversion", async () => {
     const wrapper = mount(OsuBeatmapConverter, { props: { language: "en" } });
     const deferredRead = createDeferredTextRead();

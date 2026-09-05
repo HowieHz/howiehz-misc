@@ -199,6 +199,13 @@ interface BeatmapPreview {
   windowDuration: number;
 }
 
+interface PreviewNavigatorWindowStyle extends CSSProperties {
+  /** Unclamped viewport start expressed against the complete beatmap range. */
+  "--mania-converter-navigator-window-left": string;
+  /** Actual viewport width expressed against the complete beatmap range. */
+  "--mania-converter-navigator-window-width": string;
+}
+
 interface QueuedBeatmapBase {
   /** Stable local identity avoids filename collisions in a batch. */
   id: number;
@@ -272,6 +279,8 @@ let previewGeneration = 0;
 let activePreviewNavigatorPointerId: number | undefined;
 // Stored in navigator pixels so a minimum-width viewport capsule keeps a stable drag anchor.
 let previewNavigatorPointerOffset = 0;
+let previewNavigatorPointerStart = 0;
+let previewNavigatorWindowStart = 0;
 
 const text = computed(() => labels[props.language]);
 const canConvert = computed(() => queue.value.length > 0 && !isConverting.value);
@@ -811,16 +820,21 @@ function getPreviewLineStyle(time: number): CSSProperties {
   );
 }
 
-/** Position timing markers and the movable viewport against the navigator's full-map time range. */
-function getPreviewNavigatorStyle(time: number, duration = 0): CSSProperties {
+/** Position timing markers and pass the movable viewport's full-range proportions to CSS. */
+function getPreviewNavigatorStyle(time: number, duration = 0): CSSProperties | PreviewNavigatorWindowStyle {
   const preview = currentPreview.value;
   if (!preview) {
     return {};
   }
   const rangeDuration = preview.rangeEnd - preview.rangeStart;
+  const leftPercent = ((time - preview.rangeStart) / rangeDuration) * 100;
+  if (duration === 0) {
+    return { left: `${leftPercent}%` };
+  }
+  const widthPercent = (duration / rangeDuration) * 100;
   return {
-    left: `${((time - preview.rangeStart) / rangeDuration) * 100}%`,
-    width: duration === 0 ? undefined : `${(duration / rangeDuration) * 100}%`,
+    "--mania-converter-navigator-window-left": `${leftPercent}%`,
+    "--mania-converter-navigator-window-width": `${widthPercent}%`,
   };
 }
 
@@ -846,6 +860,16 @@ function getPreviewNavigatorPointerPosition(event: PointerEvent): { x: number; w
   return { x: Math.min(Math.max(event.clientX - bounds.left, 0), bounds.width), width: bounds.width };
 }
 
+/** Match the navigator thumb's CSS minimum width and clamped edge position in pointer pixels. */
+function getPreviewNavigatorWindowMetrics(preview: BeatmapPreview, width: number) {
+  const rangeDuration = preview.rangeEnd - preview.rangeStart;
+  const actualWidth = (preview.windowDuration / rangeDuration) * width;
+  const windowWidth = Math.min(Math.max(actualWidth, PREVIEW_NAVIGATOR_MIN_WINDOW_WIDTH), width);
+  const actualLeft = ((currentPreviewWindowStart.value - preview.rangeStart) / rangeDuration) * width;
+  const windowLeft = Math.min(Math.max(actualLeft, 0), width - windowWidth);
+  return { windowLeft, windowWidth };
+}
+
 /** Start a viewport drag, or center the viewport when the user clicks an uncovered navigator region. */
 function startPreviewNavigatorDrag(event: PointerEvent) {
   if (isConverting.value) {
@@ -862,17 +886,17 @@ function startPreviewNavigatorDrag(event: PointerEvent) {
   ) {
     return;
   }
-  const rangeDuration = preview.rangeEnd - preview.rangeStart;
-  const windowLeft = ((currentPreviewWindowStart.value - preview.rangeStart) / rangeDuration) * position.width;
-  const windowWidth = Math.max(
-    (preview.windowDuration / rangeDuration) * position.width,
-    PREVIEW_NAVIGATOR_MIN_WINDOW_WIDTH,
-  );
-  const isViewportHit = position.x >= windowLeft && position.x <= Math.min(windowLeft + windowWidth, position.width);
+  const { windowLeft, windowWidth } = getPreviewNavigatorWindowMetrics(preview, position.width);
+  const isViewportHit = position.x >= windowLeft && position.x <= windowLeft + windowWidth;
   previewNavigatorPointerOffset = isViewportHit ? position.x - windowLeft : windowWidth / 2;
-  setPreviewWindowStart(
-    preview.rangeStart + ((position.x - previewNavigatorPointerOffset) / position.width) * rangeDuration,
-  );
+  if (!isViewportHit) {
+    setPreviewWindowStart(
+      preview.rangeStart +
+        ((position.x - previewNavigatorPointerOffset) / position.width) * (preview.rangeEnd - preview.rangeStart),
+    );
+  }
+  previewNavigatorPointerStart = position.x;
+  previewNavigatorWindowStart = currentPreviewWindowStart.value;
   activePreviewNavigatorPointerId = event.pointerId;
   if (navigator.setPointerCapture) {
     navigator.setPointerCapture(event.pointerId);
@@ -888,8 +912,8 @@ function movePreviewNavigatorDrag(event: PointerEvent) {
   const preview = currentPreview.value;
   if (position !== undefined && preview) {
     setPreviewWindowStart(
-      preview.rangeStart +
-        ((position.x - previewNavigatorPointerOffset) / position.width) * (preview.rangeEnd - preview.rangeStart),
+      previewNavigatorWindowStart +
+        ((position.x - previewNavigatorPointerStart) / position.width) * (preview.rangeEnd - preview.rangeStart),
     );
   }
 }
@@ -900,6 +924,8 @@ function stopPreviewNavigatorDrag(event: PointerEvent) {
     return;
   }
   activePreviewNavigatorPointerId = undefined;
+  previewNavigatorPointerStart = 0;
+  previewNavigatorWindowStart = 0;
   const navigator = event.currentTarget;
   if (navigator instanceof HTMLElement && navigator.hasPointerCapture(event.pointerId)) {
     navigator.releasePointerCapture(event.pointerId);
@@ -1959,6 +1985,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .mania-converter__navigator-window {
+  /* Keep the visible minimum width inside both navigator edges. */
   background: color-mix(in srgb, var(--vp-c-brand-1) 24%, var(--vp-c-bg));
   border: 2px solid var(--vp-c-brand-1);
   border-radius: 999px;
@@ -1966,10 +1993,14 @@ function formatFileSize(bytes: number): string {
   box-shadow: 0 2px 8px rgb(15 23 42 / 18%);
   box-sizing: border-box;
   cursor: grab;
-  min-width: 28px;
+  left: min(
+    var(--mania-converter-navigator-window-left),
+    max(0px, calc(100% - max(var(--mania-converter-navigator-window-width), 28px)))
+  );
   pointer-events: auto;
   position: absolute;
   top: 3px;
+  width: min(max(var(--mania-converter-navigator-window-width), 28px), 100%);
   z-index: 2;
 }
 

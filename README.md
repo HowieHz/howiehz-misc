@@ -11,8 +11,8 @@ A personal misc site for things that do not belong on the main site.
   - [Documentation](docs/en/compat-finder/)
   - [Online tool](docs/en/tools/compatibility-test/)
 - [Ganzhi calculator (Chinese Only)](docs/tools/ganzhi/)
-- [osu! beatmap converter (std → mania)](docs/tools/osu-beatmap-converter/)
-- [PDF footer field cleaner](docs/tools/pdf-footer-anonymizer/)
+- [osu! beatmap converter (std → mania) (Chinese Only)](docs/tools/osu-beatmap-converter/)
+- [PDF footer field cleaner (Chinese Only)](docs/tools/pdf-footer-anonymizer/)
 - [Graphwar Killer](docs/en/tools/graphwar-killer/): online Graphwar function generator and simulator
 - [Graphwar Agent](packages/graphwar-agent/): Java agent for the official Graphwar client
 - BlogsClub Check-in Helper:

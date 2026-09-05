@@ -9,7 +9,7 @@ if (!pnpmCliPath) {
   throw new Error("pnpm did not provide npm_execpath");
 }
 
-// The root runner builds the shared WASM once, so the WASM package and docs run unit-only scripts below.
+// Build shared test dependencies once, so package and docs suites can run unit-only scripts below.
 const compatFinderSuite = pnpmTask("compat-finder", "--filter", "compat-finder", "test");
 const docsSuite = pnpmTask("Graphwar Killer", "--filter", "docs", "test:unit");
 const nonVitestSuites = [
@@ -19,9 +19,13 @@ const nonVitestSuites = [
 ];
 
 async function main() {
-  const buildResult = await run(pnpmTask("Graphwar Killer WASM build", "--filter", "graphwar-killer-wasm", "build"));
-  if (!buildResult.isSuccessful) {
-    throw new Error("Graphwar Killer WASM build failed");
+  const buildResults = await Promise.all([
+    run(pnpmTask("Graphwar Killer WASM build", "--filter", "graphwar-killer-wasm", "build")),
+    run(pnpmTask("osu-beatmap-converter build", "--filter", "osu-beatmap-converter", "build")),
+  ]);
+  const failedBuild = buildResults.find((result) => !result.isSuccessful);
+  if (failedBuild) {
+    throw new Error(`${failedBuild.name} failed`);
   }
 
   stdout.write(

@@ -11,7 +11,7 @@ Convert multiple local `.osu` files to osu!mania beatmaps. Files are read, conve
 3. Select Start conversion. Each row independently reports its result or error.
 4. After conversion, inspect BPM, red/green timing lines, notes, and the full-map navigator before downloading each result or all results.
 
-The beatmap viewport navigator sits above the preview and shows the current measure start at its left. Its long bar marks the current preview range; drag or click it, or use the left and right arrow keys to move through the map. Red lines are BPM/meter timing points and green lines are SV timing points. It is an inspection window, not a full beatmap player.
+The beatmap viewport navigator sits above the preview and shows the current measure start at its left. Its long bar marks the current preview range; drag or click it, or use the left and right arrow keys to move through the map. Red lines are BPM/meter timing points and green lines are SV timing points.
 
 ## Supported scope
 

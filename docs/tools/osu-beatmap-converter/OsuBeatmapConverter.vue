@@ -200,8 +200,8 @@ interface BeatmapPreview {
 }
 
 interface PreviewNavigatorWindowStyle extends CSSProperties {
-  /** Unclamped viewport start expressed against the complete beatmap range. */
-  "--mania-converter-navigator-window-left": string;
+  /** Viewport progress from the beginning to the end of the beatmap range. */
+  "--mania-converter-navigator-window-progress": string;
   /** Actual viewport width expressed against the complete beatmap range. */
   "--mania-converter-navigator-window-width": string;
 }
@@ -829,9 +829,13 @@ function getPreviewNavigatorStyle(time: number, duration = 0): CSSProperties | P
   if (duration === 0) {
     return { left: `${leftPercent}%` };
   }
+  const maxWindowStart = preview.rangeEnd - preview.windowDuration;
+  const movableDuration = maxWindowStart - preview.rangeStart;
   const widthPercent = (duration / rangeDuration) * 100;
   return {
-    "--mania-converter-navigator-window-left": `${leftPercent}%`,
+    "--mania-converter-navigator-window-progress": `${
+      movableDuration <= 0 ? 0 : Math.min(Math.max((time - preview.rangeStart) / movableDuration, 0), 1)
+    }`,
     "--mania-converter-navigator-window-width": `${widthPercent}%`,
   };
 }
@@ -868,17 +872,15 @@ function getPreviewNavigatorWindowMetrics(preview: BeatmapPreview, width: number
   return { windowLeft, windowWidth };
 }
 
-/** Convert the visible thumb position using the same raw full-range proportion as the CSS left edge. */
+/** Convert the visible thumb position across its actual travel distance. */
 function getPreviewNavigatorTimeFromLeft(preview: BeatmapPreview, left: number, width: number, windowWidth: number) {
   const maxWindowLeft = Math.max(width - windowWidth, 0);
   if (maxWindowLeft === 0) {
     // A thumb that fills the track has no visual travel, so pointer movement cannot change its time.
     return currentPreviewWindowStart.value;
   }
-  if (left >= maxWindowLeft) {
-    return preview.rangeEnd - preview.windowDuration;
-  }
-  return preview.rangeStart + (left / width) * (preview.rangeEnd - preview.rangeStart);
+  const maxWindowStart = preview.rangeEnd - preview.windowDuration;
+  return preview.rangeStart + (Math.min(left, maxWindowLeft) / maxWindowLeft) * (maxWindowStart - preview.rangeStart);
 }
 
 /** Start a viewport drag, or center the viewport when the user clicks an uncovered navigator region. */
@@ -1776,6 +1778,8 @@ function formatFileSize(bytes: number): string {
 
 .mania-converter__icon-button {
   flex: 0 0 34px;
+  grid-column: 3;
+  justify-self: end;
   padding: 0;
   width: 34px;
 }
@@ -1997,7 +2001,7 @@ function formatFileSize(bytes: number): string {
 }
 
 .mania-converter__navigator-window {
-  /* Keep the visible minimum width inside both navigator edges. */
+  /* Map time progress across the visible travel distance, including the minimum thumb width. */
   background: color-mix(in srgb, var(--vp-c-brand-1) 24%, var(--vp-c-bg));
   border: 2px solid var(--vp-c-brand-1);
   border-radius: 999px;
@@ -2005,9 +2009,9 @@ function formatFileSize(bytes: number): string {
   box-shadow: 0 2px 8px rgb(15 23 42 / 18%);
   box-sizing: border-box;
   cursor: grab;
-  left: min(
-    var(--mania-converter-navigator-window-left),
-    max(0px, calc(100% - max(var(--mania-converter-navigator-window-width), 28px)))
+  left: calc(
+    var(--mania-converter-navigator-window-progress) *
+      (100% - min(max(var(--mania-converter-navigator-window-width), 28px), 100%))
   );
   pointer-events: auto;
   position: absolute;

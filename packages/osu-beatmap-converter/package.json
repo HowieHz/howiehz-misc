@@ -1,0 +1,48 @@
+{
+  "name": "osu-beatmap-converter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Convert osu!standard beatmaps to osu!mania from Node.js or the browser.",
+  "keywords": [
+    "beatmap",
+    "converter",
+    "mania",
+    "osu",
+    "osu!",
+    "tool"
+  ],
+  "homepage": "https://howiehz.top/misc/tools/osu-beatmap-converter/",
+  "bugs": {
+    "url": "https://github.com/HowieHz/howiehz-misc/issues"
+  },
+  "license": "MIT",
+  "author": "HowieHz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HowieHz/howiehz-misc.git",
+    "directory": "packages/osu-beatmap-converter"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "watch": "tsdown --watch"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

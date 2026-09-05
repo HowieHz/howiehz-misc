@@ -13,6 +13,7 @@ outline: deep
 
 - `docs/`：VitePress 网站应用，包含文档和在线工具。
 - `packages/compat-finder/`：发布到 npm 的兼容性排查库和命令行工具。
+- `packages/osu-beatmap-converter/`：供 docs 在线页面使用的私有 osu! 谱面转换内核，不发布。
 - `packages/blogsclub-signin-helper/`：通过 GitHub Release 发布 `.user.js` 资产，并同步到 Greasy Fork 的 BlogsClub 签到助手。
 - `packages/graphwar-killer-wasm/`：供 Graphwar Killer 使用的私有 AssemblyScript / WASM 内核。
 - `packages/graphwar-agent/`：为 Graphwar 官方客户端提供本机 HTTP API 的 Java Agent。
@@ -22,6 +23,7 @@ outline: deep
 ```text
 docs
 ├── 依赖 compat-finder
+├── 依赖 osu-beatmap-converter
 └── 依赖 graphwar-killer-wasm
 
 graphwar-agent
@@ -67,6 +69,7 @@ pnpm install
 使用 `pnpm --filter PACKAGE SCRIPT` 运行包内脚本，例如 `pnpm --filter compat-finder test`。可用脚本：
 
 - `compat-finder`：`cli`、`build`、`watch`、`test`
+- `osu-beatmap-converter`：`build`、`watch`、`test`
 - `blogsclub-signin-helper`：`build`、`dev`、`watch`、`preview`
 - `graphwar-killer-wasm`：`build`、`watch`、`test`
 - `graphwar-agent`：`build`、`openapi:test`、`test`

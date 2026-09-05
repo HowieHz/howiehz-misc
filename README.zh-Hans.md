@@ -11,6 +11,8 @@
   - [文档](docs/compat-finder/)
   - [在线版](docs/tools/compatibility-test/)
 - [天干地支计算器](docs/tools/ganzhi/)
+- [osu! 铺面转换器（std → mania）](docs/tools/osu-beatmap-converter/)
+- [PDF 页脚字段清理器](docs/tools/pdf-footer-anonymizer/)
 - [Graphwar 杀手](docs/tools/graphwar-killer/)：在线 Graphwar 函数生成器与模拟器
 - [Graphwar Agent](packages/graphwar-agent/)：面向 Graphwar 官方客户端的 Java Agent
 - BlogsClub 签到助手：

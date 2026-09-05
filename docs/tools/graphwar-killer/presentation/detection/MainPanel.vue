@@ -201,7 +201,7 @@ function handleAgentTokenInput(event: Event) {
               :disabled="!panel.canInteract"
               :title="locale.ui.screenshot.uploadInputTitle"
               @change="emit('uploadImage', $event)"
-            />
+            >
             <span class="graphwar-killer-control-button">{{ locale.ui.screenshot.upload }}</span>
           </label>
         </div>
@@ -274,7 +274,7 @@ function handleAgentTokenInput(event: Event) {
                   accept=".json,application/json"
                   :disabled="!panel.canInteract || panel.agent.isInProgress || panel.agent.isExportInProgress"
                   @change="emit('readAgentStateFile', $event)"
-                />
+                >
                 <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readStateFile }}</span>
               </label>
               <label
@@ -291,7 +291,7 @@ function handleAgentTokenInput(event: Event) {
                   accept=".bin,application/octet-stream"
                   :disabled="!panel.canInteract || panel.agent.isInProgress || panel.agent.isExportInProgress"
                   @change="emit('readAgentObstacleFile', $event)"
-                />
+                >
                 <span class="graphwar-killer-control-button">{{ locale.ui.detection.agent.readObstacleFile }}</span>
               </label>
               <button
@@ -347,7 +347,7 @@ function handleAgentTokenInput(event: Event) {
               :title="locale.ui.detection.agent.addressTitle"
               :value="panel.agent.baseUrlText"
               @input="handleAgentBaseUrlInput"
-            />
+            >
           </label>
           <label
             class="graphwar-killer__agent-url"
@@ -364,7 +364,7 @@ function handleAgentTokenInput(event: Event) {
               :title="locale.ui.detection.agent.tokenTitle"
               :value="panel.agent.tokenText"
               @input="handleAgentTokenInput"
-            />
+            >
           </label>
         </PanelDetails>
         <p class="graphwar-killer__agent-usage-hint">

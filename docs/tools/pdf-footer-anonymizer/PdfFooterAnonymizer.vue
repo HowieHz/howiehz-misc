@@ -137,7 +137,7 @@ function formatFileSize(size: number) {
         type="file"
         :disabled="isConverting"
         @change="addSelectedFile"
-      />
+      >
       <label
         class="pdf-footer-anonymizer__drop-zone"
         :class="{ 'pdf-footer-anonymizer__drop-zone--active': isDropTarget }"

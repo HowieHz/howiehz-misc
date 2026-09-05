@@ -277,10 +277,8 @@ const isPreviewVerticallyFlipped = ref(false);
 const previewWindowStart = ref(0);
 let previewGeneration = 0;
 let activePreviewNavigatorPointerId: number | undefined;
-// Stored in navigator pixels so a minimum-width viewport capsule keeps a stable drag anchor.
-let previewNavigatorPointerOffset = 0;
 let previewNavigatorPointerStart = 0;
-let previewNavigatorWindowStart = 0;
+let previewNavigatorWindowLeft = 0;
 
 const text = computed(() => labels[props.language]);
 const canConvert = computed(() => queue.value.length > 0 && !isConverting.value);
@@ -870,6 +868,16 @@ function getPreviewNavigatorWindowMetrics(preview: BeatmapPreview, width: number
   return { windowLeft, windowWidth };
 }
 
+/** Convert a visible thumb position back to the time range while accounting for its travel width. */
+function getPreviewNavigatorTimeFromLeft(preview: BeatmapPreview, left: number, width: number, windowWidth: number) {
+  const maxWindowLeft = Math.max(width - windowWidth, 0);
+  if (maxWindowLeft === 0) {
+    return preview.rangeStart;
+  }
+  const maxWindowStart = preview.rangeEnd - preview.windowDuration;
+  return preview.rangeStart + (left / maxWindowLeft) * (maxWindowStart - preview.rangeStart);
+}
+
 /** Start a viewport drag, or center the viewport when the user clicks an uncovered navigator region. */
 function startPreviewNavigatorDrag(event: PointerEvent) {
   if (isConverting.value) {
@@ -886,17 +894,15 @@ function startPreviewNavigatorDrag(event: PointerEvent) {
   ) {
     return;
   }
-  const { windowLeft, windowWidth } = getPreviewNavigatorWindowMetrics(preview, position.width);
+  let { windowLeft, windowWidth } = getPreviewNavigatorWindowMetrics(preview, position.width);
   const isViewportHit = position.x >= windowLeft && position.x <= windowLeft + windowWidth;
-  previewNavigatorPointerOffset = isViewportHit ? position.x - windowLeft : windowWidth / 2;
   if (!isViewportHit) {
-    setPreviewWindowStart(
-      preview.rangeStart +
-        ((position.x - previewNavigatorPointerOffset) / position.width) * (preview.rangeEnd - preview.rangeStart),
-    );
+    const targetLeft = Math.min(Math.max(position.x - windowWidth / 2, 0), position.width - windowWidth);
+    setPreviewWindowStart(getPreviewNavigatorTimeFromLeft(preview, targetLeft, position.width, windowWidth));
+    ({ windowLeft, windowWidth } = getPreviewNavigatorWindowMetrics(preview, position.width));
   }
   previewNavigatorPointerStart = position.x;
-  previewNavigatorWindowStart = currentPreviewWindowStart.value;
+  previewNavigatorWindowLeft = windowLeft;
   activePreviewNavigatorPointerId = event.pointerId;
   if (navigator.setPointerCapture) {
     navigator.setPointerCapture(event.pointerId);
@@ -911,10 +917,13 @@ function movePreviewNavigatorDrag(event: PointerEvent) {
   const position = getPreviewNavigatorPointerPosition(event);
   const preview = currentPreview.value;
   if (position !== undefined && preview) {
-    setPreviewWindowStart(
-      previewNavigatorWindowStart +
-        ((position.x - previewNavigatorPointerStart) / position.width) * (preview.rangeEnd - preview.rangeStart),
+    const { windowWidth } = getPreviewNavigatorWindowMetrics(preview, position.width);
+    const maxWindowLeft = Math.max(position.width - windowWidth, 0);
+    const visibleLeft = Math.min(
+      Math.max(previewNavigatorWindowLeft + position.x - previewNavigatorPointerStart, 0),
+      maxWindowLeft,
     );
+    setPreviewWindowStart(getPreviewNavigatorTimeFromLeft(preview, visibleLeft, position.width, windowWidth));
   }
 }
 
@@ -925,7 +934,7 @@ function stopPreviewNavigatorDrag(event: PointerEvent) {
   }
   activePreviewNavigatorPointerId = undefined;
   previewNavigatorPointerStart = 0;
-  previewNavigatorWindowStart = 0;
+  previewNavigatorWindowLeft = 0;
   const navigator = event.currentTarget;
   if (navigator instanceof HTMLElement && navigator.hasPointerCapture(event.pointerId)) {
     navigator.releasePointerCapture(event.pointerId);

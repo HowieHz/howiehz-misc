@@ -368,7 +368,7 @@ describe("OsuBeatmapConverter", () => {
     await navigator.trigger("pointerdown", { clientX: 10, pointerId: 1 });
     expect(Number(navigator.attributes("aria-valuenow"))).toBe(0);
     await navigator.trigger("pointermove", { clientX: 20, pointerId: 1 });
-    expect(Number(navigator.attributes("aria-valuenow"))).toBe(5000);
+    expect(Number(navigator.attributes("aria-valuenow"))).toBeCloseTo(5833.333333, 5);
     await navigator.trigger("pointerup", { pointerId: 1 });
   });
 
@@ -393,6 +393,8 @@ describe("OsuBeatmapConverter", () => {
     });
     await navigator.trigger("pointerdown", { clientX: 80, pointerId: 1 });
     expect(Number(navigator.attributes("aria-valuenow"))).toBe(Number(navigator.attributes("aria-valuemax")));
+    await navigator.trigger("pointermove", { clientX: 70, pointerId: 1 });
+    expect(Number(navigator.attributes("aria-valuenow"))).toBeLessThan(Number(navigator.attributes("aria-valuemax")));
     await navigator.trigger("pointerup", { pointerId: 1 });
   });
 

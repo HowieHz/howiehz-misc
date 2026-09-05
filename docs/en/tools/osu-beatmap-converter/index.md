@@ -35,4 +35,4 @@ The page starts at 2K with the Default preset. With 1K selected, the four lane a
 - Standard circles become Mania notes; sliders and spinners become holds.
 - Only Standard input is accepted for now. Taiko conversion is in development; Mania and Catch input are not supported.
 
-The preview shows the current BPM, beat lines, red BPM/meter timing points, green SV timing points, and taps/holds. The beatmap viewport navigator above it shows the current measure start at its left; its long bar marks the current preview range. Drag or click it, or use the left and right arrow keys to move it. It is a local inspection window, not a full beatmap player.
+The preview shows the current BPM, beat lines, red BPM/meter timing points, green SV timing points, and taps/holds. The beatmap viewport navigator above it shows the current measure start at its left; its long bar marks the current preview range. Drag or click it, or use the left and right arrow keys to move it.

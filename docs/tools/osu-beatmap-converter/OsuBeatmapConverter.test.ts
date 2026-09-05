@@ -368,8 +368,15 @@ describe("OsuBeatmapConverter", () => {
     await navigator.trigger("pointerdown", { clientX: 10, pointerId: 1 });
     expect(Number(navigator.attributes("aria-valuenow"))).toBe(0);
     await navigator.trigger("pointermove", { clientX: 20, pointerId: 1 });
-    expect(Number(navigator.attributes("aria-valuenow"))).toBe(5000);
+    expect(Number(navigator.attributes("aria-valuenow"))).toBeCloseTo(5833.333333, 5);
     await navigator.trigger("pointerup", { pointerId: 1 });
+
+    await navigator.trigger("pointerdown", { clientX: 0, pointerId: 2 });
+    await navigator.trigger("pointermove", { clientX: 71, pointerId: 2 });
+    expect(Number(navigator.attributes("aria-valuenow"))).toBeLessThan(Number(navigator.attributes("aria-valuemax")));
+    await navigator.trigger("pointermove", { clientX: 72, pointerId: 2 });
+    expect(Number(navigator.attributes("aria-valuenow"))).toBe(Number(navigator.attributes("aria-valuemax")));
+    await navigator.trigger("pointerup", { pointerId: 2 });
   });
 
   it("keeps the minimum-size navigator thumb inside the track at the right edge", async () => {
@@ -384,7 +391,7 @@ describe("OsuBeatmapConverter", () => {
     await navigator.trigger("keydown", { key: "End" });
 
     const windowStyle = navigator.get(".mania-converter__navigator-window").attributes("style");
-    expect(windowStyle).toContain("--mania-converter-navigator-window-left: 84%");
+    expect(windowStyle).toContain("--mania-converter-navigator-window-progress: 1");
     expect(windowStyle).toContain("--mania-converter-navigator-window-width: 16%");
 
     Object.defineProperty(navigator.element, "getBoundingClientRect", {

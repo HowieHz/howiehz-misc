@@ -872,7 +872,8 @@ function getPreviewNavigatorWindowMetrics(preview: BeatmapPreview, width: number
 function getPreviewNavigatorTimeFromLeft(preview: BeatmapPreview, left: number, width: number, windowWidth: number) {
   const maxWindowLeft = Math.max(width - windowWidth, 0);
   if (maxWindowLeft === 0) {
-    return preview.rangeStart;
+    // A thumb that fills the track has no visual travel, so pointer movement cannot change its time.
+    return currentPreviewWindowStart.value;
   }
   const maxWindowStart = preview.rangeEnd - preview.windowDuration;
   return preview.rangeStart + (left / maxWindowLeft) * (maxWindowStart - preview.rangeStart);

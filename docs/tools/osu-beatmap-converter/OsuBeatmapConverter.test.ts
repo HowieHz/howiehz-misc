@@ -396,6 +396,16 @@ describe("OsuBeatmapConverter", () => {
     await navigator.trigger("pointermove", { clientX: 70, pointerId: 1 });
     expect(Number(navigator.attributes("aria-valuenow"))).toBeLessThan(Number(navigator.attributes("aria-valuemax")));
     await navigator.trigger("pointerup", { pointerId: 1 });
+
+    await navigator.trigger("keydown", { key: "End" });
+    Object.defineProperty(navigator.element, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, width: 20 }),
+    });
+    await navigator.trigger("pointerdown", { clientX: 10, pointerId: 2 });
+    await navigator.trigger("pointermove", { clientX: 0, pointerId: 2 });
+    expect(Number(navigator.attributes("aria-valuenow"))).toBe(Number(navigator.attributes("aria-valuemax")));
+    await navigator.trigger("pointerup", { pointerId: 2 });
   });
 
   it("keeps preview selection stable and disables downloads during a second conversion", async () => {

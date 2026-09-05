@@ -900,7 +900,7 @@ function startPreviewNavigatorDrag(event: PointerEvent) {
   if (!isViewportHit) {
     const targetLeft = Math.min(Math.max(position.x - windowWidth / 2, 0), position.width - windowWidth);
     setPreviewWindowStart(getPreviewNavigatorTimeFromLeft(preview, targetLeft, position.width, windowWidth));
-    ({ windowLeft, windowWidth } = getPreviewNavigatorWindowMetrics(preview, position.width));
+    windowLeft = getPreviewNavigatorWindowMetrics(preview, position.width).windowLeft;
   }
   previewNavigatorPointerStart = position.x;
   previewNavigatorWindowLeft = windowLeft;

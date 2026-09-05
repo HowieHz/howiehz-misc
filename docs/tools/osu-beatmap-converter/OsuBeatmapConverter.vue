@@ -868,15 +868,17 @@ function getPreviewNavigatorWindowMetrics(preview: BeatmapPreview, width: number
   return { windowLeft, windowWidth };
 }
 
-/** Convert a visible thumb position back to the time range while accounting for its travel width. */
+/** Convert the visible thumb position using the same raw full-range proportion as the CSS left edge. */
 function getPreviewNavigatorTimeFromLeft(preview: BeatmapPreview, left: number, width: number, windowWidth: number) {
   const maxWindowLeft = Math.max(width - windowWidth, 0);
   if (maxWindowLeft === 0) {
     // A thumb that fills the track has no visual travel, so pointer movement cannot change its time.
     return currentPreviewWindowStart.value;
   }
-  const maxWindowStart = preview.rangeEnd - preview.windowDuration;
-  return preview.rangeStart + (left / maxWindowLeft) * (maxWindowStart - preview.rangeStart);
+  if (left >= maxWindowLeft) {
+    return preview.rangeEnd - preview.windowDuration;
+  }
+  return preview.rangeStart + (left / width) * (preview.rangeEnd - preview.rangeStart);
 }
 
 /** Start a viewport drag, or center the viewport when the user clicks an uncovered navigator region. */

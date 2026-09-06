@@ -56,7 +56,7 @@
     "@types/node": "^26.4.1",
     "publint": "^0.3.24",
     "tsdown": "^0.22.14",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=24"

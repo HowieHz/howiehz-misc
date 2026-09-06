@@ -35,7 +35,7 @@
     "vitepress-plugin-group-icons": "^1.7.6",
     "vitepress-plugin-pagefind": "^0.4.24",
     "vitepress-plugin-rss": "^0.4.4",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=24"

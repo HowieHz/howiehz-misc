@@ -1,13 +1,10 @@
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
-import { env, execPath, exit, stderr, stdout } from "node:process";
+import { exit, platform, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const pnpmCliPath = env.npm_execpath;
-if (!pnpmCliPath) {
-  throw new Error("pnpm did not provide npm_execpath");
-}
+const isWindows = platform === "win32";
 
 // Build shared test dependencies once, so package and docs suites can run unit-only scripts below.
 const compatFinderSuite = pnpmTask("compat-finder", "--filter", "compat-finder", "test");
@@ -45,13 +42,13 @@ async function main() {
 }
 
 function pnpmTask(name, ...args) {
-  return { args: [pnpmCliPath, ...args], command: execPath, name };
+  return { args, command: "pnpm", name };
 }
 
 /** Runs one visible child process and returns its status after all parallel suites settle. */
 function run({ args, command, name }) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: repoRoot, stdio: "inherit" });
+    const child = spawn(command, args, { cwd: repoRoot, shell: isWindows, stdio: "inherit" });
     child.once("error", () => resolve({ isSuccessful: false, name }));
     child.once("close", (code, signal) => {
       resolve({ isSuccessful: code === 0 && signal === null, name });

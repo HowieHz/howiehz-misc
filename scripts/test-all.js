@@ -48,7 +48,11 @@ function pnpmTask(name, ...args) {
 /** Runs one visible child process and returns its status after all parallel suites settle. */
 function run({ args, command, name }) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: repoRoot, stdio: "inherit" });
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      stdio: "inherit",
+      shell: platform === "win32",
+    });
     child.once("error", () => resolve({ isSuccessful: false, name }));
     child.once("close", (code, signal) => {
       resolve({ isSuccessful: code === 0 && signal === null, name });

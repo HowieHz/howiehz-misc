@@ -31,7 +31,7 @@
     "markdown-it-mathjax3": "^4.3.2",
     "pagefind": "^1.5.2",
     "vite": "^8.2.2",
-    "vitepress": "2.0.0-alpha.19",
+    "vitepress": "2.0.0-alpha.20",
     "vitepress-plugin-group-icons": "^1.7.6",
     "vitepress-plugin-pagefind": "^0.4.24",
     "vitepress-plugin-rss": "^0.4.4",

@@ -260,8 +260,8 @@ importers:
         specifier: ^3.1.1
         version: 3.1.1(vue@3.5.42)
       '@lucide/vue':
-        specifier: ^1.41.0
-        version: 1.41.0(vue@3.5.42)
+        specifier: ^1.46.0
+        version: 1.46.0(vue@3.5.42)
       compat-finder:
         specifier: workspace:*
         version: link:../packages/compat-finder
@@ -837,8 +837,8 @@ packages:
   '@loaderkit/resolve@1.0.6':
     resolution: {integrity: sha512-G8FdIoF5CypfwmD9rl8BXod5HDn8JqB0CCNBXDTaRZ+yRYhARrrSToX1zg1zy9jX3zLqigsELwhT4gNtkdQAUg==}
 
-  '@lucide/vue@1.41.0':
-    resolution: {integrity: sha512-ciHtudHTeqMDzJKPI36AGboypCk8Jz3qFin3oU0nJfPc5MwXmqLXIEQvXE+yI6Sz5SnxVqREgm8rVN4KdDlnVQ==}
+  '@lucide/vue@1.46.0':
+    resolution: {integrity: sha512-xp4mUamXKM/jYCve8TOcEcuikidFh3Jn9gs0THCeEKn/fAdeU0mKhPqk0fmIwn42fI4CwGLRWrLneLA69h8Nqw==}
     peerDependencies:
       vue: '>=3.0.1'
 
@@ -4848,7 +4848,7 @@ snapshots:
     dependencies:
       '@braidai/lang': 1.1.2
 
-  '@lucide/vue@1.41.0(vue@3.5.42)':
+  '@lucide/vue@1.46.0(vue@3.5.42)':
     dependencies:
       vue: 3.5.42(typescript@6.0.3)
 

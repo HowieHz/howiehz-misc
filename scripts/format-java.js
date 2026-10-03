@@ -7,8 +7,8 @@ import { dirname, join, relative } from "node:path";
 import { exit, stderr, stdout } from "node:process";
 import { fileURLToPath, URL } from "node:url";
 
-const GOOGLE_JAVA_FORMAT_VERSION = "1.36.1";
-const GOOGLE_JAVA_FORMAT_SHA256 = "25b400f003089d23cc5320cdaf1a16cabee19b8aa3434d0ff021b3d9f42154b4";
+const GOOGLE_JAVA_FORMAT_VERSION = "1.37.0";
+const GOOGLE_JAVA_FORMAT_SHA256 = "834b2a0c38cb774953322a84b5ca3f2f40dd3156650b3cd44d3b744345962f7a";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cacheRoot = join(repoRoot, ".cache", "google-java-format");
 const jarName = `google-java-format-${GOOGLE_JAVA_FORMAT_VERSION}-all-deps.jar`;

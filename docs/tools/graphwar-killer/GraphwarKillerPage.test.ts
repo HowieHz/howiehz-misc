@@ -1658,11 +1658,11 @@ describe("Graphwar Killer page settings", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const downloadedFiles: string[] = [];
-    const anchorClick = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(function (this: HTMLAnchorElement) {
-        downloadedFiles.push(this.download);
-      });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadedFiles.push(this.download);
+    });
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
       wrapper.vm.$ as unknown as {
@@ -1715,11 +1715,11 @@ describe("Graphwar Killer page settings", () => {
 
   it("exports the latest completed pathfinding report from reactive page state", async () => {
     const downloadedFiles: string[] = [];
-    const anchorClick = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(function (this: HTMLAnchorElement) {
-        downloadedFiles.push(this.download);
-      });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadedFiles.push(this.download);
+    });
     const wrapper = mount(GraphwarKillerPage, { props: { locale: graphwarKillerLocale } });
     const page = (
       wrapper.vm.$ as unknown as {

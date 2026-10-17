@@ -262,6 +262,9 @@ importers:
       '@lucide/vue':
         specifier: ^1.55.0
         version: 1.55.0(vue@3.5.43)
+      '@tonejs/midi':
+        specifier: ^2.0.28
+        version: 2.0.28
       compat-finder:
         specifier: workspace:*
         version: link:../packages/compat-finder
@@ -277,6 +280,9 @@ importers:
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
+      sfumato:
+        specifier: ^0.3.0
+        version: 0.3.0
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@6.0.3)
@@ -1629,6 +1635,9 @@ packages:
   '@sugarat/theme-shared@0.1.0':
     resolution: {integrity: sha512-UKAFNOkj5C6kK4NDRMWF7m5+QoHC7e/h1sQwrXy8Jjn/iK/GwACegL4NOKxDdcSUlGRgRD5uUwuTHM6xZEzO9A==}
 
+  '@tonejs/midi@2.0.28':
+    resolution: {integrity: sha512-RII6YpInPsOZ5t3Si/20QKpNqB1lZ2OCFJSOzJxz38YdY/3zqDr3uaml4JuCWkdixuPqP1/TBnXzhQ39csyoVg==}
+
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
 
@@ -2247,6 +2256,9 @@ packages:
 
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+
+  array-flatten@3.0.0:
+    resolution: {integrity: sha512-zPMVc3ZYlGLNk4mpK1NzP2wg0ml9t7fUgDsayR5Y5rSzxQilzR9FGu/EH2jQOcKSAeAfWeylyW8juy3OkWRvNA==}
 
   assemblyscript@0.28.20:
     resolution: {integrity: sha512-5PM7GZpvcLypHcLmi30aP8mqm5HjU+LL3BdV1xDyA3USGtL2w+iMiUnhtH+vW8+2kOuHlAyPu7M+QgyEw5he1g==}
@@ -3419,6 +3431,9 @@ packages:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
 
+  midi-file@1.2.4:
+    resolution: {integrity: sha512-B5SnBC6i2bwJIXTY9MElIydJwAmnKx+r5eJ1jknTLetzLflEl0GWveuBB6ACrQpecSRkOB6fhTx1PwXk2BVxnA==}
+
   mime@1.6.0:
     resolution: {integrity: sha512-x0Vn8spI+wuJ1O6S7gnbaQg8Pxh4NNHb7KSINmEWKiPE4RKOplvijn+NkmYmmRgP68mc70j2EbeTFRsrswaQeg==}
     engines: {node: '>=4'}
@@ -3808,6 +3823,9 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
+  sfumato@0.3.0:
+    resolution: {integrity: sha512-q4dhk6f0L6Z2DHSPc98xdGK9hwdEY1sUNxOFdjWFrUdg2rMZnwOE19/iYNdw/hXrbhCvvuFUCK760C0N0+loRA==}
+
   sharp@0.34.5:
     resolution: {integrity: sha512-Ou9I5Ft9WNcCbXrU9cMgPBcCK8LiwLqcbywW3t4oDV37n1pzpuNLsYiAV8eODnjbtQlSDwZ2cUEeQz4E54Hltg==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
@@ -3852,6 +3870,9 @@ packages:
   smol-toml@1.7.0:
     resolution: {integrity: sha512-aqVvWoyO21L23mb+drl4RmMXbf6N7FdHjAhTRA9ZBL7apWBgfWC16KjrASI+1p9GAroljyMHj6fK67i0UiTNvQ==}
     engines: {node: '>= 18'}
+
+  soundfont2-esm@0.6.0:
+    resolution: {integrity: sha512-MJs5JO2Xk5okj5v4S5r+fWn/XTSWu3hs01gYvOA6C6XoEGRItTxtXMaYTxe4baBwBhG16kWKAzT+pnm1hhQXTg==}
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -5340,6 +5361,11 @@ snapshots:
       cross-spawn: 7.0.6
       gray-matter: 4.0.3
 
+  '@tonejs/midi@2.0.28':
+    dependencies:
+      array-flatten: 3.0.0
+      midi-file: 1.2.4
+
   '@tybys/wasm-util@0.10.3':
     dependencies:
       tslib: 2.8.1
@@ -5883,6 +5909,8 @@ snapshots:
       sprintf-js: 1.0.3
 
   argparse@2.0.1: {}
+
+  array-flatten@3.0.0: {}
 
   assemblyscript@0.28.20:
     dependencies:
@@ -7190,6 +7218,8 @@ snapshots:
       braces: 3.0.3
       picomatch: 2.3.2
 
+  midi-file@1.2.4: {}
+
   mime@1.6.0:
     optional: true
 
@@ -7623,6 +7653,10 @@ snapshots:
 
   semver@7.8.5: {}
 
+  sfumato@0.3.0:
+    dependencies:
+      soundfont2-esm: 0.6.0
+
   sharp@0.34.5:
     dependencies:
       '@img/colour': 1.1.0
@@ -7690,6 +7724,8 @@ snapshots:
   slick@1.12.2: {}
 
   smol-toml@1.7.0: {}
+
+  soundfont2-esm@0.6.0: {}
 
   source-map-js@1.2.1: {}
 

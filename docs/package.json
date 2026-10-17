@@ -7,17 +7,19 @@
     "build": "vitepress build .",
     "preview": "pnpm run build && vitepress preview .",
     "test": "pnpm --filter graphwar-killer-wasm build && pnpm --filter osu-beatmap-converter build && pnpm run test:unit",
-    "test:unit": "vitest run tools/graphwar-killer tools/osu-beatmap-converter tools/pdf-footer-anonymizer",
+    "test:unit": "vitest run tools/graphwar-killer tools/osu-beatmap-converter tools/pdf-footer-anonymizer tools/midi-rhythm",
     "watch": "vitepress dev ."
   },
   "dependencies": {
     "@giscus/vue": "^3.1.1",
     "@lucide/vue": "^1.55.0",
+    "@tonejs/midi": "^2.0.28",
     "compat-finder": "workspace:*",
     "graphwar-killer-wasm": "workspace:*",
     "lunar-javascript": "^1.7.7",
     "osu-beatmap-converter": "workspace:*",
     "pdf-lib": "^1.17.1",
+    "sfumato": "^0.3.0",
     "vue": "^3.5.43"
   },
   "devDependencies": {

@@ -83,6 +83,8 @@ interface Labels {
   barLinesTitle: string;
   barNumbers: string;
   barNumbersTitle: string;
+  allowOverlap: string;
+  allowOverlapTitle: string;
   keyHint: string;
   keyHintAuto: string;
   keyHintShow: string;
@@ -174,6 +176,8 @@ const labels = {
     barLinesTitle: "Show measure separators on the playfield.",
     barNumbers: "Bar numbers",
     barNumbersTitle: "Show measure numbers at the left of each bar line.",
+    allowOverlap: "Allow overlapping notes",
+    allowOverlapTitle: "Keep overlapping same-pitch notes as they are, without splitting them at each attack.",
     keyHint: "Key hints",
     keyHintAuto: "Auto",
     keyHintShow: "Show",
@@ -261,6 +265,8 @@ const labels = {
     barLinesTitle: "在画面上显示小节分隔线。",
     barNumbers: "小节数",
     barNumbersTitle: "在小节线左侧显示小节序号。",
+    allowOverlap: "允许重叠音符",
+    allowOverlapTitle: "不合并同音重叠的音符，按原谱保留。",
     keyHint: "键位提示",
     keyHintAuto: "自动",
     keyHintShow: "显示",
@@ -355,6 +361,7 @@ const showAllKeys = ref(false);
 const leadSeconds = ref(DEFAULT_LEAD_SECONDS);
 const showBarLines = ref(true);
 const showBarNumbers = ref(false);
+const allowOverlap = ref(false);
 const calibrationMs = ref(0);
 const audioOffsetMs = ref(0);
 const thresholdText = ref<ThresholdInputText>({
@@ -592,7 +599,7 @@ async function loadScoreFile(file: File | undefined) {
   }
   errorMessage.value = "";
   try {
-    const parsed = parseMidiScore(await file.arrayBuffer());
+    const parsed = parseMidiScore(await file.arrayBuffer(), allowOverlap.value);
     rawScore.value = parsed;
     selectedTracks.value = new Set(parsed.tracks.map((track) => track.index));
     score.value = parsed;
@@ -608,6 +615,18 @@ async function loadScoreFile(file: File | undefined) {
   }
 }
 
+function rebuildScore() {
+  if (!rawScore.value) {
+    return;
+  }
+  score.value = selectScoreTracks(rawScore.value, [...selectedTracks.value], allowOverlap.value);
+  if (isPlaying.value || isPaused.value) {
+    stop();
+  } else {
+    draw(null);
+  }
+}
+
 function toggleTrack(index: number) {
   if (!rawScore.value) {
     return;
@@ -619,12 +638,12 @@ function toggleTrack(index: number) {
     next.add(index);
   }
   selectedTracks.value = next;
-  score.value = selectScoreTracks(rawScore.value, [...next]);
-  if (isPlaying.value || isPaused.value) {
-    stop();
-  } else {
-    draw(null);
-  }
+  rebuildScore();
+}
+
+function toggleAllowOverlap() {
+  allowOverlap.value = !allowOverlap.value;
+  rebuildScore();
 }
 
 function removeScore() {
@@ -1900,6 +1919,13 @@ function formatPercent(value: number): string {
               :label="text.barNumbers"
               :title="text.barNumbersTitle"
               @toggle="showBarNumbers = !showBarNumbers"
+            />
+            <ToggleField
+              id="midi-rhythm-allow-overlap"
+              :checked="allowOverlap"
+              :label="text.allowOverlap"
+              :title="text.allowOverlapTitle"
+              @toggle="toggleAllowOverlap"
             />
           </div>
           <div

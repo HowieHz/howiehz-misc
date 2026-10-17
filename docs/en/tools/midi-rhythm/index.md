@@ -18,7 +18,7 @@ import MidiRhythm from "../../../tools/midi-rhythm/MidiRhythm.vue";
 
 ## Usage
 
-- **Import MIDI**: drop or choose a `.mid` file as the score; for multi-track files, tick the tracks you want to play, and overlapping same-pitch notes become one held note. To replay a previously exported performance, tick "Playback mode".
+- **Import MIDI**: drop or choose a `.mid` file as the score; for multi-track files, tick the tracks you want to play, and overlapping same-pitch notes are split at the new attack (enable "Allow overlapping notes" to keep them as-is). To replay a previously exported performance, tick "Playback mode".
 - **Mode**: judged play (play along, judged and recorded) or free recording (play freely and record).
 - **Playback mode**: replays the performance, lights up the keys, and judges every note as perfect.
 - **Input**: Web MIDI is preferred; when unsupported, use QWERTY — white keys `A S D F G H J K L ; '`, black keys `W E T Y U O P`, `Z`/`X` (or arrow keys) shift octaves, Space starts, pauses, or resumes.

@@ -26,7 +26,7 @@ export interface ParsedScore {
 }
 
 /** Parse a MIDI buffer into piano notes (21–108) with second-based timing. */
-export function parseMidiScore(data: ArrayBuffer | Uint8Array): ParsedScore {
+export function parseMidiScore(data: ArrayBuffer | Uint8Array, allowOverlap = false): ParsedScore {
   const midi = new Midi(data);
   const tracks: ScoreTrack[] = midi.tracks.map((track, index) => {
     const trackNotes: NoteEvent[] = [];
@@ -38,7 +38,8 @@ export function parseMidiScore(data: ArrayBuffer | Uint8Array): ParsedScore {
     trackNotes.sort((left, right) => left.time - right.time || left.midi - right.midi);
     return { index, name: track.name, noteCount: trackNotes.length, notes: trackNotes };
   });
-  const mergedNotes = mergeOverlappingNotes(tracks.flatMap((track) => track.notes));
+  const allNotes = tracks.flatMap((track) => track.notes);
+  const mergedNotes = allowOverlap ? sortByTime(allNotes) : normalizeNoteOverlaps(allNotes);
 
   const tempos = midi.header.tempos.map((tempo) => ({ ticks: tempo.ticks, bpm: tempo.bpm }));
   const baseBpm = tempos[0]?.bpm ?? 120;
@@ -94,11 +95,14 @@ export function parseMidiScore(data: ArrayBuffer | Uint8Array): ParsedScore {
 }
 
 /** Rebuild a score from the selected MIDI tracks, merging overlaps again. */
-export function selectScoreTracks(score: ParsedScore, trackIndices: readonly number[]): ParsedScore {
+export function selectScoreTracks(
+  score: ParsedScore,
+  trackIndices: readonly number[],
+  allowOverlap = false,
+): ParsedScore {
   const selected = new Set(trackIndices);
-  const notes = mergeOverlappingNotes(
-    score.tracks.filter((track) => selected.has(track.index)).flatMap((track) => track.notes),
-  );
+  const selectedNotes = score.tracks.filter((track) => selected.has(track.index)).flatMap((track) => track.notes);
+  const notes = allowOverlap ? sortByTime(selectedNotes) : normalizeNoteOverlaps(selectedNotes);
 
   let minMidi = PIANO_MAX_MIDI;
   let maxMidi = PIANO_MIN_MIDI;
@@ -117,23 +121,36 @@ export function selectScoreTracks(score: ParsedScore, trackIndices: readonly num
   return { ...score, notes, minMidi, maxMidi, duration };
 }
 
+/** Sort notes by time, then pitch. */
+function sortByTime(notes: readonly NoteEvent[]): NoteEvent[] {
+  return [...notes].sort((left, right) => left.time - right.time || left.midi - right.midi);
+}
+
 /**
- * Merge same-pitch notes whose time ranges overlap, which is common when a multi-track MIDI repeats the same part
- * across tracks. The result is one held note per key press.
+ * Normalize same-pitch overlaps so one key is never held twice at once: a later attack ends the previous note at that
+ * attack (re-strike), while notes that start together collapse into the longer hold. Different pitches never interact.
  */
-function mergeOverlappingNotes(notes: readonly NoteEvent[]): NoteEvent[] {
+function normalizeNoteOverlaps(notes: readonly NoteEvent[]): NoteEvent[] {
   const grouped = [...notes].sort((left, right) => left.midi - right.midi || left.time - right.time);
-  const merged: NoteEvent[] = [];
+  const normalized: NoteEvent[] = [];
   for (const note of grouped) {
-    const last = merged[merged.length - 1];
-    if (last && last.midi === note.midi && note.time < last.time + last.duration - 1e-6) {
-      last.duration = Math.max(last.time + last.duration, note.time + note.duration) - last.time;
-      last.velocity = Math.max(last.velocity, note.velocity);
-      continue;
+    const last = normalized[normalized.length - 1];
+    if (last && last.midi === note.midi) {
+      const lastEnd = last.time + last.duration;
+      if (note.time <= last.time + 1e-6) {
+        // Same attack (a duplicate from another track): keep the longer hold.
+        last.duration = Math.max(lastEnd, note.time + note.duration) - last.time;
+        last.velocity = Math.max(last.velocity, note.velocity);
+        continue;
+      }
+      if (note.time < lastEnd - 1e-6) {
+        // Overlapping re-attack: end the previous note at the new attack.
+        last.duration = note.time - last.time;
+      }
     }
-    merged.push({ ...note });
+    normalized.push({ ...note });
   }
-  return merged.sort((left, right) => left.time - right.time || left.midi - right.midi);
+  return normalized.sort((left, right) => left.time - right.time || left.midi - right.midi);
 }
 
 /** Encode recorded notes into a MIDI file, with a single tempo or a full tempo map. */

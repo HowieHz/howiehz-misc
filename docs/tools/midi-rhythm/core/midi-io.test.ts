@@ -53,14 +53,37 @@ describe("parseMidiScore", () => {
     expect(parsed.barTimes[1]).toBeCloseTo(2);
   });
 
-  it("merges overlapping same-pitch notes across tracks", () => {
+  it("splits overlapping same-pitch notes at the new attack", () => {
     const midi = new Midi();
     midi.header.setTempo(120);
     midi.addTrack().addNote({ midi: 60, time: 0, duration: 1, velocity: 0.8 });
     midi.addTrack().addNote({ midi: 60, time: 0.5, duration: 1, velocity: 0.6 });
     const parsed = parseMidiScore(midi.toArray());
+    expect(parsed.notes).toHaveLength(2);
+    expect(parsed.notes[0]?.duration).toBeCloseTo(0.5);
+    expect(parsed.notes[1]?.time).toBeCloseTo(0.5);
+    expect(parsed.notes[1]?.duration).toBeCloseTo(1);
+  });
+
+  it("collapses same-pitch notes that start together", () => {
+    const midi = new Midi();
+    midi.header.setTempo(120);
+    midi.addTrack().addNote({ midi: 60, time: 0, duration: 1, velocity: 0.8 });
+    midi.addTrack().addNote({ midi: 60, time: 0, duration: 2, velocity: 0.6 });
+    const parsed = parseMidiScore(midi.toArray());
     expect(parsed.notes).toHaveLength(1);
-    expect(parsed.notes[0]?.duration).toBeCloseTo(1.5);
+    expect(parsed.notes[0]?.duration).toBeCloseTo(2);
+  });
+
+  it("keeps overlapping notes when allowOverlap is true", () => {
+    const midi = new Midi();
+    midi.header.setTempo(120);
+    midi.addTrack().addNote({ midi: 60, time: 0, duration: 1, velocity: 0.8 });
+    midi.addTrack().addNote({ midi: 60, time: 0.5, duration: 1, velocity: 0.6 });
+    const parsed = parseMidiScore(midi.toArray(), true);
+    expect(parsed.notes).toHaveLength(2);
+    expect(parsed.notes[0]?.duration).toBeCloseTo(1);
+    expect(parsed.notes[1]?.time).toBeCloseTo(0.5);
   });
 
   it("rebuilds the score from selected tracks", () => {

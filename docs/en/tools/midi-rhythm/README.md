@@ -10,7 +10,7 @@ Read and play `.mid` scores in the browser with an 88-key MIDI keyboard or the Q
 - **Judgement**: Perfect / Good / Bad / Miss tiers with adjustable windows; a wrong key counts as a miss.
 - **Modes**: judged play (load a score, judge, record, replay) and free recording (play freely and record).
 - **Sound**: a capsule switch between "Play on press" and "Auto-play", plus "Mute sound source"; tones include built-in synths and local SoundFont (`.sf2`).
-- **Helpers**: speed control, 4-beat count-in, metronome, adjustable look-ahead and bar lines; changing timing settings mid-run shows a restart notice.
+- **Helpers**: speed control, 4-beat count-in, metronome, adjustable look-ahead, bar lines, audio offset and latency calibration; changing timing settings mid-run shows a restart notice.
 - **Export**: export your performance as `.mid`; judged mode keeps the score tempo, free recording writes your chosen BPM.
 - **Accessibility**: judgement and status are announced through `aria-live`.
 

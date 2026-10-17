@@ -27,6 +27,7 @@ import MidiRhythm from "../../../tools/midi-rhythm/MidiRhythm.vue";
 - **Count-in**: starting or resuming plays a 4-beat metronome count-in before the music begins.
 - **Metronome**: available in both judged and free modes; judged mode follows the score BPM (with speed), free recording uses your chosen BPM.
 - **Display**: adjust how many seconds of upcoming notes the playfield shows (3 s by default), and toggle bar lines.
+- **Latency calibration**: audio output latency is compensated automatically; use "Audio offset" to nudge the audio against the visuals and "Latency calibration" to nudge judgement, both in ms.
 - **Judgement**: defaults are Perfect ≤80 ms, Good ≤160 ms, Bad ≤300 ms (adjustable); beyond that is a miss, and a wrong key counts as a miss. Perfect is wide enough that the ear cannot hear an obvious offset.
 - **Sound**: capsule switch between "Play on press" and "Auto-play"; the adjacent "Mute sound source" silences everything and disables the switch (for a piano with its own sound). Playback mode forces auto-play; free recording forces play-on-press.
 - **Tone**: pick a built-in synth tone (electric piano by default), or load a local SoundFont (`.sf2`) library and choose a preset.

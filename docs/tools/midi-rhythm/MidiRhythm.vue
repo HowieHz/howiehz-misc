@@ -58,7 +58,8 @@ interface Labels {
   toneElectricPiano: string;
   toneOrgan: string;
   toneBell: string;
-  soundFont: string;
+  soundFontDropHint: string;
+  soundFontLoaded: string;
   soundFontPreset: string;
   soundFontLoading: string;
   soundFontError: string;
@@ -73,6 +74,10 @@ interface Labels {
   showAllKeys: string;
   leadSeconds: string;
   leadSecondsTitle: string;
+  calibration: string;
+  calibrationTitle: string;
+  audioOffset: string;
+  audioOffsetTitle: string;
   barLines: string;
   barLinesTitle: string;
   keyHint: string;
@@ -139,7 +144,8 @@ const labels = {
     toneElectricPiano: "Electric piano",
     toneOrgan: "Organ",
     toneBell: "Bell",
-    soundFont: "SoundFont file",
+    soundFontDropHint: "Drop or choose an .sf2 SoundFont",
+    soundFontLoaded: "SoundFont loaded, click to replace",
     soundFontPreset: "Preset",
     soundFontLoading: "Loading…",
     soundFontError: "Could not read that SoundFont.",
@@ -154,6 +160,12 @@ const labels = {
     showAllKeys: "Show all 88 keys",
     leadSeconds: "Look-ahead",
     leadSecondsTitle: "How many seconds of upcoming notes the playfield shows.",
+    calibration: "Latency calibration",
+    calibrationTitle:
+      "Judgement offset in ms. Audio output latency is compensated automatically; increase if hits feel late, decrease if early.",
+    audioOffset: "Audio offset",
+    audioOffsetTitle:
+      "How much earlier (positive) or later (negative) the audio plays relative to the visuals, in ms. Fine-tune when automatic compensation is off.",
     barLines: "Bar lines",
     barLinesTitle: "Show measure separators on the playfield.",
     keyHint: "Key hints",
@@ -218,7 +230,8 @@ const labels = {
     toneElectricPiano: "电钢琴",
     toneOrgan: "管风琴",
     toneBell: "铃",
-    soundFont: "SoundFont 文件",
+    soundFontDropHint: "拖入或选择 .sf2 音色库",
+    soundFontLoaded: "SoundFont 已加载，点击更换",
     soundFontPreset: "预设",
     soundFontLoading: "加载中…",
     soundFontError: "无法读取该 SoundFont。",
@@ -233,6 +246,10 @@ const labels = {
     showAllKeys: "显示全部 88 键",
     leadSeconds: "显示时长",
     leadSecondsTitle: "画面上方显示未来多少秒的音符。",
+    calibration: "延迟校准",
+    calibrationTitle: "判定偏移（毫秒）。音频输出延迟已自动补偿；若整体偏晚调大，偏早调小。",
+    audioOffset: "音频偏移",
+    audioOffsetTitle: "声音相对画面提前（正）或延后（负）的毫秒数；自动补偿不准时手动微调。",
     barLines: "小节线",
     barLinesTitle: "在画面上显示小节分隔线。",
     keyHint: "键位提示",
@@ -279,6 +296,10 @@ const text = computed(() => labels[props.language]);
 const DEFAULT_LEAD_SECONDS = 3;
 const LEAD_MIN_SECONDS = 1;
 const LEAD_MAX_SECONDS = 6;
+const CALIBRATION_MIN_MS = -200;
+const CALIBRATION_MAX_MS = 200;
+const AUDIO_OFFSET_MIN_MS = -300;
+const AUDIO_OFFSET_MAX_MS = 300;
 const KEYBOARD_VELOCITY = 0.8;
 const BLACK_KEY_RATIO = 0.62;
 const KEY_BAND_HEIGHT = 62;
@@ -304,6 +325,7 @@ const score = ref<ParsedScore>();
 const fileName = ref("");
 const errorMessage = ref("");
 const isDropTarget = ref(false);
+const isSoundFontDropTarget = ref(false);
 
 const playMode = ref<PlayMode>("judge");
 const playbackOnly = ref(false);
@@ -318,6 +340,8 @@ const pendingRestart = ref(false);
 const showAllKeys = ref(false);
 const leadSeconds = ref(DEFAULT_LEAD_SECONDS);
 const showBarLines = ref(true);
+const calibrationMs = ref(0);
+const audioOffsetMs = ref(0);
 const thresholdText = ref<ThresholdInputText>({
   perfectMs: String(DEFAULT_PERFECT_MS),
   goodMs: String(DEFAULT_GOOD_MS),
@@ -535,6 +559,18 @@ function leaveDropZone(event: DragEvent) {
   }
 }
 
+function onSoundFontDrop(event: DragEvent) {
+  isSoundFontDropTarget.value = false;
+  void loadSoundFontFile(event.dataTransfer?.files[0]);
+}
+
+function leaveSoundFontDropZone(event: DragEvent) {
+  const zone = event.currentTarget;
+  if (zone instanceof HTMLElement && !zone.contains(event.relatedTarget as Node | null)) {
+    isSoundFontDropTarget.value = false;
+  }
+}
+
 async function loadScoreFile(file: File | undefined) {
   if (!file) {
     return;
@@ -613,6 +649,10 @@ async function ensureAudioRunning() {
   if (audioContext?.state === "suspended") {
     await audioContext.resume();
   }
+}
+
+function outputLatencySeconds(): number {
+  return audioContext?.outputLatency ?? audioContext?.baseLatency ?? 0;
 }
 
 async function closeAudio() {
@@ -797,7 +837,7 @@ async function start() {
   metronomeInterval = computeMetronomeInterval();
   countInTotal = COUNT_IN_BEATS * metronomeInterval;
   countInStart = performance.now();
-  audioBaseTime = audioContext?.currentTime ?? 0;
+  audioBaseTime = (audioContext?.currentTime ?? 0) - outputLatencySeconds();
   accumulatedWall = 0;
   isCountingIn.value = true;
   isPlaying.value = true;
@@ -848,7 +888,7 @@ async function resume() {
   metronomeInterval = computeMetronomeInterval();
   countInTotal = COUNT_IN_BEATS * metronomeInterval;
   countInStart = performance.now();
-  audioBaseTime = audioContext?.currentTime ?? 0;
+  audioBaseTime = (audioContext?.currentTime ?? 0) - outputLatencySeconds();
   nextMetronomeTime = accumulatedWall - countInTotal;
   isCountingIn.value = true;
   isPlaying.value = true;
@@ -940,7 +980,9 @@ function rebaseTimeline(newSpeed: number) {
   wallNotes = score.value.notes.map((note) => ({ midi: note.midi, time: noteWallTime(note.time, newSpeed) }));
   accumulatedWall = scoreTime / newSpeed;
   playStart = performance.now();
-  audioBaseTime = audioContext?.currentTime ?? 0;
+  audioBaseTime = (audioContext?.currentTime ?? 0) - outputLatencySeconds();
+  // The count-in offset no longer applies once the audio base is re-anchored to "now".
+  countInTotal = 0;
   metronomeInterval = computeMetronomeInterval();
   nextMelodyIndex = wallNotes.findIndex((note) => note.time >= accumulatedWall);
   if (nextMelodyIndex < 0) {
@@ -950,9 +992,14 @@ function rebaseTimeline(newSpeed: number) {
   nextMetronomeTime = Math.ceil(accumulatedWall / metronomeInterval) * metronomeInterval;
 }
 
-function onSpeedChange() {
+function onSpeedInput(event: Event) {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+  const value = clampSpeed(Number(target.value));
   if (effectivePlaybackOnly.value && (isPlaying.value || isPaused.value)) {
-    rebaseTimeline(clampSpeed(speed.value));
+    rebaseTimeline(value);
     return;
   }
   markConfigChanged();
@@ -992,7 +1039,7 @@ function renderLoop() {
   const now = currentWallTime();
   lastWallPosition = now;
   if (engine) {
-    applyResults(engine.advance(now));
+    applyResults(engine.advance(now - calibrationMs.value / 1000));
   } else if (effectivePlaybackOnly.value) {
     advancePlayback(now);
   }
@@ -1025,7 +1072,10 @@ function scheduleMelody(now: number) {
       break;
     }
     const source = score.value.notes[nextMelodyIndex];
-    const audioTime = Math.max(audioContext.currentTime, audioBaseTime + entry.time - accumulatedWall + countInTotal);
+    const audioTime = Math.max(
+      audioContext.currentTime,
+      audioBaseTime + entry.time - accumulatedWall + countInTotal - audioOffsetMs.value / 1000,
+    );
     const duration = Math.min(Math.max(source.duration, 0.08), 2);
     playNote(entry.midi, audioTime, duration, source.velocity, melodyGain);
     nextMelodyIndex += 1;
@@ -1047,7 +1097,7 @@ function scheduleMetronome(now: number) {
     }
     const audioTime = Math.max(
       audioContext.currentTime,
-      audioBaseTime + nextMetronomeTime - accumulatedWall + countInTotal,
+      audioBaseTime + nextMetronomeTime - accumulatedWall + countInTotal - audioOffsetMs.value / 1000,
     );
     playClick(audioTime);
     nextMetronomeTime += metronomeInterval;
@@ -1145,8 +1195,9 @@ function noteOn(midi: number, velocity: number) {
     playNote(midi, audioContext.currentTime, 0.35, velocity, melodyGain);
   }
   if (engine) {
-    applyResults(engine.advance(now));
-    applyResults([engine.press(now, midi)]);
+    const judgeNow = now - calibrationMs.value / 1000;
+    applyResults(engine.advance(judgeNow));
+    applyResults([engine.press(judgeNow, midi)]);
   }
 }
 
@@ -1555,7 +1606,7 @@ function formatPercent(value: number): string {
             :max="SPEED_MAX"
             step="0.05"
             :disabled="isPlaying && !effectivePlaybackOnly"
-            @change="onSpeedChange"
+            @input="onSpeedInput"
           >
           <span>{{ speed.toFixed(2) }}× · {{ effectiveBpmValue.toFixed(0) }} BPM</span>
         </div>
@@ -1691,18 +1742,31 @@ function formatPercent(value: number): string {
               <option value="soundfont">{{ text.soundFontTone }}</option>
             </select>
           </label>
-          <label
-            v-if="tonePreset === 'soundfont'"
-            class="midi-rhythm__tone-row"
-          >
-            <span>{{ text.soundFont }}</span>
+          <template v-if="tonePreset === 'soundfont'">
             <input
-              type="file"
+              id="midi-rhythm-soundfont-file"
               accept=".sf2,audio/soundfont"
+              class="midi-rhythm__file-input"
+              type="file"
               :disabled="soundFontLoading"
               @change="onSoundFontFileChange"
             >
-          </label>
+            <label
+              class="midi-rhythm__drop-zone"
+              :class="{ 'midi-rhythm__drop-zone--active': isSoundFontDropTarget }"
+              for="midi-rhythm-soundfont-file"
+              @dragenter.prevent="isSoundFontDropTarget = true"
+              @dragleave="leaveSoundFontDropZone"
+              @dragover.prevent="isSoundFontDropTarget = true"
+              @drop.prevent="onSoundFontDrop"
+            >
+              <Upload
+                :size="20"
+                aria-hidden="true"
+              />
+              <span>{{ soundFontPresets.length > 0 ? text.soundFontLoaded : text.soundFontDropHint }}</span>
+            </label>
+          </template>
           <label
             v-if="tonePreset === 'soundfont' && soundFontPresets.length > 0"
             class="midi-rhythm__tone-row"
@@ -1763,6 +1827,36 @@ function formatPercent(value: number): string {
               step="0.5"
             >
             <span>{{ leadSeconds.toFixed(1) }}s</span>
+          </div>
+          <div
+            class="midi-rhythm__slider-row"
+            :title="text.calibrationTitle"
+          >
+            <label for="midi-rhythm-calibration">{{ text.calibration }}</label>
+            <input
+              id="midi-rhythm-calibration"
+              v-model.number="calibrationMs"
+              type="range"
+              :min="CALIBRATION_MIN_MS"
+              :max="CALIBRATION_MAX_MS"
+              step="5"
+            >
+            <span>{{ calibrationMs }} ms</span>
+          </div>
+          <div
+            class="midi-rhythm__slider-row"
+            :title="text.audioOffsetTitle"
+          >
+            <label for="midi-rhythm-audio-offset">{{ text.audioOffset }}</label>
+            <input
+              id="midi-rhythm-audio-offset"
+              v-model.number="audioOffsetMs"
+              type="range"
+              :min="AUDIO_OFFSET_MIN_MS"
+              :max="AUDIO_OFFSET_MAX_MS"
+              step="5"
+            >
+            <span>{{ audioOffsetMs }} ms</span>
           </div>
           <div
             class="midi-rhythm__keyhint-row"
@@ -2174,14 +2268,6 @@ function formatPercent(value: number): string {
   font: inherit;
   height: 32px;
   padding: 4px 8px;
-  width: 100%;
-}
-
-.midi-rhythm__settings-grid input[type="file"] {
-  color: var(--vp-c-text-1);
-  font: inherit;
-  font-size: 0.82rem;
-  max-width: 100%;
   width: 100%;
 }
 

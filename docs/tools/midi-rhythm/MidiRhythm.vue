@@ -324,6 +324,7 @@ const KEY_BAND_HEIGHT = 62;
 const COUNT_IN_BEATS = 4;
 const OCTAVE_SHIFT_MIN = -1;
 const OCTAVE_SHIFT_MAX = 6;
+const MIN_NOTE_SECONDS = 0.2;
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 const WHITE_KEY = "#f8fafc";
@@ -333,8 +334,10 @@ const KEY_LABEL = "#475569";
 const ACTIVE_KEY = "rgba(245, 158, 11, 0.55)";
 const NOTE_WHITE_KEY = "rgba(56, 189, 248, 0.9)";
 const NOTE_BLACK_KEY = "rgba(129, 140, 248, 0.9)";
-const NOTE_WHITE_KEY_TAIL = "rgba(56, 189, 248, 0.32)";
-const NOTE_BLACK_KEY_TAIL = "rgba(129, 140, 248, 0.32)";
+const NOTE_WHITE_KEY_HOLD = "rgba(45, 212, 191, 0.92)";
+const NOTE_BLACK_KEY_HOLD = "rgba(167, 139, 250, 0.92)";
+const NOTE_WHITE_KEY_TAIL = "rgba(45, 212, 191, 0.32)";
+const NOTE_BLACK_KEY_TAIL = "rgba(167, 139, 250, 0.32)";
 const JUDGMENT_LINE = "#f59e0b";
 const BAR_LINE = "rgba(148, 163, 184, 0.35)";
 const BAR_NUMBER = "rgba(148, 163, 184, 0.9)";
@@ -344,6 +347,7 @@ const stageRef = ref<HTMLElement>();
 
 const rawScore = ref<ParsedScore>();
 const selectedTracks = ref<Set<number>>(new Set());
+const visibleTracks = computed(() => rawScore.value?.tracks.filter((track) => track.noteCount > 0) ?? []);
 const score = ref<ParsedScore>();
 const fileName = ref("");
 const errorMessage = ref("");
@@ -797,9 +801,10 @@ function playElectricPiano(frequency: number, when: number, duration: number, pe
   modGain.gain.value = frequency * 1.4;
   modulator.connect(modGain);
   modGain.connect(carrier.frequency);
+  const decayAt = when + Math.min(0.1, duration * 0.5);
   gain.gain.setValueAtTime(0.0001, when);
   gain.gain.linearRampToValueAtTime(peak, when + 0.005);
-  gain.gain.exponentialRampToValueAtTime(peak * 0.3, when + 0.1);
+  gain.gain.exponentialRampToValueAtTime(peak * 0.3, decayAt);
   gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
   carrier.connect(gain);
   gain.connect(destination);
@@ -1148,7 +1153,7 @@ function scheduleMelody(now: number) {
       audioContext.currentTime,
       audioBaseTime + entry.time - accumulatedWall + countInTotal - audioOffsetMs.value / 1000,
     );
-    const duration = Math.max(source.duration, 0.08);
+    const duration = Math.max(source.duration, MIN_NOTE_SECONDS);
     playNote(entry.midi, audioTime, duration, source.velocity, melodyGain);
     nextMelodyIndex += 1;
   }
@@ -1473,11 +1478,13 @@ function draw(now: number | null) {
         continue;
       }
       const headTop = Math.max(bottom - noteHeight, top);
-      if (headTop > top) {
+      if (headTop > top + 0.5) {
         context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY_TAIL : NOTE_BLACK_KEY_TAIL;
         context.fillRect(lane.x + 1, top, lane.width - 2, headTop - top);
+        context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY_HOLD : NOTE_BLACK_KEY_HOLD;
+      } else {
+        context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY : NOTE_BLACK_KEY;
       }
-      context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY : NOTE_BLACK_KEY;
       context.fillRect(lane.x + 1, headTop, lane.width - 2, bottom - headTop);
     }
     context.strokeStyle = JUDGMENT_LINE;
@@ -1639,12 +1646,12 @@ function feedbackColor(kind: FeedbackKind): string {
           </button>
         </div>
         <div
-          v-if="rawScore && rawScore.tracks.length > 1"
+          v-if="visibleTracks.length > 1"
           class="midi-rhythm__track-list"
         >
           <span class="midi-rhythm__track-title">{{ text.selectTracks }}</span>
           <label
-            v-for="track in rawScore.tracks"
+            v-for="track in visibleTracks"
             :key="track.index"
           >
             <input
@@ -1942,7 +1949,7 @@ function feedbackColor(kind: FeedbackKind): string {
               type="range"
               :min="LEAD_MIN_SECONDS"
               :max="LEAD_MAX_SECONDS"
-              step="0.5"
+              step="0.1"
             >
             <span>{{ leadSeconds.toFixed(1) }}s</span>
           </div>

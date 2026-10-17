@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Download, Maximize, Minimize, Pause, Play, RotateCcw, Upload, X } from "@lucide/vue";
 import { loadSoundfont, startPresetNote, type SfumatoPreset } from "sfumato";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 
 import { applyResult, createEmptyStats, JudgementEngine } from "./core/judgment";
 import { keyToMidi, midiToKeyLabel } from "./core/keyboard";
@@ -345,10 +345,10 @@ const BAR_NUMBER = "rgba(148, 163, 184, 0.9)";
 const canvasRef = ref<HTMLCanvasElement>();
 const stageRef = ref<HTMLElement>();
 
-const rawScore = ref<ParsedScore>();
+const rawScore = shallowRef<ParsedScore>();
 const selectedTracks = ref<Set<number>>(new Set());
 const visibleTracks = computed(() => rawScore.value?.tracks.filter((track) => track.noteCount > 0) ?? []);
-const score = ref<ParsedScore>();
+const score = shallowRef<ParsedScore>();
 const fileName = ref("");
 const errorMessage = ref("");
 const isDropTarget = ref(false);
@@ -467,6 +467,7 @@ let audioBaseTime = 0;
 let countInTotal = 0;
 let countInStart = 0;
 let resizeObserver: ResizeObserver | undefined;
+let midiAccess: MIDIAccess | undefined;
 let audioContext: AudioContext | undefined;
 let masterGain: GainNode | undefined;
 let melodyGain: GainNode | undefined;
@@ -501,6 +502,13 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(rafId);
   isPlaying.value = false;
   isPaused.value = false;
+  if (midiAccess) {
+    midiAccess.onstatechange = null;
+    for (const input of midiAccess.inputs.values()) {
+      input.onmidimessage = null;
+    }
+    midiAccess = undefined;
+  }
   void closeAudio();
 });
 
@@ -640,6 +648,9 @@ function rebuildScore() {
     return;
   }
   score.value = selectScoreTracks(rawScore.value, [...selectedTracks.value], allowOverlap.value);
+  if (score.value.notes.length > 0) {
+    errorMessage.value = "";
+  }
   if (isPlaying.value || isPaused.value) {
     stop();
   } else {
@@ -906,9 +917,16 @@ async function start() {
   if (isPlaying.value) {
     return;
   }
-  if (playMode.value === "judge" && !score.value) {
-    errorMessage.value = text.value.noScore;
-    return;
+  if (playMode.value === "judge") {
+    const currentScore = score.value;
+    if (!currentScore) {
+      errorMessage.value = text.value.noScore;
+      return;
+    }
+    if (currentScore.notes.length === 0) {
+      errorMessage.value = text.value.emptyScore;
+      return;
+    }
   }
   await ensureAudioRunning();
   resetForPlay();
@@ -953,6 +971,7 @@ function pause() {
   isPaused.value = true;
   cancelAnimationFrame(rafId);
   lastFrameAt = 0;
+  activeKeys.value = new Set();
   if (audioContext?.state === "running") {
     void audioContext.suspend();
   }
@@ -990,6 +1009,7 @@ function stop() {
   stats.value = createEmptyStats();
   lastTier.value = undefined;
   activeKeys.value = new Set();
+  heldKeys.clear();
   hasRecording.value = false;
   isCountingIn.value = false;
   countInBeatsLeft.value = 0;
@@ -1051,30 +1071,40 @@ function computeMetronomeInterval(): number {
 
 /** Keep the score position while changing speed mid-run (used by playback mode). */
 function rebaseTimeline(newSpeed: number) {
-  if ((!isPlaying.value && !isPaused.value) || isCountingIn.value || playMode.value !== "judge" || !score.value) {
+  if ((!isPlaying.value && !isPaused.value) || playMode.value !== "judge" || !score.value) {
     return;
   }
   if (newSpeed === activeSpeed) {
     return;
   }
-  const scoreTime = currentWallTime() * activeSpeed;
+  const scoreTime = isCountingIn.value ? 0 : currentWallTime() * activeSpeed;
   activeSpeed = newSpeed;
   wallNotes = score.value.notes.map((note) => ({
     midi: note.midi,
     time: noteWallTime(note.time, newSpeed),
     duration: noteWallTime(note.duration, newSpeed),
   }));
-  accumulatedWall = scoreTime / newSpeed;
-  playStart = performance.now();
-  audioBaseTime = (audioContext?.currentTime ?? 0) - outputLatencySeconds();
-  // The count-in offset no longer applies once the audio base is re-anchored to "now".
-  countInTotal = 0;
-  metronomeInterval = computeMetronomeInterval();
-  nextMelodyIndex = wallNotes.findIndex((note) => note.time >= accumulatedWall);
+  if (!isCountingIn.value) {
+    accumulatedWall = scoreTime / newSpeed;
+  }
+  // Notes already at or before the current position were played/judged, so only take the later ones.
+  nextMelodyIndex = wallNotes.findIndex((note) => note.time > accumulatedWall);
   if (nextMelodyIndex < 0) {
     nextMelodyIndex = wallNotes.length;
   }
   nextPlaybackIndex = nextMelodyIndex;
+  metronomeInterval = computeMetronomeInterval();
+  audioBaseTime = (audioContext?.currentTime ?? 0) - outputLatencySeconds();
+  if (isCountingIn.value) {
+    // Restart the count-in so it clicks at the new tempo.
+    countInTotal = COUNT_IN_BEATS * metronomeInterval;
+    countInStart = performance.now();
+    nextMetronomeTime = -countInTotal;
+    return;
+  }
+  playStart = performance.now();
+  // The count-in offset no longer applies once the audio base is re-anchored to "now".
+  countInTotal = 0;
   nextMetronomeTime = Math.ceil(accumulatedWall / metronomeInterval) * metronomeInterval;
 }
 
@@ -1096,6 +1126,7 @@ function finish() {
   cancelAnimationFrame(rafId);
   isPlaying.value = false;
   isPaused.value = false;
+  activeKeys.value = new Set();
   if (playMode.value === "judge" && !playbackOnlyRun) {
     announcement.value = `${text.value.finished} ${text.value.score} ${scorePercent.value.toFixed(2)} ${text.value.accuracy} ${accuracyPercent.value.toFixed(2)}%`;
   }
@@ -1162,7 +1193,7 @@ function scheduleMelody(now: number) {
       audioContext.currentTime,
       audioBaseTime + entry.time - accumulatedWall + countInTotal - audioOffsetMs.value / 1000,
     );
-    const duration = Math.max(source.duration, MIN_NOTE_SECONDS);
+    const duration = Math.max(entry.duration, MIN_NOTE_SECONDS);
     playNote(entry.midi, audioTime, duration, source.velocity, melodyGain);
     nextMelodyIndex += 1;
   }
@@ -1199,12 +1230,18 @@ async function initMidi() {
   }
   try {
     const access = await navigator.requestMIDIAccess();
-    for (const input of access.inputs.values()) {
-      input.onmidimessage = onMidiMessage;
-    }
+    midiAccess = access;
+    bindMidiInputs(access);
+    access.onstatechange = () => bindMidiInputs(access);
     midiSupported.value = true;
   } catch {
     midiSupported.value = false;
+  }
+}
+
+function bindMidiInputs(access: MIDIAccess) {
+  for (const input of access.inputs.values()) {
+    input.onmidimessage = onMidiMessage;
   }
 }
 
@@ -1243,11 +1280,17 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (event.key === "z" || event.key === "ArrowLeft") {
-    octaveShift.value = clampOctaveShift(octaveShift.value - 1);
+    event.preventDefault();
+    if (!event.repeat) {
+      octaveShift.value = clampOctaveShift(octaveShift.value - 1);
+    }
     return;
   }
   if (event.key === "x" || event.key === "ArrowRight") {
-    octaveShift.value = clampOctaveShift(octaveShift.value + 1);
+    event.preventDefault();
+    if (!event.repeat) {
+      octaveShift.value = clampOctaveShift(octaveShift.value + 1);
+    }
     return;
   }
   const midi = keyToMidi(event.key, octaveShift.value);
@@ -1288,10 +1331,10 @@ function noteOn(midi: number, velocity: number) {
 }
 
 function noteOff(midi: number) {
+  activeKeys.value.delete(midi);
   if (!isPlaying.value || isCountingIn.value) {
     return;
   }
-  activeKeys.value.delete(midi);
   recording.noteOff(currentWallTime(), midi);
 }
 
@@ -1360,16 +1403,20 @@ function handleJudgement(result: JudgementResult, now: number) {
   if (result.type === "hit") {
     lastTier.value = result.tier;
     pushFeedback(result.midi, result.tier);
-    if (now - lastAnnounceTime > 1) {
-      lastAnnounceTime = now;
-      announcement.value = tierLabel(result.tier);
-    }
   } else if (result.type === "missed") {
     pushFeedback(result.midi, "miss");
-    announcement.value = text.value.miss;
-  } else {
-    announcement.value = text.value.extraMiss;
   }
+  if (now - lastAnnounceTime > 1) {
+    lastAnnounceTime = now;
+    announcement.value = announcementFor(result);
+  }
+}
+
+function announcementFor(result: JudgementResult): string {
+  if (result.type === "hit") {
+    return tierLabel(result.tier);
+  }
+  return result.type === "missed" ? text.value.miss : text.value.extraMiss;
 }
 
 function tierLabel(tier: "perfect" | "good" | "bad"): string {
@@ -1394,8 +1441,19 @@ function exportRecording() {
     errorMessage.value = text.value.exportEmpty;
     return;
   }
+  // Recording times are wall-clock seconds; scale them back to score time so the exported
+  // tempo map keeps the original beats when the run used a different speed.
+  const speedFactor = playMode.value === "judge" ? activeSpeed : 1;
+  const encodedNotes =
+    speedFactor === 1
+      ? notes
+      : notes.map((note) => ({
+          ...note,
+          time: note.time * speedFactor,
+          duration: note.duration * speedFactor,
+        }));
   const tempo = playMode.value === "judge" && score.value ? score.value.tempos : metronomeBpm.value;
-  const bytes = encodeMidi(notes, tempo);
+  const bytes = encodeMidi(encodedNotes, tempo);
   const blob = new Blob([new Uint8Array(bytes)], { type: "audio/midi" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

@@ -6,7 +6,7 @@ published: 2026-10-18T00:00:00+08:00
 
 # MIDI Rhythm Game
 
-Read and play `.mid` scores in the browser with an 88-key MIDI keyboard or the QWERTY keyboard. Supports speed control, lenient judgement, performance export, and review. Files never leave the device.
+Read and play `.mid` scores in the browser with a MIDI keyboard or the QWERTY keyboard. Supports speed control, lenient judgement, performance export, and review. Files never leave the device.
 
 <!-- autocorrect-disable -->
 <script setup lang="ts">
@@ -21,7 +21,7 @@ import MidiRhythm from "../../../tools/midi-rhythm/MidiRhythm.vue";
 - **Import MIDI**: drop or choose a `.mid` file as the score; to replay a previously exported performance, tick "Playback mode".
 - **Mode**: judged play (play along, judged and recorded) or free recording (play freely and record).
 - **Playback mode**: replays the performance, lights up the keys, and judges every note as perfect.
-- **Input**: Web MIDI (88 keys) is preferred; when unsupported, use QWERTY — white keys `A S D F G H J K L ; '`, black keys `W E T Y U O P`, `Z`/`X` (or arrow keys) shift octaves, Space starts, pauses, or resumes.
+- **Input**: Web MIDI is preferred; when unsupported, use QWERTY — white keys `A S D F G H J K L ; '`, black keys `W E T Y U O P`, `Z`/`X` (or arrow keys) shift octaves, Space starts, pauses, or resumes.
 - **Key hints**: in Settings choose Auto / Show / Hide to show keyboard characters on the keys.
 - **Speed**: the slider ranges 0.25×–3× and shows the effective BPM; judgement windows stay fixed in milliseconds.
 - **Count-in**: starting or resuming plays a 4-beat metronome count-in before the music begins.

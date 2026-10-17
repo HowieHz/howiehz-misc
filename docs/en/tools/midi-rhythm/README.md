@@ -2,11 +2,11 @@
 
 **English** | [简体中文](../../tools/midi-rhythm/)
 
-Read and play `.mid` scores in the browser with an 88-key MIDI keyboard or the QWERTY keyboard. Files never leave your device.
+Read and play `.mid` scores in the browser with a MIDI keyboard or the QWERTY keyboard. Files never leave your device.
 
 ## Features
 
-- **Input**: Web MIDI (88 keys) preferred; falls back to the QWERTY keyboard, with optional key hints on the piano keys.
+- **Input**: Web MIDI preferred; falls back to the QWERTY keyboard, with optional key hints on the piano keys.
 - **Judgement**: Perfect / Good / Bad / Miss tiers with adjustable windows; a wrong key counts as a miss.
 - **Modes**: judged play (load a score, judge, record, replay) and free recording (play freely and record).
 - **Sound**: a capsule switch between "Play on press" and "Auto-play", plus "Mute sound source"; tones include built-in synths and local SoundFont (`.sf2`).

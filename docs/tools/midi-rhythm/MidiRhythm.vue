@@ -315,6 +315,8 @@ const KEY_LABEL = "#475569";
 const ACTIVE_KEY = "rgba(245, 158, 11, 0.55)";
 const NOTE_WHITE_KEY = "rgba(56, 189, 248, 0.9)";
 const NOTE_BLACK_KEY = "rgba(129, 140, 248, 0.9)";
+const NOTE_WHITE_KEY_TAIL = "rgba(56, 189, 248, 0.32)";
+const NOTE_BLACK_KEY_TAIL = "rgba(129, 140, 248, 0.32)";
 const JUDGMENT_LINE = "#f59e0b";
 const BAR_LINE = "rgba(148, 163, 184, 0.35)";
 
@@ -416,7 +418,7 @@ const soundControlLocked = computed(
 const muteToggleDisabled = computed(() => effectivePlaybackOnly.value);
 
 let engine: JudgementEngine | undefined;
-let wallNotes: { midi: number; time: number }[] = [];
+let wallNotes: { midi: number; time: number; duration: number }[] = [];
 let feedback: { midi: number; kind: FeedbackKind; until: number }[] = [];
 let recording = new RecordingBuffer();
 let accumulatedWall = 0;
@@ -937,7 +939,11 @@ function resetForPlay() {
   if (playMode.value === "judge" && score.value) {
     const currentSpeed = clampSpeed(speed.value);
     activeSpeed = currentSpeed;
-    wallNotes = score.value.notes.map((note) => ({ midi: note.midi, time: noteWallTime(note.time, currentSpeed) }));
+    wallNotes = score.value.notes.map((note) => ({
+      midi: note.midi,
+      time: noteWallTime(note.time, currentSpeed),
+      duration: noteWallTime(note.duration, currentSpeed),
+    }));
     if (!playbackOnly.value) {
       engine = new JudgementEngine(wallNotes, thresholds.value);
     }
@@ -977,7 +983,11 @@ function rebaseTimeline(newSpeed: number) {
   }
   const scoreTime = currentWallTime() * activeSpeed;
   activeSpeed = newSpeed;
-  wallNotes = score.value.notes.map((note) => ({ midi: note.midi, time: noteWallTime(note.time, newSpeed) }));
+  wallNotes = score.value.notes.map((note) => ({
+    midi: note.midi,
+    time: noteWallTime(note.time, newSpeed),
+    duration: noteWallTime(note.duration, newSpeed),
+  }));
   accumulatedWall = scoreTime / newSpeed;
   playStart = performance.now();
   audioBaseTime = (audioContext?.currentTime ?? 0) - outputLatencySeconds();
@@ -1076,7 +1086,7 @@ function scheduleMelody(now: number) {
       audioContext.currentTime,
       audioBaseTime + entry.time - accumulatedWall + countInTotal - audioOffsetMs.value / 1000,
     );
-    const duration = Math.min(Math.max(source.duration, 0.08), 2);
+    const duration = Math.max(source.duration, 0.08);
     playNote(entry.midi, audioTime, duration, source.velocity, melodyGain);
     nextMelodyIndex += 1;
   }
@@ -1384,19 +1394,27 @@ function draw(now: number | null) {
       }
     }
     for (const entry of wallNotes) {
-      if (entry.time < accumulatedWall - 0.001) {
+      if (entry.time + entry.duration < accumulatedWall - 0.001) {
         continue;
       }
       const lane = lanes.get(entry.midi);
       if (!lane) {
         continue;
       }
-      const y = judgmentY - (entry.time - now) * pixelsPerSecond;
-      if (y < -noteHeight || y > judgmentY) {
+      const headY = judgmentY - (entry.time - now) * pixelsPerSecond;
+      const barHeight = Math.max(noteHeight, entry.duration * pixelsPerSecond);
+      const top = Math.max(headY - barHeight, 0);
+      const bottom = Math.min(headY, judgmentY);
+      if (bottom <= top) {
         continue;
       }
+      const headTop = Math.max(bottom - noteHeight, top);
+      if (headTop > top) {
+        context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY_TAIL : NOTE_BLACK_KEY_TAIL;
+        context.fillRect(lane.x + 1, top, lane.width - 2, headTop - top);
+      }
       context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY : NOTE_BLACK_KEY;
-      context.fillRect(lane.x + 1, y, lane.width - 2, noteHeight);
+      context.fillRect(lane.x + 1, headTop, lane.width - 2, bottom - headTop);
     }
     context.strokeStyle = JUDGMENT_LINE;
     context.lineWidth = 2;

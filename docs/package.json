@@ -26,19 +26,19 @@
   "devDependencies": {
     "@mdit/plugin-footnote": "^1.0.2",
     "@nolebase/vitepress-plugin-highlight-targeted-heading": "^2.21.1",
-    "@shikijs/vitepress-twoslash": "^4.4.3",
-    "@vitejs/plugin-vue": "^6.0.9",
+    "@shikijs/vitepress-twoslash": "^4.5.0",
+    "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^21.0.3",
     "lightningcss": "^1.33.0",
     "markdown-it-mathjax3": "^4.3.2",
     "pagefind": "^1.5.2",
-    "vite": "^8.3.1",
+    "vite": "^8.3.4",
     "vitepress": "2.0.0-alpha.20",
     "vitepress-plugin-group-icons": "^1.8.1",
     "vitepress-plugin-pagefind": "^0.4.25",
     "vitepress-plugin-rss": "^0.4.5",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=24"

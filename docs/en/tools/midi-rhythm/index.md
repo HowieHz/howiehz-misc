@@ -29,6 +29,7 @@ import MidiRhythm from "../../../tools/midi-rhythm/MidiRhythm.vue";
 - **Display**: adjust how many seconds of upcoming notes the playfield shows (3 s by default), and toggle bar lines and bar numbers (off by default).
 - **Latency calibration**: audio output latency is compensated automatically; use "Audio offset" to nudge the audio against the visuals and "Latency calibration" to nudge judgement, both in ms.
 - **Judgement**: defaults are Perfect ≤80 ms, Good ≤160 ms, Bad ≤300 ms (adjustable); beyond that is a miss, and a wrong key counts as a miss. Perfect is wide enough that the ear cannot hear an obvious offset.
+- **Score & accuracy**: the score accumulates hit weights (perfect 1, good 0.6, bad 0.2) and is shown on a 0–100 scale with four decimals; accuracy is computed live over the notes judged so far.
 - **Sound**: capsule switch between "Play on press" and "Auto-play"; the adjacent "Mute sound source" silences everything and disables the switch (for a piano with its own sound). Playback mode forces auto-play; free recording forces play-on-press.
 - **Tone**: pick a built-in synth tone (electric piano by default), or load a local SoundFont (`.sf2`) library and choose a preset.
 - **Apply changes**: judgement windows, speed, and sound settings changed during play/pause take effect after a restart.

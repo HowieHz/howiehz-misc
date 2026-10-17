@@ -100,6 +100,7 @@ interface Labels {
   exitFullscreen: string;
   combo: string;
   score: string;
+  accuracy: string;
   countIn: string;
   noScore: string;
   restartHint: string;
@@ -193,6 +194,7 @@ const labels = {
     exitFullscreen: "Exit fullscreen",
     combo: "Combo",
     score: "Score",
+    accuracy: "Accuracy",
     countIn: "Count-in",
     noScore: "Import a MIDI file first to play in judged mode.",
     restartHint: "Saved; takes effect after you restart.",
@@ -282,6 +284,7 @@ const labels = {
     exitFullscreen: "退出全屏",
     combo: "连击",
     score: "得分",
+    accuracy: "准确度",
     countIn: "预备拍",
     noScore: "请先导入 MIDI 文件再进入判定模式。",
     restartHint: "已保存，重新开始后生效。",
@@ -402,6 +405,10 @@ const effectiveBpmValue = computed(() => {
 const scorePercent = computed(() => {
   const total = score.value?.notes.length ?? 0;
   return total > 0 ? (stats.value.score / total) * 100 : 0;
+});
+const accuracyPercent = computed(() => {
+  const judged = stats.value.perfect + stats.value.good + stats.value.bad + stats.value.missed;
+  return judged > 0 ? (stats.value.score / judged) * 100 : 0;
 });
 const canExport = computed(() => isPlaying.value || hasRecording.value);
 const showKeyLabels = computed(
@@ -1076,7 +1083,7 @@ function finish() {
   isPlaying.value = false;
   isPaused.value = false;
   if (playMode.value === "judge" && !playbackOnlyRun) {
-    announcement.value = `${text.value.finished} ${text.value.score} ${scorePercent.value.toFixed(1)}%`;
+    announcement.value = `${text.value.finished} ${text.value.score} ${scorePercent.value.toFixed(2)} ${text.value.accuracy} ${accuracyPercent.value.toFixed(2)}%`;
   }
   draw(null);
 }
@@ -1560,10 +1567,6 @@ function feedbackColor(kind: FeedbackKind): string {
     return "#f97316";
   }
   return "#ef4444";
-}
-
-function formatPercent(value: number): string {
-  return `${value.toFixed(1)}%`;
 }
 </script>
 
@@ -2060,7 +2063,8 @@ function formatPercent(value: number): string {
           <span class="midi-rhythm__chip midi-rhythm__chip--extra">{{ text.extraMiss }} {{ stats.extraMiss }}</span>
         </div>
         <div class="midi-rhythm__score">
-          {{ text.score }} {{ formatPercent(scorePercent) }}
+          {{ text.score }} {{ scorePercent.toFixed(4) }}
+          <span class="midi-rhythm__accuracy">{{ text.accuracy }} {{ accuracyPercent.toFixed(2) }}%</span>
         </div>
         <span
           v-if="lastTier"
@@ -2606,6 +2610,13 @@ function formatPercent(value: number): string {
 
 .midi-rhythm__score {
   font-weight: 700;
+}
+
+.midi-rhythm__accuracy {
+  color: var(--vp-c-text-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-left: 8px;
 }
 
 .midi-rhythm__last-tier {

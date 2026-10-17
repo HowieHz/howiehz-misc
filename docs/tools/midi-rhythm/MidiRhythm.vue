@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { applyResult, createEmptyStats, JudgementEngine } from "./core/judgment";
 import { keyToMidi, midiToKeyLabel } from "./core/keyboard";
-import { encodeMidi, parseMidiScore, selectScoreTracks, type ParsedScore } from "./core/midi-io";
+import { encodeMidi, parseMidiScore, selectScoreTracks, type ParsedScore, type ScoreTrack } from "./core/midi-io";
 import { RecordingBuffer } from "./core/recording";
 import { parseThresholds, type ThresholdInputText } from "./core/settings";
 import { clampSpeed, DEFAULT_SPEED, effectiveBpm, noteWallTime, SPEED_MAX, SPEED_MIN } from "./core/timing";
@@ -525,6 +525,15 @@ function midiToName(midi: number): string {
 function isWhiteKey(midi: number): boolean {
   const pitchClass = midi % 12;
   return pitchClass !== 1 && pitchClass !== 3 && pitchClass !== 6 && pitchClass !== 8 && pitchClass !== 10;
+}
+
+function trackLabel(track: ScoreTrack): string {
+  const parts = [`T${track.rawTrack}`];
+  if (track.name) {
+    parts.push(track.name);
+  }
+  parts.push(`ch${track.channel}`, String(track.noteCount));
+  return parts.join(" · ");
 }
 
 function countWhiteKeys(minMidi: number, maxMidi: number): number {
@@ -1664,7 +1673,7 @@ function feedbackColor(kind: FeedbackKind): string {
               :checked="selectedTracks.has(track.index)"
               @change="toggleTrack(track.index)"
             >
-            <span>{{ track.name || `#${track.index + 1}` }} · {{ track.noteCount }}</span>
+            <span>{{ trackLabel(track) }}</span>
           </label>
         </div>
       </section>

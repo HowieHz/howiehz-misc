@@ -17,6 +17,7 @@
     "compat-finder": "workspace:*",
     "graphwar-killer-wasm": "workspace:*",
     "lunar-javascript": "^1.7.7",
+    "midi-file": "^1.2.4",
     "osu-beatmap-converter": "workspace:*",
     "pdf-lib": "^1.17.1",
     "sfumato": "^0.3.0",

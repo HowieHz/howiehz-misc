@@ -1,11 +1,16 @@
 import { Midi } from "@tonejs/midi";
+import { parseMidi as parseRawMidi } from "midi-file";
 
 import { PIANO_MAX_MIDI, PIANO_MIN_MIDI, type NoteEvent, type TempoEvent } from "./types";
 
 /** One MIDI track, with its notes filtered to the playable range. */
 export interface ScoreTrack {
   index: number;
+  /** 1-based raw MIDI track number, before the library splits tracks by channel. */
+  rawTrack: number;
   name: string;
+  /** MIDI channel this split track came from. */
+  channel: number;
   noteCount: number;
   notes: NoteEvent[];
 }
@@ -25,19 +30,90 @@ export interface ParsedScore {
   tracks: ScoreTrack[];
 }
 
+interface RawTrackInfo {
+  name: string;
+  splitCount: number;
+}
+
+/** Read raw track names and how many channel splits each raw track produces. */
+function readRawTracks(data: ArrayBuffer | Uint8Array): RawTrackInfo[] {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const parsed = parseRawMidi(bytes);
+  return parsed.tracks.map((events) => {
+    let name = "";
+    const programs = Array.from({ length: 16 }, () => 0);
+    const keys = new Set<string>();
+    for (const event of events) {
+      if (event.type === "trackName") {
+        name = event.text;
+      }
+      if (event.type === "programChange") {
+        programs[event.channel] = event.programNumber;
+      }
+      if ("channel" in event && event.type !== "channelPrefix") {
+        keys.add(`${programs[event.channel] ?? 0} ${event.channel}`);
+      }
+    }
+    return { name, splitCount: Math.max(1, keys.size) };
+  });
+}
+
+function toTrackNotes(
+  notes: readonly { midi: number; time: number; duration: number; velocity: number }[],
+): NoteEvent[] {
+  const trackNotes: NoteEvent[] = [];
+  for (const note of notes) {
+    if (note.midi >= PIANO_MIN_MIDI && note.midi <= PIANO_MAX_MIDI) {
+      trackNotes.push({ midi: note.midi, time: note.time, duration: note.duration, velocity: note.velocity });
+    }
+  }
+  trackNotes.sort((left, right) => left.time - right.time || left.midi - right.midi);
+  return trackNotes;
+}
+
 /** Parse a MIDI buffer into piano notes (21–108) with second-based timing. */
 export function parseMidiScore(data: ArrayBuffer | Uint8Array, allowOverlap = false): ParsedScore {
   const midi = new Midi(data);
-  const tracks: ScoreTrack[] = midi.tracks.map((track, index) => {
-    const trackNotes: NoteEvent[] = [];
-    for (const note of track.notes) {
-      if (note.midi >= PIANO_MIN_MIDI && note.midi <= PIANO_MAX_MIDI) {
-        trackNotes.push({ midi: note.midi, time: note.time, duration: note.duration, velocity: note.velocity });
+  // `@tonejs/midi` splits each raw track by (program, channel), so the split count is derived
+  // from the raw tracks to map every split back to its real raw track and name.
+  const rawTracks = readRawTracks(data);
+  const tracks: ScoreTrack[] = [];
+  let splitIndex = 0;
+  for (const [rawIndex, raw] of rawTracks.entries()) {
+    for (let offset = 0; offset < raw.splitCount && splitIndex < midi.tracks.length; offset += 1) {
+      const track = midi.tracks[splitIndex];
+      if (!track) {
+        break;
       }
+      const trackNotes = toTrackNotes(track.notes);
+      tracks.push({
+        index: splitIndex,
+        rawTrack: rawIndex + 1,
+        name: raw.name,
+        channel: track.channel,
+        noteCount: trackNotes.length,
+        notes: trackNotes,
+      });
+      splitIndex += 1;
     }
-    trackNotes.sort((left, right) => left.time - right.time || left.midi - right.midi);
-    return { index, name: track.name, noteCount: trackNotes.length, notes: trackNotes };
-  });
+  }
+  // Safety net: if the split counts did not line up, keep the remaining splits visible.
+  while (splitIndex < midi.tracks.length) {
+    const track = midi.tracks[splitIndex];
+    if (!track) {
+      break;
+    }
+    const trackNotes = toTrackNotes(track.notes);
+    tracks.push({
+      index: splitIndex,
+      rawTrack: rawTracks.length || 1,
+      name: "",
+      channel: track.channel,
+      noteCount: trackNotes.length,
+      notes: trackNotes,
+    });
+    splitIndex += 1;
+  }
   const allNotes = tracks.flatMap((track) => track.notes);
   const mergedNotes = allowOverlap ? sortByTime(allNotes) : normalizeNoteOverlaps(allNotes);
 

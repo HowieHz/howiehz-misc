@@ -2446,11 +2446,22 @@ function feedbackColor(kind: FeedbackKind): string {
 }
 
 .midi-rhythm__threshold-row label {
-  display: grid;
+  align-items: center;
+  display: flex;
   font-size: 0.9rem;
   font-weight: 600;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+}
+
+.midi-rhythm__threshold-row label span {
+  flex: none;
+  white-space: nowrap;
+}
+
+.midi-rhythm__settings-grid .midi-rhythm__threshold-row input[type="number"] {
+  flex: 1 1 auto;
+  width: auto;
 }
 
 .midi-rhythm__settings-grid input[type="number"] {

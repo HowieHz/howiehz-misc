@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { applyResult, createEmptyStats, JudgementEngine } from "./core/judgment";
 import { keyToMidi, midiToKeyLabel } from "./core/keyboard";
-import { encodeMidi, parseMidiScore, type ParsedScore } from "./core/midi-io";
+import { encodeMidi, parseMidiScore, selectScoreTracks, type ParsedScore } from "./core/midi-io";
 import { RecordingBuffer } from "./core/recording";
 import { parseThresholds, type ThresholdInputText } from "./core/settings";
 import { clampSpeed, DEFAULT_SPEED, effectiveBpm, noteWallTime, SPEED_MAX, SPEED_MIN } from "./core/timing";
@@ -38,6 +38,7 @@ interface Labels {
   notes: string;
   baseBpm: string;
   tracks: string;
+  selectTracks: string;
   range: string;
   mode: string;
   judgeMode: string;
@@ -80,6 +81,8 @@ interface Labels {
   audioOffsetTitle: string;
   barLines: string;
   barLinesTitle: string;
+  barNumbers: string;
+  barNumbersTitle: string;
   keyHint: string;
   keyHintAuto: string;
   keyHintShow: string;
@@ -124,6 +127,7 @@ const labels = {
     notes: "notes",
     baseBpm: "Base BPM",
     tracks: "tracks",
+    selectTracks: "Select tracks",
     range: "range",
     mode: "Mode",
     judgeMode: "Judged play",
@@ -168,6 +172,8 @@ const labels = {
       "How much earlier (positive) or later (negative) the audio plays relative to the visuals, in ms. Fine-tune when automatic compensation is off.",
     barLines: "Bar lines",
     barLinesTitle: "Show measure separators on the playfield.",
+    barNumbers: "Bar numbers",
+    barNumbersTitle: "Show measure numbers at the left of each bar line.",
     keyHint: "Key hints",
     keyHintAuto: "Auto",
     keyHintShow: "Show",
@@ -210,6 +216,7 @@ const labels = {
     notes: "音符",
     baseBpm: "基准 BPM",
     tracks: "轨道",
+    selectTracks: "选择轨道",
     range: "音域",
     mode: "模式",
     judgeMode: "判定模式",
@@ -252,6 +259,8 @@ const labels = {
     audioOffsetTitle: "声音相对画面提前（正）或延后（负）的毫秒数；自动补偿不准时手动微调。",
     barLines: "小节线",
     barLinesTitle: "在画面上显示小节分隔线。",
+    barNumbers: "小节数",
+    barNumbersTitle: "在小节线左侧显示小节序号。",
     keyHint: "键位提示",
     keyHintAuto: "自动",
     keyHintShow: "显示",
@@ -319,10 +328,13 @@ const NOTE_WHITE_KEY_TAIL = "rgba(56, 189, 248, 0.32)";
 const NOTE_BLACK_KEY_TAIL = "rgba(129, 140, 248, 0.32)";
 const JUDGMENT_LINE = "#f59e0b";
 const BAR_LINE = "rgba(148, 163, 184, 0.35)";
+const BAR_NUMBER = "rgba(148, 163, 184, 0.9)";
 
 const canvasRef = ref<HTMLCanvasElement>();
 const stageRef = ref<HTMLElement>();
 
+const rawScore = ref<ParsedScore>();
+const selectedTracks = ref<Set<number>>(new Set());
 const score = ref<ParsedScore>();
 const fileName = ref("");
 const errorMessage = ref("");
@@ -342,6 +354,7 @@ const pendingRestart = ref(false);
 const showAllKeys = ref(false);
 const leadSeconds = ref(DEFAULT_LEAD_SECONDS);
 const showBarLines = ref(true);
+const showBarNumbers = ref(false);
 const calibrationMs = ref(0);
 const audioOffsetMs = ref(0);
 const thresholdText = ref<ThresholdInputText>({
@@ -580,6 +593,8 @@ async function loadScoreFile(file: File | undefined) {
   errorMessage.value = "";
   try {
     const parsed = parseMidiScore(await file.arrayBuffer());
+    rawScore.value = parsed;
+    selectedTracks.value = new Set(parsed.tracks.map((track) => track.index));
     score.value = parsed;
     fileName.value = file.name;
     playMode.value = "judge";
@@ -593,8 +608,29 @@ async function loadScoreFile(file: File | undefined) {
   }
 }
 
+function toggleTrack(index: number) {
+  if (!rawScore.value) {
+    return;
+  }
+  const next = new Set(selectedTracks.value);
+  if (next.has(index)) {
+    next.delete(index);
+  } else {
+    next.add(index);
+  }
+  selectedTracks.value = next;
+  score.value = selectScoreTracks(rawScore.value, [...next]);
+  if (isPlaying.value || isPaused.value) {
+    stop();
+  } else {
+    draw(null);
+  }
+}
+
 function removeScore() {
   score.value = undefined;
+  rawScore.value = undefined;
+  selectedTracks.value = new Set();
   fileName.value = "";
   stop();
   draw(null);
@@ -1378,15 +1414,17 @@ function draw(now: number | null) {
   if (now !== null) {
     const pixelsPerSecond = judgmentY / leadSeconds.value;
     const noteHeight = Math.max(5, whiteWidth * 0.72);
+    const barMarks: { y: number; measure: number }[] = [];
     if (showBarLines.value && score.value) {
       const speedFactor = activeSpeed;
       context.strokeStyle = BAR_LINE;
       context.lineWidth = 1;
-      for (const barTime of score.value.barTimes) {
+      for (const [index, barTime] of score.value.barTimes.entries()) {
         const y = judgmentY - (barTime / speedFactor - now) * pixelsPerSecond;
         if (y < 0 || y > judgmentY) {
           continue;
         }
+        barMarks.push({ y, measure: index + 1 });
         context.beginPath();
         context.moveTo(0, y);
         context.lineTo(width, y);
@@ -1433,6 +1471,15 @@ function draw(now: number | null) {
       context.globalAlpha = 0.55;
       context.fillRect(lane.x, judgmentY - noteHeight, lane.width, noteHeight);
       context.globalAlpha = 1;
+    }
+
+    if (showBarNumbers.value && barMarks.length > 0) {
+      context.fillStyle = BAR_NUMBER;
+      context.font = "11px sans-serif";
+      context.textAlign = "left";
+      for (const mark of barMarks) {
+        context.fillText(String(mark.measure), 4, mark.y - 3);
+      }
     }
   }
 
@@ -1568,6 +1615,23 @@ function formatPercent(value: number): string {
               aria-hidden="true"
             />
           </button>
+        </div>
+        <div
+          v-if="rawScore && rawScore.tracks.length > 1"
+          class="midi-rhythm__track-list"
+        >
+          <span class="midi-rhythm__track-title">{{ text.selectTracks }}</span>
+          <label
+            v-for="track in rawScore.tracks"
+            :key="track.index"
+          >
+            <input
+              type="checkbox"
+              :checked="selectedTracks.has(track.index)"
+              @change="toggleTrack(track.index)"
+            >
+            <span>{{ track.name || `#${track.index + 1}` }} · {{ track.noteCount }}</span>
+          </label>
         </div>
       </section>
 
@@ -1829,6 +1893,13 @@ function formatPercent(value: number): string {
               :label="text.barLines"
               :title="text.barLinesTitle"
               @toggle="showBarLines = !showBarLines"
+            />
+            <ToggleField
+              id="midi-rhythm-bar-numbers"
+              :checked="showBarNumbers"
+              :label="text.barNumbers"
+              :title="text.barNumbersTitle"
+              @toggle="showBarNumbers = !showBarNumbers"
             />
           </div>
           <div
@@ -2152,6 +2223,26 @@ function formatPercent(value: number): string {
   background: color-mix(in srgb, var(--vp-c-bg) 60%, transparent);
   border-radius: 999px;
   padding: 2px 8px;
+}
+
+.midi-rhythm__track-list {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.midi-rhythm__track-list label {
+  align-items: center;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.85rem;
+  gap: 4px;
+}
+
+.midi-rhythm__track-title {
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .midi-rhythm__mode-row {

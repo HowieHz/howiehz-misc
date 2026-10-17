@@ -1,6 +1,7 @@
+import { Midi } from "@tonejs/midi";
 import { describe, expect, it } from "vitest";
 
-import { encodeMidi, parseMidiScore } from "./midi-io";
+import { encodeMidi, parseMidiScore, selectScoreTracks } from "./midi-io";
 
 describe("parseMidiScore", () => {
   it("round-trips encoded notes with a single tempo", () => {
@@ -50,6 +51,27 @@ describe("parseMidiScore", () => {
     const parsed = parseMidiScore(encodeMidi([{ midi: 60, time: 0, duration: 3.9, velocity: 0.8 }], 120));
     expect(parsed.barTimes[0]).toBeCloseTo(0);
     expect(parsed.barTimes[1]).toBeCloseTo(2);
+  });
+
+  it("merges overlapping same-pitch notes across tracks", () => {
+    const midi = new Midi();
+    midi.header.setTempo(120);
+    midi.addTrack().addNote({ midi: 60, time: 0, duration: 1, velocity: 0.8 });
+    midi.addTrack().addNote({ midi: 60, time: 0.5, duration: 1, velocity: 0.6 });
+    const parsed = parseMidiScore(midi.toArray());
+    expect(parsed.notes).toHaveLength(1);
+    expect(parsed.notes[0]?.duration).toBeCloseTo(1.5);
+  });
+
+  it("rebuilds the score from selected tracks", () => {
+    const midi = new Midi();
+    midi.header.setTempo(120);
+    midi.addTrack().addNote({ midi: 60, time: 0, duration: 0.5, velocity: 0.8 });
+    midi.addTrack().addNote({ midi: 72, time: 0, duration: 0.5, velocity: 0.8 });
+    const score = parseMidiScore(midi.toArray());
+    expect(score.tracks).toHaveLength(2);
+    const onlySecond = selectScoreTracks(score, [1]);
+    expect(onlySecond.notes.map((note) => note.midi)).toEqual([72]);
   });
 
   it("handles an empty score", () => {

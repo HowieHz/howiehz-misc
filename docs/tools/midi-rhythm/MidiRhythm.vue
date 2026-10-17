@@ -1477,10 +1477,15 @@ function draw(now: number | null) {
       if (bottom <= top) {
         continue;
       }
+      // The color follows the note's real duration, not how much of it is still on screen,
+      // so a held note keeps its hold colour all the way down to the judgment line.
+      const isHeld = entry.duration * pixelsPerSecond > noteHeight + 0.5;
       const headTop = Math.max(bottom - noteHeight, top);
-      if (headTop > top + 0.5) {
-        context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY_TAIL : NOTE_BLACK_KEY_TAIL;
-        context.fillRect(lane.x + 1, top, lane.width - 2, headTop - top);
+      if (isHeld) {
+        if (headTop > top + 0.5) {
+          context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY_TAIL : NOTE_BLACK_KEY_TAIL;
+          context.fillRect(lane.x + 1, top, lane.width - 2, headTop - top);
+        }
         context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY_HOLD : NOTE_BLACK_KEY_HOLD;
       } else {
         context.fillStyle = lane.isWhite ? NOTE_WHITE_KEY : NOTE_BLACK_KEY;

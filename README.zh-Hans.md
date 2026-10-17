@@ -14,6 +14,7 @@
 - [osu! 铺面转换器（std → mania）](docs/tools/osu-beatmap-converter/)
 - [PDF 页脚字段清理器](docs/tools/pdf-footer-anonymizer/)
 - [Graphwar 杀手](docs/tools/graphwar-killer/)：在线 Graphwar 函数生成器与模拟器
+- [MIDI 音游](docs/tools/midi-rhythm/)：浏览器内读取 MIDI 谱面并判定演奏，支持演奏导出
 - [Graphwar Agent](packages/graphwar-agent/)：面向 Graphwar 官方客户端的 Java Agent
 - BlogsClub 签到助手：
   - [blogsclub-signin-helper](packages/blogsclub-signin-helper/)：用于后台检查 BlogsClub 每日签到并辅助完成签到的用户脚本

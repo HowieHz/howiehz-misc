@@ -14,6 +14,7 @@ A personal misc site for things that do not belong on the main site.
 - [osu! beatmap converter (std → mania) (Chinese Only)](docs/tools/osu-beatmap-converter/)
 - [PDF footer field cleaner (Chinese Only)](docs/tools/pdf-footer-anonymizer/)
 - [Graphwar Killer](docs/en/tools/graphwar-killer/): online Graphwar function generator and simulator
+- [MIDI rhythm game](docs/en/tools/midi-rhythm/): browser MIDI score player with judged play and performance export
 - [Graphwar Agent](packages/graphwar-agent/): Java agent for the official Graphwar client
 - BlogsClub Check-in Helper:
   - [blogsclub-signin-helper](packages/blogsclub-signin-helper/): userscript for checking BlogsClub daily check-ins and helping complete them

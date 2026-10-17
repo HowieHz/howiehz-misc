@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@giscus/vue": "^3.1.1",
-    "@lucide/vue": "^1.55.0",
+    "@lucide/vue": "^1.58.0",
     "@tonejs/midi": "^2.0.28",
     "compat-finder": "workspace:*",
     "graphwar-killer-wasm": "workspace:*",
@@ -20,7 +20,7 @@
     "osu-beatmap-converter": "workspace:*",
     "pdf-lib": "^1.17.1",
     "sfumato": "^0.3.0",
-    "vue": "^3.5.43"
+    "vue": "^3.5.44"
   },
   "devDependencies": {
     "@mdit/plugin-footnote": "^1.0.2",

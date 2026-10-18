@@ -2198,18 +2198,14 @@ function feedbackColor(kind: FeedbackKind): string {
         <div class="midi-rhythm__score">
           {{ text.score }} {{ scorePercent.toFixed(4) }}
           <span class="midi-rhythm__accuracy">{{ text.accuracy }} {{ accuracyPercent.toFixed(2) }}%</span>
-        </div>
-        <div
-          v-if="isFinished"
-          class="midi-rhythm__result"
-        >
           <span
+            v-if="isFinished"
             class="midi-rhythm__result-rating"
             :class="resultRatingClass"
+            :title="text.rating"
           >
             {{ resultRating }}
           </span>
-          <span class="midi-rhythm__result-acc">{{ text.rating }} {{ accuracyPercent.toFixed(2) }}%</span>
         </div>
         <span
           v-if="lastTier && !isFinished"
@@ -2775,17 +2771,13 @@ function feedbackColor(kind: FeedbackKind): string {
   margin-left: 8px;
 }
 
-.midi-rhythm__result {
-  align-items: baseline;
-  display: flex;
-  flex-basis: 100%;
-  gap: 10px;
-}
-
 .midi-rhythm__result-rating {
-  font-size: 2rem;
-  font-weight: 900;
-  line-height: 1;
+  background: color-mix(in srgb, currentcolor 15%, transparent);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  margin-left: 8px;
+  padding: 1px 8px;
 }
 
 .midi-rhythm__result-rating--top {
@@ -2802,12 +2794,6 @@ function feedbackColor(kind: FeedbackKind): string {
 
 .midi-rhythm__result-rating--bad {
   color: #ef4444;
-}
-
-.midi-rhythm__result-acc {
-  color: var(--vp-c-text-2);
-  font-size: 0.85rem;
-  font-weight: 600;
 }
 
 .midi-rhythm__last-tier {

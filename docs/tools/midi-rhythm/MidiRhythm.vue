@@ -101,6 +101,7 @@ interface Labels {
   combo: string;
   score: string;
   accuracy: string;
+  rating: string;
   countIn: string;
   noScore: string;
   restartHint: string;
@@ -195,6 +196,7 @@ const labels = {
     combo: "Combo",
     score: "Score",
     accuracy: "Accuracy",
+    rating: "Rating",
     countIn: "Count-in",
     noScore: "Import a MIDI file first to play in judged mode.",
     restartHint: "Saved; takes effect after you restart.",
@@ -285,6 +287,7 @@ const labels = {
     combo: "连击",
     score: "得分",
     accuracy: "准确度",
+    rating: "评级",
     countIn: "预备拍",
     noScore: "请先导入 MIDI 文件再进入判定模式。",
     restartHint: "已保存，重新开始后生效。",
@@ -413,6 +416,45 @@ const scorePercent = computed(() => {
 const accuracyPercent = computed(() => {
   const judged = stats.value.perfect + stats.value.good + stats.value.bad + stats.value.missed;
   return judged > 0 ? (stats.value.score / judged) * 100 : 0;
+});
+const isFinished = ref(false);
+const resultRating = computed(() => {
+  const accuracy = accuracyPercent.value;
+  if (accuracy >= 99) {
+    return "SSS";
+  }
+  if (accuracy >= 97) {
+    return "SS";
+  }
+  if (accuracy >= 95) {
+    return "S";
+  }
+  if (accuracy >= 90) {
+    return "A";
+  }
+  if (accuracy >= 80) {
+    return "B";
+  }
+  if (accuracy >= 70) {
+    return "C";
+  }
+  if (accuracy >= 60) {
+    return "D";
+  }
+  return "F";
+});
+const resultRatingClass = computed(() => {
+  const rating = resultRating.value;
+  if (rating === "SSS" || rating === "SS" || rating === "S") {
+    return "midi-rhythm__result-rating--top";
+  }
+  if (rating === "A" || rating === "B") {
+    return "midi-rhythm__result-rating--good";
+  }
+  if (rating === "C" || rating === "D") {
+    return "midi-rhythm__result-rating--ok";
+  }
+  return "midi-rhythm__result-rating--bad";
 });
 const canExport = computed(() => isPlaying.value || hasRecording.value);
 const showKeyLabels = computed(
@@ -972,9 +1014,8 @@ function pause() {
   cancelAnimationFrame(rafId);
   lastFrameAt = 0;
   activeKeys.value = new Set();
-  if (audioContext?.state === "running") {
-    void audioContext.suspend();
-  }
+  // Keep the audio context running so a key pressed while paused still sounds.
+  draw(accumulatedWall);
 }
 
 async function resume() {
@@ -1010,6 +1051,7 @@ function stop() {
   lastTier.value = undefined;
   activeKeys.value = new Set();
   heldKeys.clear();
+  isFinished.value = false;
   hasRecording.value = false;
   isCountingIn.value = false;
   countInBeatsLeft.value = 0;
@@ -1027,6 +1069,7 @@ function resetForPlay() {
   stats.value = createEmptyStats();
   lastTier.value = undefined;
   activeKeys.value = new Set();
+  isFinished.value = false;
   hasRecording.value = false;
   feedback = [];
   wallNotes = [];
@@ -1128,7 +1171,8 @@ function finish() {
   isPaused.value = false;
   activeKeys.value = new Set();
   if (playMode.value === "judge" && !playbackOnlyRun) {
-    announcement.value = `${text.value.finished} ${text.value.score} ${scorePercent.value.toFixed(2)} ${text.value.accuracy} ${accuracyPercent.value.toFixed(2)}%`;
+    isFinished.value = true;
+    announcement.value = `${text.value.finished} ${text.value.score} ${scorePercent.value.toFixed(2)} ${text.value.accuracy} ${accuracyPercent.value.toFixed(2)}% ${text.value.rating} ${resultRating.value}`;
   }
   draw(null);
 }
@@ -1313,16 +1357,23 @@ function clampOctaveShift(value: number): number {
 }
 
 function noteOn(midi: number, velocity: number) {
-  if (!isPlaying.value || isCountingIn.value) {
+  if (!isPlaying.value && !isPaused.value) {
     return;
   }
-  const now = currentWallTime();
   activeKeys.value.add(midi);
-  recording.noteOn(now, midi, velocity);
-  hasRecording.value = true;
+  // Give audible feedback even during the count-in, a pause, or an early press.
   if (effectiveKeySound.value && audioContext && melodyGain) {
     playNote(midi, audioContext.currentTime, 0.35, velocity, melodyGain);
   }
+  if (!isPlaying.value || isCountingIn.value) {
+    if (isPaused.value) {
+      draw(accumulatedWall);
+    }
+    return;
+  }
+  const now = currentWallTime();
+  recording.noteOn(now, midi, velocity);
+  hasRecording.value = true;
   if (engine) {
     const judgeNow = now - calibrationMs.value / 1000;
     applyResults(engine.advance(judgeNow));
@@ -1332,6 +1383,9 @@ function noteOn(midi: number, velocity: number) {
 
 function noteOff(midi: number) {
   activeKeys.value.delete(midi);
+  if (isPaused.value) {
+    draw(accumulatedWall);
+  }
   if (!isPlaying.value || isCountingIn.value) {
     return;
   }
@@ -2145,8 +2199,20 @@ function feedbackColor(kind: FeedbackKind): string {
           {{ text.score }} {{ scorePercent.toFixed(4) }}
           <span class="midi-rhythm__accuracy">{{ text.accuracy }} {{ accuracyPercent.toFixed(2) }}%</span>
         </div>
+        <div
+          v-if="isFinished"
+          class="midi-rhythm__result"
+        >
+          <span
+            class="midi-rhythm__result-rating"
+            :class="resultRatingClass"
+          >
+            {{ resultRating }}
+          </span>
+          <span class="midi-rhythm__result-acc">{{ text.rating }} {{ accuracyPercent.toFixed(2) }}%</span>
+        </div>
         <span
-          v-if="lastTier"
+          v-if="lastTier && !isFinished"
           class="midi-rhythm__last-tier"
           :class="`midi-rhythm__last-tier--${lastTier}`"
         >
@@ -2707,6 +2773,41 @@ function feedbackColor(kind: FeedbackKind): string {
   font-size: 0.82rem;
   font-weight: 600;
   margin-left: 8px;
+}
+
+.midi-rhythm__result {
+  align-items: baseline;
+  display: flex;
+  flex-basis: 100%;
+  gap: 10px;
+}
+
+.midi-rhythm__result-rating {
+  font-size: 2rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.midi-rhythm__result-rating--top {
+  color: #f59e0b;
+}
+
+.midi-rhythm__result-rating--good {
+  color: #22c55e;
+}
+
+.midi-rhythm__result-rating--ok {
+  color: #f97316;
+}
+
+.midi-rhythm__result-rating--bad {
+  color: #ef4444;
+}
+
+.midi-rhythm__result-acc {
+  color: var(--vp-c-text-2);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .midi-rhythm__last-tier {

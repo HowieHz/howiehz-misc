@@ -306,8 +306,8 @@ importers:
         specifier: ^2.5.1
         version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44)
       happy-dom:
-        specifier: ^21.0.3
-        version: 21.0.3
+        specifier: ^21.0.4
+        version: 21.0.4
       lightningcss:
         specifier: ^1.33.0
         version: 1.33.0
@@ -334,7 +334,7 @@ importers:
         version: 0.4.5(vitepress@2.0.0-alpha.20)
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@26.6.5)(happy-dom@21.0.3)(vite@8.3.4)
+        version: 5.0.5(@types/node@26.6.5)(happy-dom@21.0.4)(vite@8.3.4)
 
   packages/blogsclub-signin-helper:
     devDependencies:
@@ -361,13 +361,13 @@ importers:
         version: 0.23.1(@arethetypeswrong/core@0.18.5)(@volar/typescript@2.4.28)(@vue/language-core@3.3.13)(publint@0.3.25)(typescript@6.0.3)(vue-tsc@3.3.13)
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@26.6.5)(happy-dom@21.0.3)(vite@8.3.4)
+        version: 5.0.5(@types/node@26.6.5)(happy-dom@21.0.4)(vite@8.3.4)
 
   packages/graphwar-agent:
     devDependencies:
       '@redocly/cli':
-        specifier: ^2.64.1
-        version: 2.64.1
+        specifier: ^2.66.0
+        version: 2.66.0
 
   packages/graphwar-killer-wasm:
     devDependencies:
@@ -382,7 +382,7 @@ importers:
         version: 0.23.1(@arethetypeswrong/core@0.18.5)(@volar/typescript@2.4.28)(@vue/language-core@3.3.13)(publint@0.3.25)(typescript@6.0.3)(vue-tsc@3.3.13)
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@26.6.5)(happy-dom@21.0.3)(vite@8.3.4)
+        version: 5.0.5(@types/node@26.6.5)(happy-dom@21.0.4)(vite@8.3.4)
 
 packages:
 
@@ -1241,8 +1241,8 @@ packages:
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
 
-  '@redocly/cli@2.64.1':
-    resolution: {integrity: sha512-SkCnNexidfvHmkOCqRZ29oaHh1nVbpnQEF5Qweu8M2cUfVEh1/jSAvd5+LX+D/uNbPnhL6v03AamXHeeB2AwsQ==}
+  '@redocly/cli@2.66.0':
+    resolution: {integrity: sha512-23U8W/2g1zRxsp7p3Wo2lzzlrZYMOA4qEGqF7sO5WyohEWwzdwvZG0L6wUNjC6G7f9LgxnxIWJ3qVgQW0925xg==}
     engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
     hasBin: true
 
@@ -2778,8 +2778,8 @@ packages:
     resolution: {integrity: sha512-5v6yZd4JK3eMI3FqqCouswVqwugaA9r4dNZB1wwcmrD02QkV5H0y7XBQW8QwQqEaZY1pM9aqORSORhJRdNK44Q==}
     engines: {node: '>=6.0'}
 
-  happy-dom@21.0.3:
-    resolution: {integrity: sha512-PesNgu5BnIEmAwzKGewB3K1ORFeznFZJ4JrRz89ea1wkHnxskdpzX9sN/+zb4KO6k8oSMhyJSj/cwXAFrYBBNA==}
+  happy-dom@21.0.4:
+    resolution: {integrity: sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==}
     engines: {node: '>=20.0.0'}
 
   has-flag@5.0.1:
@@ -5008,7 +5008,7 @@ snapshots:
     dependencies:
       quansync: 1.0.0
 
-  '@redocly/cli@2.64.1': {}
+  '@redocly/cli@2.66.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.14':
     optional: true
@@ -6371,7 +6371,7 @@ snapshots:
       section-matter: 1.0.0
       strip-bom-string: 1.0.0
 
-  happy-dom@21.0.3:
+  happy-dom@21.0.4:
     dependencies:
       '@types/node': 26.6.5
       '@types/whatwg-mimetype': 3.0.2
@@ -8069,7 +8069,7 @@ snapshots:
       - universal-cookie
       - yaml
 
-  vitest@5.0.5(@types/node@26.6.5)(happy-dom@21.0.3)(vite@8.3.4):
+  vitest@5.0.5(@types/node@26.6.5)(happy-dom@21.0.4)(vite@8.3.4):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.0.5(vite@8.3.4)
@@ -8087,7 +8087,7 @@ snapshots:
       why-is-node-running: 3.2.1
     optionalDependencies:
       '@types/node': 26.6.5
-      happy-dom: 21.0.3
+      happy-dom: 21.0.4
     transitivePeerDependencies:
       - msw
 

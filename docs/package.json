@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@giscus/vue": "^3.1.1",
-    "@lucide/vue": "^1.58.0",
+    "@lucide/vue": "^1.59.0",
     "@tonejs/midi": "^2.0.28",
     "compat-finder": "workspace:*",
     "graphwar-killer-wasm": "workspace:*",

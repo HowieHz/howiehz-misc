@@ -25,3 +25,4 @@ shellEmulator: true
 dedupePeers: true
 update:
   changeset: true
+autoDedupe: true

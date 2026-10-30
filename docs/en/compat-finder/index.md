@@ -22,7 +22,7 @@ Source: [HowieHz/howiehz-misc](https://github.com/HowieHz/howiehz-misc)
 ## Supported Environments
 
 - Library: ships ESM output; runs in browsers and other ESM-compatible runtimes.
-- CLI: requires Node.js `^22 || >=24`; supports English and Simplified Chinese.
+- CLI: requires Node.js `^22 || ^24 || >=26`; supports English and Simplified Chinese.
 
 ## Reading Guide
 

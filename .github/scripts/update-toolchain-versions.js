@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -338,6 +339,35 @@ const resolveLatestLtsReleaseForMajor = (releases, major) => {
   return release;
 };
 
+const resolveLatestNodeLtsTrackRange = async (fallbackNodeEngineRange, fallbackSupportedNodeMajors) => {
+  const activeLtsMajors = resolveSupportedNodeLtsMajors(await fetchActiveNodeLtsMajors());
+
+  const releases = await fetchNodeReleaseIndex();
+  const selectedReleases = activeLtsMajors.map((major) => resolveLatestLtsReleaseForMajor(releases, major));
+
+  for (const release of selectedReleases) {
+    const publishedAt = await fetchNodeReleasePublishedAt(release.version);
+
+    if (!hasReachedLatestReleaseMinAge(publishedAt)) {
+      console.log(
+        `Skipping Node.js update because latest LTS ${release.version} was published at ${publishedAt} and is still within the 24-hour holdback`,
+      );
+
+      return {
+        nodeEngineRange: fallbackNodeEngineRange,
+        nodeMajor: selectedReleases.at(-1).parsedVersion.major,
+        supportedNodeMajors: fallbackSupportedNodeMajors,
+      };
+    }
+  }
+
+  return {
+    nodeEngineRange: formatNodeEngineTrackRange(selectedReleases),
+    nodeMajor: selectedReleases.at(-1).parsedVersion.major,
+    supportedNodeMajors: activeLtsMajors,
+  };
+};
+
 const fetchLatestNodeEngineRange = async (currentNodeEngine, parsedNodeEngine) => {
   if (latestNodeEngineRangeCache.has(currentNodeEngine)) {
     return latestNodeEngineRangeCache.get(currentNodeEngine);
@@ -356,35 +386,7 @@ const fetchLatestNodeEngineRange = async (currentNodeEngine, parsedNodeEngine) =
     return result;
   }
 
-  const activeLtsMajors = resolveSupportedNodeLtsMajors(await fetchActiveNodeLtsMajors());
-
-  const releases = await fetchNodeReleaseIndex();
-  const selectedReleases = activeLtsMajors.map((major) => resolveLatestLtsReleaseForMajor(releases, major));
-
-  for (const release of selectedReleases) {
-    const publishedAt = await fetchNodeReleasePublishedAt(release.version);
-
-    if (!hasReachedLatestReleaseMinAge(publishedAt)) {
-      console.log(
-        `Skipping Node.js update because latest LTS ${release.version} was published at ${publishedAt} and is still within the 24-hour holdback`,
-      );
-
-      const result = {
-        nodeEngineRange: currentNodeEngine,
-        nodeMajor: selectedReleases.at(-1).parsedVersion.major,
-        supportedNodeMajors: parsedNodeEngine.majors,
-      };
-
-      latestNodeEngineRangeCache.set(currentNodeEngine, result);
-      return result;
-    }
-  }
-
-  const result = {
-    nodeEngineRange: formatNodeEngineTrackRange(selectedReleases),
-    nodeMajor: selectedReleases.at(-1).parsedVersion.major,
-    supportedNodeMajors: activeLtsMajors,
-  };
+  const result = await resolveLatestNodeLtsTrackRange(currentNodeEngine, parsedNodeEngine.majors);
 
   latestNodeEngineRangeCache.set(currentNodeEngine, result);
   return result;
@@ -446,29 +448,32 @@ const collectFilesByName = async (directoryPath, fileName) => {
   return filePaths.sort((left, right) => left.localeCompare(right));
 };
 
-const collectPackageJsonFiles = async (directoryPath = ".") => {
-  const absoluteDirectoryPath = path.resolve(process.cwd(), directoryPath);
-  const entries = await fs.readdir(absoluteDirectoryPath, { withFileTypes: true });
-  const filePaths = [];
+// Only consider files that git would commit. Walking the filesystem directly would also pick up
+// gitignored vendored checkouts (for example `tmp/`) and build output, and rewrite their manifests.
+const collectPackageJsonFiles = async () => {
+  const result = spawnSync(
+    "git",
+    ["-c", "core.quotePath=false", "ls-files", "--cached", "--others", "--exclude-standard"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 
-  for (const entry of entries) {
-    const relativePath = resolveRelativePath(directoryPath, entry.name);
-
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) {
-        continue;
-      }
-
-      filePaths.push(...(await collectPackageJsonFiles(relativePath)));
-      continue;
-    }
-
-    if (entry.isFile() && entry.name === "package.json") {
-      filePaths.push(relativePath);
-    }
+  if (result.error) {
+    throw new Error(`Failed to list repository files with git: ${result.error.message}`);
   }
 
-  return filePaths.sort((left, right) => left.localeCompare(right));
+  if (result.status !== 0) {
+    throw new Error(`Failed to list repository files with git: ${result.stderr.trim()}`);
+  }
+
+  return result.stdout
+    .split(/\r?\n/u)
+    .filter((filePath) => path.basename(filePath) === "package.json")
+    .map((filePath) => path.normalize(filePath))
+    .sort((left, right) => left.localeCompare(right));
 };
 
 const resolvePackageNodeEngineRange = async (
@@ -478,21 +483,32 @@ const resolvePackageNodeEngineRange = async (
   fallbackParsedNodeEngine,
 ) => {
   const currentNodeEngine = typeof packageJson.engines?.node === "string" ? packageJson.engines.node.trim() : "";
+  const fallbackSupportedNodeMajors = fallbackParsedNodeEngine.major
+    ? [fallbackParsedNodeEngine.major]
+    : (fallbackParsedNodeEngine.majors ?? []);
 
-  if (currentNodeEngine === "") {
+  if (currentNodeEngine === "" && packageJson.private === true) {
     return {
       nodeEngineRange: fallbackNodeEngineRange,
       nodeMajor: fallbackParsedNodeEngine.major ?? fallbackParsedNodeEngine.majors?.at(-1) ?? null,
-      supportedNodeMajors: fallbackParsedNodeEngine.major
-        ? [fallbackParsedNodeEngine.major]
-        : (fallbackParsedNodeEngine.majors ?? []),
+      supportedNodeMajors: fallbackSupportedNodeMajors,
     };
   }
 
-  const parsedNodeEngine = parseNodeEngineSpec(currentNodeEngine);
+  const parsedNodeEngine = currentNodeEngine === "" ? null : parseNodeEngineSpec(currentNodeEngine);
 
-  if (!parsedNodeEngine) {
+  if (parsedNodeEngine === null && currentNodeEngine !== "") {
     throw new Error(`Invalid current Node.js engine range in ${filePath}`);
+  }
+
+  // Packages published to consumers must stay installable on every Node.js LTS line that is
+  // still supported, independently of the newer single floor this workspace's own toolchain
+  // requires. Private packages are not published, so they follow the workspace floor.
+  if (packageJson.private !== true) {
+    return resolveLatestNodeLtsTrackRange(
+      currentNodeEngine || fallbackNodeEngineRange,
+      parsedNodeEngine?.mode === "lts-tracks" ? parsedNodeEngine.majors : fallbackSupportedNodeMajors,
+    );
   }
 
   return fetchLatestNodeEngineRange(currentNodeEngine, parsedNodeEngine);

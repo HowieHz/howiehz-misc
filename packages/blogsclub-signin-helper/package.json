@@ -15,7 +15,7 @@
     "vite-plugin-monkey": "^8.1.1"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "releaseAsset": "dist/blogsclub-signin-helper.user.js"
 }

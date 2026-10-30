@@ -260,8 +260,8 @@ importers:
         specifier: ^3.1.1
         version: 3.1.1(vue@3.5.44)
       '@lucide/vue':
-        specifier: ^1.61.0
-        version: 1.61.0(vue@3.5.44)
+        specifier: ^1.63.0
+        version: 1.63.0(vue@3.5.44)
       '@tonejs/midi':
         specifier: ^2.0.28
         version: 2.0.28
@@ -846,8 +846,8 @@ packages:
   '@loaderkit/resolve@1.0.6':
     resolution: {integrity: sha512-G8FdIoF5CypfwmD9rl8BXod5HDn8JqB0CCNBXDTaRZ+yRYhARrrSToX1zg1zy9jX3zLqigsELwhT4gNtkdQAUg==}
 
-  '@lucide/vue@1.61.0':
-    resolution: {integrity: sha512-XYclbwUQ6Mvf0UskBG9gJH91BdF3VK4Tt6Pv8PSntwPwNnf357PCQnma4TrzOEdwD49UYCtsTafpfytRIxm1cQ==}
+  '@lucide/vue@1.63.0':
+    resolution: {integrity: sha512-uJu7VLxXlUIw06r8F4ZdUbTHg8+VFTyqN+lxuMXrh0+8RarwyTWo/odWpH/xq7yUskCTNEtSP4K+BPYRECriDQ==}
     peerDependencies:
       vue: '>=3.0.1'
 
@@ -4673,7 +4673,7 @@ snapshots:
     dependencies:
       '@braidai/lang': 1.1.2
 
-  '@lucide/vue@1.61.0(vue@3.5.44)':
+  '@lucide/vue@1.63.0(vue@3.5.44)':
     dependencies:
       vue: 3.5.44(typescript@6.0.3)
 

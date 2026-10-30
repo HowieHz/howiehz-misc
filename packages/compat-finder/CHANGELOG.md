@@ -1,5 +1,11 @@
 # compat-finder
 
+## 2.2.0
+
+### Minor Changes
+
+- [#510](https://github.com/HowieHz/howiehz-misc/pull/510) [`87e45a2`](https://github.com/HowieHz/howiehz-misc/commit/87e45a2ff75020a7b8a7b32693cbe19380266003) Thanks [@HowieHz](https://github.com/HowieHz)! - Align the `compat-finder` CLI Node.js requirement with the active Node.js LTS lines (`^22 || ^24 || >=26`).
+
 ## 2.1.0
 
 ### Minor Changes

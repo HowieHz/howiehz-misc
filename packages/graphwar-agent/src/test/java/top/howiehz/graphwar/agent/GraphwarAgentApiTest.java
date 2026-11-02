@@ -144,23 +144,22 @@ public final class GraphwarAgentApiTest {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             Future<?> submission =
-                    executor.submit(
-                            () -> {
-                                try {
-                                    stateReader.submitShot(
-                                            GraphwarShotRequest.parse(
-                                                    createV3ShotBody(
-                                                            uuidFor(910),
-                                                            gameInstanceId,
-                                                            turnToken,
-                                                            battleRevision,
-                                                            "x",
-                                                            null)),
-                                            () -> {});
-                                } catch (GraphwarStateException error) {
-                                    throw new AssertionError(error);
-                                }
-                            });
+                    executor.submit(() -> {
+                        try {
+                            stateReader.submitShot(
+                                    GraphwarShotRequest.parse(
+                                            createV3ShotBody(
+                                                    uuidFor(910),
+                                                    gameInstanceId,
+                                                    turnToken,
+                                                    battleRevision,
+                                                    "x",
+                                                    null)),
+                                    () -> {});
+                        } catch (GraphwarStateException error) {
+                            throw new AssertionError(error);
+                        }
+                    });
             waitForReadyNextTurn(gameData, "valid endless shot releases ready");
             assertEquals(
                     Collections.singletonList("ready-next-turn"),
